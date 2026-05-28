@@ -1,5 +1,8 @@
-node_modules
-
-# CDK asset staging directory
-.cdk.staging
-cdk.out
+node_modules/
+dist/
+cdk.out/
+.cdk.staging/
+*.js.map
+*.d.ts
+.env
+.DS_Store
