@@ -2,7 +2,6 @@ import { APIGatewayRequestAuthorizerEventV2 } from 'aws-lambda'
 import * as jwt from 'jsonwebtoken'
 import { bootstrap } from '../shared/bootstrap'
 
-// Fetches JWT_SECRET from Secrets Manager on cold start
 const ready = bootstrap()
 
 type SimpleAuthResult = {
@@ -24,7 +23,7 @@ export const handler = async (event: APIGatewayRequestAuthorizerEventV2): Promis
     return {
       isAuthorized: true,
       context: {
-        staff_id:    String(payload.staff_id   ?? ''),
+        sub:         String(payload.sub         ?? ''),
         role:        String(payload.role        ?? ''),
         storeId:     String(payload.storeId     ?? ''),
         permissions: JSON.stringify(payload.permissions ?? []),
