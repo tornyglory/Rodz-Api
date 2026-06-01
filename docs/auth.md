@@ -2,6 +2,8 @@
 
 **Base URL:** `https://fzzrkscwd7.execute-api.ap-southeast-2.amazonaws.com`
 
+> Production frontend: `https://workshop.rodz.com.au`
+
 All requests and responses use `Content-Type: application/json`.
 Protected endpoints require `Authorization: Bearer <accessToken>` in the request header.
 
@@ -259,6 +261,10 @@ const expiresAt = new Date(exp * 1000)
 
 ## CORS
 
-The API allows requests from `https://rodz-staff.azurewebsites.net`.
+The API allows requests from:
+- `https://workshop.rodz.com.au` (production)
+- `http://localhost:5173` (local dev)
+- `http://localhost:3000` (local dev)
+
 Methods: `GET POST PATCH DELETE OPTIONS`.
 Headers: `Content-Type`, `Authorization`.
