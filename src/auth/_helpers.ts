@@ -22,7 +22,7 @@ export async function resolveStores(
   dbRole: string,
 ): Promise<Array<{ id: number; name: string }>> {
   if (dbRole === 'owner') {
-    const [rows] = await db.query<any[]>('SELECT id, name FROM stores WHERE active = 1 ORDER BY name')
+    const [rows] = await db.query<any[]>('SELECT id, name FROM stores ORDER BY name')
     return rows
   }
 

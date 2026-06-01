@@ -12,8 +12,10 @@ export function getPool(): mysql.Pool {
       database:           process.env.DB_NAME!,
       ssl:                { rejectUnauthorized: true },
       waitForConnections: true,
-      connectionLimit:    5,
+      connectionLimit:    1,
       queueLimit:         0,
+      enableKeepAlive:    true,
+      keepAliveInitialDelay: 10000,
     })
   }
   return pool
