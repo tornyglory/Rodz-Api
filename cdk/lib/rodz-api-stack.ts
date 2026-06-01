@@ -1,14 +1,25 @@
 import * as path from 'path'
-import { Stack, StackProps } from 'aws-cdk-lib'
+import { Stack, StackProps, CfnOutput } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import { HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2'
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations'
+import { RodzVpc } from './constructs/vpc'
 import { LambdaFn } from './constructs/lambda-fn'
 import { ApiGateway } from './constructs/api-gateway'
 
 export class RodzApiStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props)
+
+    // VPC: Lambda in private subnets → NAT Gateway (static Elastic IP) → Azure MySQL
+    const { vpc } = new RodzVpc(this, 'Vpc')
+
+    // Output the NAT Gateway Elastic IP — whitelist this in Azure MySQL firewall
+    const natEip = vpc.publicSubnets[0].node.findChild('EIP') as any
+    new CfnOutput(this, 'NatGatewayElasticIp', {
+      value: natEip?.ref ?? 'Check VPC → Elastic IPs in AWS console',
+      description: 'Whitelist this IP in Azure MySQL firewall',
+    })
 
     // Credentials injected from .env at deploy time — never committed to git
     const sharedEnv: Record<string, string> = {
@@ -27,20 +38,20 @@ export class RodzApiStack extends Stack {
     // ── Lambda functions ────────────────────────────────────────────────────
 
     const authorizerFn = new LambdaFn(this, 'Authorizer', {
-      entry: src('authorizer/handler.ts'), sharedEnv,
+      entry: src('authorizer/handler.ts'), vpc, sharedEnv,
     }).fn
 
     // 512 MB so bcrypt.compare at cost factor 12 stays well under 1s
     const loginFn = new LambdaFn(this, 'AuthLogin', {
-      entry: src('auth/login.ts'), sharedEnv, memorySize: 512,
+      entry: src('auth/login.ts'), vpc, sharedEnv, memorySize: 512,
     }).fn
 
     const logoutFn = new LambdaFn(this, 'AuthLogout', {
-      entry: src('auth/logout.ts'), sharedEnv,
+      entry: src('auth/logout.ts'), vpc, sharedEnv,
     }).fn
 
     const meFn = new LambdaFn(this, 'AuthMe', {
-      entry: src('auth/me.ts'), sharedEnv,
+      entry: src('auth/me.ts'), vpc, sharedEnv,
     }).fn
 
     // ── API Gateway + JWT authorizer ────────────────────────────────────────
@@ -53,7 +64,6 @@ export class RodzApiStack extends Stack {
       path: '/auth/login',
       methods: [HttpMethod.POST],
       integration: new HttpLambdaIntegration('LoginInt', loginFn),
-      // no authorizer — login is public
     })
 
     httpApi.addRoutes({
