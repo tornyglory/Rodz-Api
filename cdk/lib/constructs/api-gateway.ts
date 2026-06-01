@@ -35,7 +35,7 @@ export class ApiGateway extends Construct {
     this.authorizer = new HttpLambdaAuthorizer('JwtAuthorizer', props.authorizerFn, {
       responseTypes: [HttpLambdaResponseType.SIMPLE],
       identitySource: ['$request.header.Authorization'],
-      resultsCacheTtl: Duration.seconds(300),
+      resultsCacheTtl: Duration.seconds(0),
     })
 
     new CfnOutput(scope, 'ApiUrl', {
