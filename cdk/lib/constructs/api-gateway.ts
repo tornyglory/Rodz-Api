@@ -19,7 +19,11 @@ export class ApiGateway extends Construct {
       apiName: 'RodzAPI',
       description: 'Rodz staff portal API',
       corsPreflight: {
-        allowOrigins: ['https://rodz-staff.azurewebsites.net'],
+        allowOrigins: [
+          'https://rodz-staff.azurewebsites.net',
+          'http://localhost:5173',
+          'http://localhost:3000',
+        ],
         allowMethods: [
           CorsHttpMethod.GET,
           CorsHttpMethod.POST,
