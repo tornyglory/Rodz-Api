@@ -78,7 +78,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     // Resolve stores, permissions, home store name in parallel
     const [stores, permissions, homeStoreName] = await Promise.all([
-      resolveStores(db, staff.id, staff.store_id),
+      resolveStores(db, staff.id, staff.store_id, staff.role),
       resolvePermissions(db, staff.id, staff.role),
       resolveHomeStoreName(db, staff.store_id),
     ])

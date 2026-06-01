@@ -19,7 +19,13 @@ export async function resolveStores(
   db: mysql.Pool,
   staffId: number,
   homeStoreId: number,
+  dbRole: string,
 ): Promise<Array<{ id: number; name: string }>> {
+  if (dbRole === 'owner') {
+    const [rows] = await db.query<any[]>('SELECT id, name FROM stores WHERE active = 1 ORDER BY name')
+    return rows
+  }
+
   const [rows] = await db.query<any[]>(
     `SELECT sto.id, sto.name
      FROM staff_store_access ssa
