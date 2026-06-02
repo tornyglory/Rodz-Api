@@ -20,8 +20,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!name?.trim()) return validationError('name is required.')
 
     const [result] = await db.query<any>(
-      'INSERT INTO stores (name, address, phone) VALUES (?, ?, ?)',
-      [name.trim(), address, phone],
+      'INSERT INTO stores (name, address_line1, suburb, state, postcode, phone) VALUES (?, ?, ?, ?, ?, ?)',
+      [name.trim(), address, '', '', '', phone],
     )
 
     const store = await buildStore(db, result.insertId)

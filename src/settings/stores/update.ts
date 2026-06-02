@@ -19,7 +19,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
-    const allowed = ['name', 'address', 'phone']
+    // Map API field 'address' → DB column 'address_line1'
+    if ('address' in body) { body.address_line1 = body.address; delete body.address }
+    const allowed = ['name', 'address_line1', 'phone']
     const updates = Object.entries(body).filter(([k]) => allowed.includes(k))
 
     if (updates.length === 0) return validationError('No valid fields to update.')
