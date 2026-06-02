@@ -17,9 +17,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   if (!storeId || !hoistId) return notFound('Hoist')
 
   try {
-    // Soft delete — hoists may be referenced by jobs
     const [result] = await db.query<any>(
-      'UPDATE hoists SET is_active = 0 WHERE id = ? AND store_id = ?',
+      'DELETE FROM hoists WHERE id = ? AND store_id = ?',
       [hoistId, storeId],
     )
     if (result.affectedRows === 0) return notFound('Hoist')
