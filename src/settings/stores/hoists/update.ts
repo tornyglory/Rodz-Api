@@ -23,29 +23,21 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (roles != null && !Array.isArray(roles)) return validationError('roles must be an array.')
 
     const [hoistRows] = await db.query<any[]>(
-      'SELECT id, name AS label FROM hoists WHERE id = ? AND store_id = ? LIMIT 1',
+      'SELECT id FROM hoists WHERE id = ? AND store_id = ? AND is_active = 1 LIMIT 1',
       [hoistId, storeId],
     )
     if (hoistRows.length === 0) return notFound('Hoist')
 
-    if (label != null) {
-      await db.query('UPDATE hoists SET name = ? WHERE id = ?', [label.trim(), hoistId])
-    }
+    const updates: [string, unknown][] = []
+    if (label != null) updates.push(['name', label.trim()])
+    if (roles != null) updates.push(['service_roles', JSON.stringify(roles)])
 
-    if (roles != null) {
-      await db.query('DELETE FROM hoist_roles WHERE hoist_id = ?', [hoistId])
-      if (roles.length > 0) {
-        const values = roles.map((r: string) => [hoistId, r])
-        await db.query('INSERT INTO hoist_roles (hoist_id, role) VALUES ?', [values])
-      }
-    }
+    const set    = updates.map(([k]) => `${k} = ?`).join(', ')
+    const values = [...updates.map(([, v]) => v), hoistId]
+    await db.query(`UPDATE hoists SET ${set} WHERE id = ?`, values)
 
     const [[updated]] = await db.query<any[]>(
-      'SELECT id, name AS label FROM hoists WHERE id = ? LIMIT 1',
-      [hoistId],
-    )
-    const [roleRows] = await db.query<any[]>(
-      'SELECT role FROM hoist_roles WHERE hoist_id = ?',
+      'SELECT id, name AS label, service_roles FROM hoists WHERE id = ? LIMIT 1',
       [hoistId],
     )
 
@@ -53,7 +45,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       hoist: {
         id:    updated.id,
         label: updated.label,
-        roles: roleRows.map((r: any) => r.role),
+        roles: updated.service_roles
+          ? (typeof updated.service_roles === 'string' ? JSON.parse(updated.service_roles) : updated.service_roles)
+          : [],
       },
     })
   } catch (err) {

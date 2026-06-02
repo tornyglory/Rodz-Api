@@ -24,8 +24,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (storeRows.length === 0) return notFound('Store')
 
     const [result] = await db.query<any>(
-      'INSERT INTO hoists (store_id, name) VALUES (?, ?)',
-      [storeId, label.trim()],
+      'INSERT INTO hoists (store_id, name, service_roles) VALUES (?, ?, ?)',
+      [storeId, label.trim(), JSON.stringify([])],
     )
 
     return created({ hoist: { id: result.insertId, label: label.trim(), roles: [] } })

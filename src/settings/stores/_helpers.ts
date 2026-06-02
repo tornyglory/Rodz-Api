@@ -8,23 +8,12 @@ export async function buildStore(db: mysql.Pool, storeId: number | string) {
   if (!store) return null
 
   const [hoists] = await db.query<any[]>(
-    'SELECT id, name AS label FROM hoists WHERE store_id = ? ORDER BY name',
+    `SELECT id, name AS label, service_roles
+     FROM hoists
+     WHERE store_id = ? AND is_active = 1
+     ORDER BY name`,
     [storeId],
   )
-
-  const roleMap = new Map<number, string[]>()
-  if (hoists.length > 0) {
-    const ids = hoists.map((h: any) => h.id)
-    const [roleRows] = await db.query<any[]>(
-      'SELECT hoist_id, role FROM hoist_roles WHERE hoist_id IN (?)',
-      [ids],
-    )
-    roleRows.forEach((r: any) => {
-      const arr = roleMap.get(r.hoist_id) ?? []
-      arr.push(r.role)
-      roleMap.set(r.hoist_id, arr)
-    })
-  }
 
   return {
     id:      store.id as number,
@@ -34,7 +23,7 @@ export async function buildStore(db: mysql.Pool, storeId: number | string) {
     hoists:  hoists.map((h: any) => ({
       id:    h.id as number,
       label: h.label as string,
-      roles: roleMap.get(h.id) ?? [],
+      roles: h.service_roles ? (typeof h.service_roles === 'string' ? JSON.parse(h.service_roles) : h.service_roles) : [],
     })),
   }
 }
