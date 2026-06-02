@@ -77,6 +77,36 @@ export class RodzApiStack extends Stack {
       entry: src('settings/users/resetPassword.ts'), vpc, sharedEnv, memorySize: 512,
     }).fn
 
+    // ── Stores & hoists ─────────────────────────────────────────────────────
+
+    const storeListFn = new LambdaFn(this, 'StoreList', {
+      entry: src('settings/stores/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const storeCreateFn = new LambdaFn(this, 'StoreCreate', {
+      entry: src('settings/stores/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const storeUpdateFn = new LambdaFn(this, 'StoreUpdate', {
+      entry: src('settings/stores/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const storeDeleteFn = new LambdaFn(this, 'StoreDelete', {
+      entry: src('settings/stores/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    const hoistCreateFn = new LambdaFn(this, 'HoistCreate', {
+      entry: src('settings/stores/hoists/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const hoistUpdateFn = new LambdaFn(this, 'HoistUpdate', {
+      entry: src('settings/stores/hoists/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const hoistDeleteFn = new LambdaFn(this, 'HoistDelete', {
+      entry: src('settings/stores/hoists/delete.ts'), vpc, sharedEnv,
+    }).fn
+
     // ── API Gateway + JWT authorizer ────────────────────────────────────────
 
     const { httpApi, authorizer } = new ApiGateway(this, 'Api', { authorizerFn })
@@ -135,6 +165,55 @@ export class RodzApiStack extends Stack {
       path: '/staff/{id}/password',
       methods: [HttpMethod.PATCH],
       integration: new HttpLambdaIntegration('StaffResetPasswordInt', staffResetPasswordFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/stores',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('StoreListInt', storeListFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/stores',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('StoreCreateInt', storeCreateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/stores/{id}',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('StoreUpdateInt', storeUpdateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/stores/{id}',
+      methods: [HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('StoreDeleteInt', storeDeleteFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/stores/{storeId}/hoists',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('HoistCreateInt', hoistCreateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/stores/{storeId}/hoists/{hoistId}',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('HoistUpdateInt', hoistUpdateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/stores/{storeId}/hoists/{hoistId}',
+      methods: [HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('HoistDeleteInt', hoistDeleteFn),
       authorizer,
     })
   }
