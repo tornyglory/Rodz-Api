@@ -2,36 +2,62 @@ import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { getAuthContext } from '../../shared/auth'
-import { ok, badRequest, serverError } from '../../shared/errors'
+import { ok, forbidden, validationError, serverError } from '../../shared/errors'
 
 const ready = bootstrap()
+
+const REQUIRED_TEMPLATES = [
+  'quoteTemplate',
+  'bookingReceivedTemplate',
+  'bookingConfirmedTemplate',
+  'workCommencedTemplate',
+  'workCompleteTemplate',
+]
+
+function validateTemplate(name: string, tpl: unknown): string | null {
+  if (!tpl || typeof tpl !== 'object') return `${name} is required.`
+  const t = tpl as Record<string, unknown>
+  if (typeof t.subject !== 'string' || !t.subject.trim()) return `${name}.subject is required.`
+  if (typeof t.body    !== 'string' || !t.body.trim())    return `${name}.body is required.`
+  return null
+}
 
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
   const db = getPool()
-  const { storeId } = getAuthContext(event)
+  const ctx = getAuthContext(event)
+
+  if (ctx.role !== 'super_admin') return forbidden()
 
   try {
-    const body = JSON.parse(event.body ?? '{}') as Array<{ type: string; subject: string; body: string }>
+    const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
 
-    if (!Array.isArray(body) || body.length === 0) {
-      return badRequest('Provide an array of email templates')
+    if (typeof body.fromAddress !== 'string' || !body.fromAddress.trim()) {
+      return validationError('fromAddress is required.')
     }
 
-    for (const tpl of body) {
-      await db.query(
-        `INSERT INTO email_templates (store_id, type, subject, body)
-         VALUES (?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE subject = VALUES(subject), body = VALUES(body)`,
-        [storeId, tpl.type, tpl.subject, tpl.body],
-      )
+    for (const name of REQUIRED_TEMPLATES) {
+      const err = validateTemplate(name, body[name])
+      if (err) return validationError(err)
     }
 
-    const [rows] = await db.query<any[]>(
-      'SELECT * FROM email_templates WHERE store_id = ? ORDER BY type',
-      [storeId],
+    const settings = {
+      fromAddress: body.fromAddress.trim(),
+      replyTo: typeof body.replyTo === 'string' ? body.replyTo.trim() : '',
+      quoteTemplate:             body.quoteTemplate,
+      bookingReceivedTemplate:   body.bookingReceivedTemplate,
+      bookingConfirmedTemplate:  body.bookingConfirmedTemplate,
+      workCommencedTemplate:     body.workCommencedTemplate,
+      workCompleteTemplate:      body.workCompleteTemplate,
+    }
+
+    await db.query(
+      `INSERT INTO email_settings (id, settings) VALUES (1, ?)
+       ON DUPLICATE KEY UPDATE settings = VALUES(settings)`,
+      [JSON.stringify(settings)],
     )
-    return ok(rows)
+
+    return ok(settings)
   } catch (err) {
     return serverError(err)
   }

@@ -28,6 +28,7 @@ export class ApiGateway extends Construct {
         allowMethods: [
           CorsHttpMethod.GET,
           CorsHttpMethod.POST,
+          CorsHttpMethod.PUT,
           CorsHttpMethod.PATCH,
           CorsHttpMethod.DELETE,
           CorsHttpMethod.OPTIONS,

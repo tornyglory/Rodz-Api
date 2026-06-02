@@ -3,6 +3,7 @@ import { Duration } from 'aws-cdk-lib'
 import * as lambda from 'aws-cdk-lib/aws-lambda'
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs'
 import * as ec2 from 'aws-cdk-lib/aws-ec2'
+import * as iam from 'aws-cdk-lib/aws-iam'
 
 interface LambdaFnProps {
   entry: string
@@ -11,6 +12,7 @@ interface LambdaFnProps {
   environment?: Record<string, string>
   timeout?: Duration
   memorySize?: number
+  needsSes?: boolean
 }
 
 export class LambdaFn extends Construct {
@@ -36,5 +38,12 @@ export class LambdaFn extends Construct {
         externalModules: [],
       },
     })
+
+    if (props.needsSes) {
+      this.fn.addToRolePolicy(new iam.PolicyStatement({
+        actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+        resources: ['*'],
+      }))
+    }
   }
 }

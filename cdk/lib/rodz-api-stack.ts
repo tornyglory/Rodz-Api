@@ -107,6 +107,17 @@ export class RodzApiStack extends Stack {
       entry: src('settings/stores/hoists/delete.ts'), vpc, sharedEnv,
     }).fn
 
+    // ── Email templates ─────────────────────────────────────────────────────
+
+    const emailTemplatesGetFn = new LambdaFn(this, 'EmailTemplatesGet', {
+      entry: src('settings/email-templates/get.ts'), vpc, sharedEnv,
+    }).fn
+
+    const emailTemplatesUpdateFn = new LambdaFn(this, 'EmailTemplatesUpdate', {
+      entry: src('settings/email-templates/update.ts'), vpc, sharedEnv,
+      needsSes: true,
+    }).fn
+
     // ── API Gateway + JWT authorizer ────────────────────────────────────────
 
     const { httpApi, authorizer } = new ApiGateway(this, 'Api', { authorizerFn })
@@ -214,6 +225,20 @@ export class RodzApiStack extends Stack {
       path: '/stores/{storeId}/hoists/{hoistId}',
       methods: [HttpMethod.DELETE],
       integration: new HttpLambdaIntegration('HoistDeleteInt', hoistDeleteFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/settings/email-templates',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('EmailTemplatesGetInt', emailTemplatesGetFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/settings/email-templates',
+      methods: [HttpMethod.PUT],
+      integration: new HttpLambdaIntegration('EmailTemplatesUpdateInt', emailTemplatesUpdateFn),
       authorizer,
     })
   }
