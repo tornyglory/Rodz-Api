@@ -29,17 +29,17 @@ Every endpoint that returns a user uses this shape:
 | `fullName` | string | First + last name |
 | `email` | string | Lowercase |
 | `role` | string | `super_admin` \| `store_manager` \| `technician` |
-| `store` | string | Home store name |
+| `store` | `string \| null` | Home store name. `null` for `super_admin` — render as "All stores" |
 | `status` | string | `active` \| `inactive` |
-| `joined` | string | Formatted as `"Mar 2019"` |
+| `joined` | string | Formatted as `"Mar 2019"` — display as-is |
 
-`initials` and `color` are not stored — derive them client-side after fetching.
+`initials` and `color` are not returned — derive them client-side from `fullName` and `id`.
 
 ---
 
 ## GET `/staff`
 
-Returns all staff members across all stores.
+Returns all staff members across all stores. The frontend filters the list client-side — the API always returns the full unfiltered set.
 
 ### Request
 
@@ -60,7 +60,7 @@ No body, no query params.
       "fullName": "Nev Rodda",
       "email": "nev@rodz.com.au",
       "role": "super_admin",
-      "store": "Somerville",
+      "store": null,
       "status": "active",
       "joined": "Jan 2020"
     },
@@ -77,11 +77,36 @@ No body, no query params.
 }
 ```
 
+`store` is `null` for `super_admin` — the UI should render this as "All stores".
+
+### Access control
+
+| Role | Behaviour |
+|------|-----------|
+| `super_admin` | Returns all staff across all stores |
+| `store_manager` | `403 FORBIDDEN` — this page is owner-only |
+| `technician` | `403 FORBIDDEN` |
+
+The frontend router already blocks non-owners from `/settings`, but the Lambda enforces it independently.
+
 ### Errors
 
 | Status | Code | When |
 |--------|------|------|
-| `403` | `FORBIDDEN` | Not `super_admin` |
+| `403` | `FORBIDDEN` | Caller is not `super_admin` |
+| `401` | `UNAUTHORIZED` | Missing or expired token |
+
+### What the frontend does with the response
+
+```ts
+// initialize() in src/stores/settings.ts
+const [staffRes, storesRes] = await Promise.all([staffApi.list(), storesApi.list()])
+allUsers.value = staffRes.users.map(u => ({
+  ...u,
+  initials: initials(u.fullName),  // e.g. "AR"
+  color:    nextColor(u.id),       // cycles through colour palette
+}))
+```
 
 ---
 
@@ -298,19 +323,6 @@ type Role = 'super_admin' | 'store_admin' | 'technician'
 
 // After
 type Role = 'super_admin' | 'store_manager' | 'technician'
-```
-
-### Deriving display fields after fetch
-
-`initials` and `color` are not returned by the API — compute them after loading:
-
-```ts
-const [staffRes, storesRes] = await Promise.all([staffApi.list(), storesApi.list()])
-allUsers.value = staffRes.users.map(u => ({
-  ...u,
-  initials: initials(u.fullName),
-  color:    nextColor(u.id),
-}))
 ```
 
 ### Store name for POST /staff
