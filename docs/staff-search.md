@@ -70,12 +70,20 @@ Search is case-insensitive, substring match on all three fields simultaneously.
 
 The role filter uses the exact strings returned by the API:
 
-| Tab label | Filter value |
-|-----------|-------------|
+| Tab label | Filter value(s) |
+|-----------|----------------|
 | All | `"all"` (no filter) |
 | Owners | `"super_admin"` |
 | Managers | `"store_manager"` |
-| Technicians | `"technician"` |
+| Technicians | `"senior_mechanic"`, `"qualified_mechanic"`, `"service_tech"`, `"tyre_tech"`, `"receptionist"`, `"apprentice"`, `"technician"` |
+
+For the Technicians tab, filter by checking whether the role is not `super_admin` and not `store_manager`:
+
+```ts
+if (activeRole.value === 'technician') {
+  users = users.filter(u => u.role !== 'super_admin' && u.role !== 'store_manager')
+}
+```
 
 ---
 

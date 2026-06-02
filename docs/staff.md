@@ -28,12 +28,28 @@ Every endpoint that returns a user uses this shape:
 | `id` | number | Staff ID |
 | `fullName` | string | First + last name |
 | `email` | string | Lowercase |
-| `role` | string | `super_admin` \| `store_manager` \| `technician` |
+| `role` | string | See role values table below |
 | `store` | `string \| null` | Home store name. `null` for `super_admin` — render as "All stores" |
 | `status` | string | `active` \| `inactive` |
 | `joined` | string | Formatted as `"Mar 2019"` — display as-is |
 
 `initials` and `color` are not returned — derive them client-side from `fullName` and `id`.
+
+### Role values
+
+| `role` value | Display label | Access tier |
+|---|---|---|
+| `super_admin` | Owner | Full access, all stores |
+| `store_manager` | Store Manager | Full access, own store |
+| `senior_mechanic` | Senior Mechanic | Technician |
+| `qualified_mechanic` | Qualified Mechanic | Technician |
+| `service_tech` | Service Technician | Technician |
+| `tyre_tech` | Tyre Technician | Technician |
+| `receptionist` | Receptionist | Technician |
+| `apprentice` | Apprentice | Technician |
+| `technician` | Technician | Technician |
+
+The **access tier** is what controls route guards and permissions. The **role value** is what the API returns — use it for display labels and filtering.
 
 ---
 

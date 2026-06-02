@@ -1,11 +1,17 @@
-import { toSystemRole } from '../../auth/_helpers'
-
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
+// Maps DB role → API role for staff management endpoints.
+// super_admin/store_manager use system names; tech sub-roles pass through as-is.
+function toApiRole(dbRole: string): string {
+  if (dbRole === 'owner')   return 'super_admin'
+  if (dbRole === 'manager') return 'store_manager'
+  return dbRole
+}
 
 export function toDbRole(systemRole: string): string {
   if (systemRole === 'super_admin')   return 'owner'
   if (systemRole === 'store_manager') return 'manager'
-  return 'technician'
+  return systemRole
 }
 
 export function splitFullName(fullName: string): { first_name: string; last_name: string } {
@@ -25,8 +31,8 @@ export function buildApiUser(row: any) {
     id:       row.id as number,
     fullName: `${row.first_name} ${row.last_name}`.trim(),
     email:    row.email as string,
-    role:     toSystemRole(row.role),
-    store:    toSystemRole(row.role) === 'super_admin' ? null : row.store_name as string,
+    role:     toApiRole(row.role),
+    store:    row.role === 'owner' ? null : row.store_name as string,
     status:   row.is_active ? 'active' : 'inactive',
     joined:   formatJoined(row.created_at),
   }
