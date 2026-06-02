@@ -2,7 +2,7 @@ import mysql from 'mysql2/promise'
 
 const TECH_ROLES = new Set([
   'senior_mechanic', 'qualified_mechanic', 'service_tech',
-  'tyre_tech', 'receptionist', 'apprentice',
+  'tyre_tech', 'receptionist', 'apprentice', 'technician',
 ])
 
 export function toSystemRole(dbRole: string): 'super_admin' | 'store_manager' | 'technician' {

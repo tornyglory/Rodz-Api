@@ -2,8 +2,7 @@ import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { getAuthContext } from '../../shared/auth'
-import { ok, forbidden, serverError } from '../../shared/errors'
-import { buildApiUser } from './_helpers'
+import { noContent, forbidden, notFound, validationError, serverError } from '../../shared/errors'
 
 const ready = bootstrap()
 
@@ -14,15 +13,16 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   if (ctx.role !== 'super_admin') return forbidden()
 
+  const staffId = event.pathParameters?.id
+  if (!staffId) return notFound('User')
+
+  if (staffId === ctx.staffId) return validationError('Cannot delete your own account.')
+
   try {
-    const [rows] = await db.query<any[]>(
-      `SELECT s.id, s.first_name, s.last_name, s.email, s.role, s.is_active, s.created_at,
-              st.name AS store_name
-       FROM staff s
-       JOIN stores st ON st.id = s.store_id
-       ORDER BY s.first_name, s.last_name`,
-    )
-    return ok({ users: rows.map(buildApiUser) })
+    await db.query('DELETE FROM staff_auth WHERE staff_id = ?', [staffId])
+    const [result] = await db.query<any>('DELETE FROM staff WHERE id = ?', [staffId])
+    if (result.affectedRows === 0) return notFound('User')
+    return noContent()
   } catch (err) {
     return serverError(err)
   }

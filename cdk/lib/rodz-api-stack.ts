@@ -54,6 +54,29 @@ export class RodzApiStack extends Stack {
       entry: src('auth/me.ts'), vpc, sharedEnv,
     }).fn
 
+    // ── Staff management ────────────────────────────────────────────────────
+
+    const staffListFn = new LambdaFn(this, 'StaffList', {
+      entry: src('settings/users/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    // 512 MB — bcrypt.hash at cost 12
+    const staffCreateFn = new LambdaFn(this, 'StaffCreate', {
+      entry: src('settings/users/create.ts'), vpc, sharedEnv, memorySize: 512,
+    }).fn
+
+    const staffUpdateFn = new LambdaFn(this, 'StaffUpdate', {
+      entry: src('settings/users/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const staffDeleteFn = new LambdaFn(this, 'StaffDelete', {
+      entry: src('settings/users/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    const staffResetPasswordFn = new LambdaFn(this, 'StaffResetPassword', {
+      entry: src('settings/users/resetPassword.ts'), vpc, sharedEnv, memorySize: 512,
+    }).fn
+
     // ── API Gateway + JWT authorizer ────────────────────────────────────────
 
     const { httpApi, authorizer } = new ApiGateway(this, 'Api', { authorizerFn })
@@ -77,6 +100,41 @@ export class RodzApiStack extends Stack {
       path: '/auth/me',
       methods: [HttpMethod.GET],
       integration: new HttpLambdaIntegration('MeInt', meFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/staff',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('StaffListInt', staffListFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/staff',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('StaffCreateInt', staffCreateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/staff/{id}',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('StaffUpdateInt', staffUpdateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/staff/{id}',
+      methods: [HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('StaffDeleteInt', staffDeleteFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/staff/{id}/password',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('StaffResetPasswordInt', staffResetPasswordFn),
       authorizer,
     })
   }
