@@ -26,7 +26,7 @@ export function buildApiUser(row: any) {
     fullName: `${row.first_name} ${row.last_name}`.trim(),
     email:    row.email as string,
     role:     toSystemRole(row.role),
-    store:    row.store_name as string,
+    store:    toSystemRole(row.role) === 'super_admin' ? null : row.store_name as string,
     status:   row.is_active ? 'active' : 'inactive',
     joined:   formatJoined(row.created_at),
   }
