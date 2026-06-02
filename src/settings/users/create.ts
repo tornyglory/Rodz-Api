@@ -8,7 +8,11 @@ import { buildApiUser, toDbRole, splitFullName } from './_helpers'
 
 const ready = bootstrap()
 
-const VALID_ROLES = new Set(['super_admin', 'store_manager', 'technician'])
+const VALID_ROLES = new Set([
+  'super_admin', 'store_manager',
+  'senior_mechanic', 'qualified_mechanic', 'service_tech',
+  'tyre_tech', 'receptionist', 'apprentice', 'technician',
+])
 
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
@@ -24,7 +28,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       return validationError('fullName, email, role, and password are required.')
     }
     if (!VALID_ROLES.has(role)) {
-      return validationError('role must be super_admin, store_manager, or technician.')
+      return validationError('Invalid role value.')
     }
     if (role !== 'super_admin' && !store?.trim()) {
       return validationError('store is required for store_manager and technician roles.')
