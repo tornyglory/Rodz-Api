@@ -6,14 +6,14 @@ All routes require `Authorization: Bearer <accessToken>`.
 
 **Role access:**
 - `super_admin` — full access, all stores
-- `store_manager` — full access, own store only
+- `store_manager` — full access, own store(s) only
 - `technician` — read-only (`GET /bookings` only)
 
 ---
 
 ## GET /bookings
 
-Returns bookings visible to the caller. Ordered by date, then slot, then ID. Paginated.
+Returns bookings visible to the caller. Ordered by date ASC, slot ASC (morning before afternoon), id ASC. Paginated.
 
 ```
 GET /bookings?store=Somerville&status=pending&date=2025-06-10&page=1&limit=50
@@ -41,25 +41,29 @@ Authorization: Bearer <accessToken>
       "customerId": 42,
       "customer": "Karen Walsh",
       "customerEmail": "kwalsh@gmail.com",
+      "vehicleId": 18,
+      "vehicle": "2020 Toyota Camry",
+      "rego": "KWA001",
       "slot": "morning",
       "date": "2025-06-10",
       "type": "drop_off",
       "status": "confirmed",
       "store": "Rodz Somerville",
       "createdAt": "2025-06-10T02:34:00Z",
-      "assignedHoist": "Host 2",
+      "assignedHoist": "Hoist 2",
       "assignedHoistId": 2,
       "assignedTech": "J. Howard",
       "assignedStaffId": 5,
       "dropOffTime": "09:00",
-      "notes": null
+      "notes": null,
+      "staffNotes": null
     }
   ],
   "pagination": {
-    "total": 1234,
+    "total": 48,
     "page": 1,
     "limit": 50,
-    "pages": 25
+    "pages": 1
   }
 }
 ```
@@ -68,17 +72,23 @@ Authorization: Bearer <accessToken>
 
 | Field | Notes |
 |-------|-------|
-| `bookingRef` | Auto-generated 8-character reference code e.g. `"AB3K9XZ1"`. Display this to staff and customers. |
-| `customer` | Full name — live joined from the customers table. |
-| `customerEmail` | Live joined from the customers table. |
-| `date` | Always ISO `YYYY-MM-DD` — format on render. |
+| `bookingRef` | Auto-generated 8-char reference (no lookalike chars). Display to staff and customers. |
+| `customer` | Full name — live joined from customers table. |
+| `customerEmail` | Live joined. Null if customer has no email. |
+| `vehicleId` | Null if no vehicle was linked at booking time. |
+| `vehicle` | `"{year} {make} {model}"` — live joined from vehicles table. Null if `vehicleId` is null. |
+| `rego` | Live joined. Null if `vehicleId` is null. |
+| `date` | Always ISO `YYYY-MM-DD`. Format on render. |
 | `type` | `"drop_off"`, `"wait"`, or `"pickup"`. |
-| `createdAt` | UTC ISO-8601. Use this to compute "2 min ago" labels on the frontend. |
-| `assignedHoist` | Hoist name e.g. `"Host 2"`. `null` until assigned. |
-| `assignedHoistId` | `null` until assigned. |
-| `assignedTech` | Formatted `"J. Howard"`. `null` until assigned. |
-| `assignedStaffId` | `null` until assigned. |
-| `dropOffTime` | 24h string `"HH:MM"`. `null` until set. |
+| `store` | Full name e.g. `"Rodz Somerville"`. Strip `"Rodz "` prefix for display. |
+| `createdAt` | UTC ISO-8601. Compute relative labels (`"2 min ago"`) on render. |
+| `assignedHoist` | Hoist name e.g. `"Hoist 2"`. Null until confirmed. |
+| `assignedHoistId` | Null until confirmed. |
+| `assignedTech` | Formatted `"J. Howard"`. Null until confirmed. |
+| `assignedStaffId` | Null until confirmed. |
+| `dropOffTime` | 24h `"HH:MM"`. Null if not set. |
+| `notes` | Customer-visible notes. Null if empty. |
+| `staffNotes` | Internal staff notes. Null if empty. |
 
 ### Access control notes
 
@@ -89,13 +99,13 @@ Authorization: Bearer <accessToken>
 
 | Status | Code | When |
 |--------|------|------|
-| `403` | `FORBIDDEN` | `store` filter is outside the caller's access |
+| `403` | `FORBIDDEN` | `store` filter is outside the caller's accessible stores |
 
 ---
 
 ## POST /bookings
 
-Creates a new booking. The customer must already exist in the system — use `GET /customers?search=...` to find them first.
+Creates a new booking. The customer must already exist — use `GET /customers?search=...` to find them first. If they don't exist, create via `POST /customers` then book.
 
 ```
 POST /bookings
@@ -122,29 +132,28 @@ Content-Type: application/json
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `customerId` | Yes | Must be an active customer. Use customer search to find the ID before creating a booking. |
-| `vehicleId` | No | FK to the customer's vehicle. Omit if not known. |
+| `customerId` | Yes | Must be an active customer. |
+| `vehicleId` | Yes | Must exist and belong to this customer. Returns `404 VEHICLE_NOT_FOUND` if not. |
 | `date` | Yes | ISO `YYYY-MM-DD`. Must not be in the past. |
 | `slot` | Yes | `"morning"` or `"afternoon"`. |
 | `type` | Yes | `"drop_off"`, `"wait"`, or `"pickup"`. |
 | `store` | Yes | Partial name match e.g. `"Somerville"`. Must be a store the caller has access to. |
-| `dropOffTime` | No | 24h time string `"HH:MM"`. Can be set now or later via PATCH. |
-| `notes` | No | Free text. Max 1000 characters. Omit for no notes. |
+| `dropOffTime` | No | 24h `"HH:MM"`. Can be set now or later via PATCH. Null in the response until set. |
+| `notes` | No | Customer-visible notes. Max 1000 characters. |
 
-> **No manual / walk-in entry.** All bookings require a `customerId`. If the customer doesn't exist yet, create them via `POST /customers` first, then book.
+> **vehicleId is required** because the bookings table requires a vehicle link. Use `GET /customers/{id}/vehicles` to list the customer's vehicles and let staff pick one before creating the booking.
 
 ### Response `201`
 
-Returns the new booking object wrapped in `{ "booking": { ... } }` — same shape as the list response.
-
-Status is always `"pending"` on creation. `assignedHoist`, `assignedTech`, and `dropOffTime` will be `null` unless provided.
+Returns the new booking object wrapped in `{ "booking": { ... } }` — same shape as the list response. Status is always `"pending"` on creation.
 
 ### Errors
 
 | Status | Code | When |
 |--------|------|------|
-| `422` | `VALIDATION_ERROR` | Required field missing, date in the past, invalid slot/type, store not found |
+| `422` | `VALIDATION_ERROR` | Required field missing, date in past, invalid slot/type, store not found |
 | `404` | `CUSTOMER_NOT_FOUND` | `customerId` does not exist or is inactive |
+| `404` | `VEHICLE_NOT_FOUND` | `vehicleId` does not exist or does not belong to this customer |
 | `403` | `FORBIDDEN` | Technician role, or store is outside the caller's access |
 
 ---
@@ -208,7 +217,7 @@ Pass `null` to clear a field:
 | `assignedStaffId` | int \| null | FK to staff. `null` clears the assignment. |
 | `dropOffTime` | string \| null | 24h `"HH:MM"`. `null` clears it. |
 
-> When `status` is set to `"confirmed"`, `confirmed_at` and `confirmed_by` are recorded automatically — no extra fields needed.
+> When `status` is set to `"confirmed"`, `confirmed_at` and `confirmed_by_staff_id` are recorded automatically.
 
 ### Response `200`
 
@@ -227,7 +236,7 @@ Returns the full updated booking object wrapped in `{ "booking": { ... } }`.
 
 ## DELETE /bookings/{id}
 
-Cancels a booking. The record is retained for audit; it will no longer appear in any list.
+Cancels a booking. The record is retained for audit and will not appear in any list.
 
 ```
 DELETE /bookings/7
@@ -245,9 +254,7 @@ No body. **Response `204`** — no content.
 
 ---
 
-## Field reference
-
-### Booking object
+## Booking object — full field reference
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -256,22 +263,24 @@ No body. **Response `204`** — no content.
 | `customerId` | number | FK to customers |
 | `customer` | string | Full name, live-joined |
 | `customerEmail` | string \| null | Live-joined from customers |
-| `vehicleId` | number \| null | FK to vehicles. `null` if not linked at booking time. |
+| `vehicleId` | number \| null | FK to vehicles |
+| `vehicle` | string \| null | `"{year} {make} {model}"`, live-joined from vehicles |
+| `rego` | string \| null | Live-joined from vehicles |
 | `slot` | `"morning"` \| `"afternoon"` | |
 | `date` | string | ISO `YYYY-MM-DD` |
 | `type` | `"drop_off"` \| `"wait"` \| `"pickup"` | |
 | `status` | `"pending"` \| `"confirmed"` \| `"rejected"` | |
 | `store` | string | Store name e.g. `"Rodz Somerville"` |
 | `createdAt` | string | UTC ISO-8601 datetime |
-| `assignedHoist` | string \| null | Hoist name e.g. `"Host 2"` |
+| `assignedHoist` | string \| null | Hoist name e.g. `"Hoist 2"` |
 | `assignedHoistId` | number \| null | |
 | `assignedTech` | string \| null | e.g. `"J. Howard"` |
 | `assignedStaffId` | number \| null | |
-| `dropOffTime` | string \| null | `"HH:MM"` 24h |
-| `notes` | string \| null | Customer-facing notes |
+| `dropOffTime` | string \| null | `"HH:MM"` 24h — null if not set |
+| `notes` | string \| null | Customer-visible notes |
 | `staffNotes` | string \| null | Internal staff notes |
 
-### Pagination object
+## Pagination object
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -282,13 +291,16 @@ No body. **Response `204`** — no content.
 
 ---
 
-## Frontend migration notes
+## Frontend integration notes
 
-| # | Current behaviour | What to change |
-|---|-------------------|----------------|
-| 1 | `date` stored as display string e.g. `"Tue 26 May"` | API sends/receives ISO `YYYY-MM-DD`. Format on render. |
-| 2 | `ago` stored as pre-formatted string e.g. `"2 min ago"` | API returns `createdAt` ISO datetime. Compute relative label on render. |
-| 3 | `addBookingApi` sends manual string fields (`customerName`, `vehicle`, `rego`, `service`) | These fields are not supported. All bookings require a `customerId`. Search for the customer first (`GET /customers?search=...`), then book. If the customer doesn't exist, create them via `POST /customers` first. |
-| 4 | Confirm sends only `{ status: "confirmed" }` | Also send `assignedHoistId`, `assignedStaffId`, and `dropOffTime`. |
-| 5 | `type` values use hyphens e.g. `"drop-off"` | Use underscores: `"drop_off"`, `"wait"`, `"pickup"`. |
-| 6 | `assignedHoist` is a label string from the UI | API returns both `assignedHoistId` and `assignedHoist` label. Store both. |
+| # | What the frontend does | What the API does |
+|---|------------------------|-------------------|
+| 1 | Strips `"Rodz "` prefix from store name for display | Returns full name e.g. `"Rodz Somerville"` in `store` |
+| 2 | Computes `"2 min ago"` labels | Returns `createdAt` as UTC ISO-8601 |
+| 3 | Formats date for display e.g. `"Tue 10 Jun"` | Returns `date` as ISO `YYYY-MM-DD` |
+| 4 | Displays vehicle name and rego on booking cards | Returns `vehicle` and `rego` via JOIN — null if no `vehicleId` |
+| 5 | Confirm sends `assignedHoistId` + `assignedStaffId` + `dropOffTime` | Returns `assignedHoist` and `assignedTech` label strings in response |
+| 6 | Type toggle has 3 options | Accepts and returns `"drop_off"`, `"wait"`, `"pickup"` |
+| 7 | Displays `bookingRef` on booking cards | Auto-generates on create; always returned |
+| 8 | Displays `dropOffTime` as `"09:00"` | Returns 24h `"HH:MM"` or null if not set |
+| 9 | Filters on customer name, vehicle, rego client-side | All three fields returned on every booking |

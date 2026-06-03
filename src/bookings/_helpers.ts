@@ -9,12 +9,15 @@ const BOOKING_SELECT = `
     c.email                                AS customer_email,
     s.name                                 AS store_name,
     h.name                                 AS hoist_name,
-    CONCAT(LEFT(st.first_name, 1), '. ', st.last_name) AS tech_label
+    CONCAT(LEFT(st.first_name, 1), '. ', st.last_name) AS tech_label,
+    CONCAT(v.year, ' ', v.make, ' ', v.model) AS vehicle_label,
+    v.rego                                 AS vehicle_rego
   FROM bookings b
   JOIN customers c  ON c.id  = b.customer_id
   JOIN stores s     ON s.id  = b.store_id
   LEFT JOIN hoists h   ON h.id  = b.hoist_id
-  LEFT JOIN staff st   ON st.id = b.assigned_staff_id`
+  LEFT JOIN staff st   ON st.id = b.assigned_staff_id
+  LEFT JOIN vehicles v ON v.id  = b.vehicle_id`
 
 export const BOOKING_SELECT_BY_ID = `${BOOKING_SELECT} WHERE b.id = ? LIMIT 1`
 
@@ -26,6 +29,7 @@ export function buildBooking(row: any) {
     if (!t) return null
     if (t instanceof Date) return t.toTimeString().slice(0, 5)
     const s = String(t)
+    if (s === '00:00:00' || s === '00:00') return null
     // TIME column returns "HH:MM:SS"
     if (s.length <= 8 && s.includes(':')) return s.slice(0, 5)
     // DATETIME string "YYYY-MM-DD HH:MM:SS"
@@ -40,6 +44,8 @@ export function buildBooking(row: any) {
     customer:        row.customer_name,
     customerEmail:   row.customer_email ?? null,
     vehicleId:       row.vehicle_id ?? null,
+    vehicle:         row.vehicle_label ?? null,
+    rego:            row.vehicle_rego ?? null,
     slot:            row.slot,
     date:            toDate(row.booking_date),
     type:            row.drop_off_type ?? null,
@@ -66,13 +72,14 @@ export function bookingError(statusCode: number, code: string, message: string) 
 
 export async function getAllowedStoreIds(db: mysql.Pool, staffId: string): Promise<number[]> {
   const [rows] = await db.query<mysql.RowDataPacket[]>(
-    'SELECT store_id FROM staff_store_access WHERE staff_id = ?',
+    'SELECT store_id FROM staff_store_access WHERE staff_id = ? AND revoked_at IS NULL',
     [staffId],
   )
   return rows.map((r) => r.store_id)
 }
 
+// Excludes lookalike characters: 0, O, I, 1
 export function generateBookingRef(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   return Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
 }

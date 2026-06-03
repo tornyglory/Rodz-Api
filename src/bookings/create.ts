@@ -21,6 +21,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const { customerId, vehicleId, date, slot, type, store, notes, dropOffTime } = body
 
     if (!customerId)                                       return validationError('customerId is required.')
+    if (!vehicleId)                                        return validationError('vehicleId is required.')
     if (!date)                                             return validationError('date is required.')
     if (!slot || !['morning', 'afternoon'].includes(slot)) return validationError('slot must be "morning" or "afternoon".')
     if (!type || !VALID_TYPES.includes(type))              return validationError(`type must be one of: ${VALID_TYPES.join(', ')}.`)
@@ -49,8 +50,18 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     )
     if (!customerRow) return bookingError(404, 'CUSTOMER_NOT_FOUND', 'No customer with that ID exists.')
 
-    // ── booking_time is a TIME column — store as "HH:MM:SS" ───────────────
-    const bookingTime = dropOffTime ? `${dropOffTime}:00` : null
+    // ── Verify vehicle belongs to customer ─────────────────────────────────
+    const [[vehicleRow]] = await db.query<any[]>(
+      `SELECT v.id FROM vehicles v
+       JOIN vehicle_owners vo ON vo.vehicle_id = v.id
+       WHERE v.id = ? AND vo.customer_id = ? AND vo.is_current = 1 AND v.is_active = 1
+       LIMIT 1`,
+      [vehicleId, customerId],
+    )
+    if (!vehicleRow) return bookingError(404, 'VEHICLE_NOT_FOUND', 'Vehicle not found or does not belong to this customer.')
+
+    // booking_time is NOT NULL — use '00:00:00' when no time is set yet
+    const bookingTime = dropOffTime ? `${dropOffTime}:00` : '00:00:00'
 
     // ── Insert ─────────────────────────────────────────────────────────────
     const [result] = await db.query<any>(
@@ -58,10 +69,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
          (store_id, booking_ref, customer_id, vehicle_id, booking_date, booking_time,
           slot, drop_off_type, customer_notes, status, booking_source)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'rodz_app')`,
-      [
-        storeRow.id, generateBookingRef(), customerId, vehicleId ?? null,
-        date, bookingTime, slot, type, notes ?? null,
-      ],
+      [storeRow.id, generateBookingRef(), customerId, vehicleId, date, bookingTime, slot, type, notes ?? null],
     )
 
     const [[row]] = await db.query<any[]>(BOOKING_SELECT_BY_ID, [result.insertId])

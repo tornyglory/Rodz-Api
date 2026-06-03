@@ -19,12 +19,15 @@ const BASE_SELECT = `
     c.email                                AS customer_email,
     s.name                                 AS store_name,
     h.name                                 AS hoist_name,
-    CONCAT(LEFT(st.first_name, 1), '. ', st.last_name) AS tech_label
+    CONCAT(LEFT(st.first_name, 1), '. ', st.last_name) AS tech_label,
+    CONCAT(v.year, ' ', v.make, ' ', v.model) AS vehicle_label,
+    v.rego                                 AS vehicle_rego
   FROM bookings b
   JOIN customers c  ON c.id  = b.customer_id
   JOIN stores s     ON s.id  = b.store_id
   LEFT JOIN hoists h   ON h.id  = b.hoist_id
-  LEFT JOIN staff st   ON st.id = b.assigned_staff_id`
+  LEFT JOIN staff st   ON st.id = b.assigned_staff_id
+  LEFT JOIN vehicles v ON v.id  = b.vehicle_id`
 
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
