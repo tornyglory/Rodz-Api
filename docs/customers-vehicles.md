@@ -41,6 +41,14 @@ Authorization: Bearer <accessToken>
       "totalSpend": 4820.50,
       "lastVisit": "28 May 2026",
       "notes": "Prefers morning slots",
+      "dob": "1985-03-15",
+      "address": {
+        "line1": "12 Ocean Drive",
+        "line2": null,
+        "suburb": "Somerville",
+        "state": "VIC",
+        "postcode": "3912"
+      },
       "vehicles": [
         { "id": 1, "rego": "ABC123", "year": 2021, "make": "Mazda", "model": "CX-5" }
       ],
@@ -86,6 +94,14 @@ Authorization: Bearer <accessToken>
     "totalSpend": 4820.50,
     "lastVisit": "28 May 2026",
     "notes": "Prefers morning slots",
+    "dob": "1985-03-15",
+    "address": {
+      "line1": "12 Ocean Drive",
+      "line2": null,
+      "suburb": "Somerville",
+      "state": "VIC",
+      "postcode": "3912"
+    },
     "vehicles": [
       { "id": 1, "rego": "ABC123", "year": 2021, "make": "Mazda", "model": "CX-5" }
     ],
@@ -142,6 +158,14 @@ Content-Type: application/json
   "store": "Somerville",
   "tag": "New",
   "notes": "Referred by a friend",
+  "dob": "1985-03-15",
+  "address": {
+    "line1": "12 Ocean Drive",
+    "line2": null,
+    "suburb": "Somerville",
+    "state": "VIC",
+    "postcode": "3912"
+  },
   "vehicles": [
     { "rego": "ABC123", "year": 2021, "make": "Mazda", "model": "CX-5" }
   ]
@@ -156,6 +180,8 @@ Content-Type: application/json
 | `phone` | no | Defaults to `""` |
 | `tag` | no | `New` (default), `Regular`, or `VIP` |
 | `notes` | no | Internal staff notes |
+| `dob` | no | Date of birth in `YYYY-MM-DD` format e.g. `"1985-03-15"`. Defaults to `null`. |
+| `address` | no | Object — all sub-fields optional: `line1`, `line2`, `suburb`, `state`, `postcode`. Defaults to all `null`. |
 | `vehicles` | no | Defaults to `[]`. Each vehicle requires `rego`, `year`, `make`, `model`. |
 
 **Response 201**
@@ -172,6 +198,14 @@ Content-Type: application/json
     "totalSpend": 0,
     "lastVisit": null,
     "notes": "Referred by a friend",
+    "dob": "1985-03-15",
+    "address": {
+      "line1": "12 Ocean Drive",
+      "line2": null,
+      "suburb": "Somerville",
+      "state": "VIC",
+      "postcode": "3912"
+    },
     "vehicles": [
       { "id": 12, "rego": "ABC123", "year": 2021, "make": "Mazda", "model": "CX-5" }
     ],
@@ -208,9 +242,18 @@ Content-Type: application/json
   "phone": "0412 345 678",
   "store": "Somerville",
   "tag": "VIP",
-  "notes": "Updated notes"
+  "notes": "Updated notes",
+  "dob": "1985-03-15",
+  "address": {
+    "line1": "12 Ocean Drive",
+    "suburb": "Somerville",
+    "state": "VIC",
+    "postcode": "3912"
+  }
 }
 ```
+
+> Send only the address sub-fields you want to change — omitted sub-fields are left untouched.
 
 **Response 200** — full customer object, same shape as `GET /customers/{id}`.
 
@@ -221,6 +264,28 @@ Content-Type: application/json
 | `422` | `VALIDATION_ERROR` | No valid fields sent, or store name not found |
 | `404` | `NOT_FOUND` | Customer does not exist |
 | `403` | `FORBIDDEN` | Technician role |
+
+---
+
+## DELETE /customers/{id}
+
+Deactivates a customer. Their job history and vehicles are preserved in the database — they simply no longer appear in any list or lookup.
+
+```
+DELETE /customers/1
+Authorization: Bearer <accessToken>
+```
+
+No body. **Response 204** — no content.
+
+**Errors**
+
+| Status | Code | When |
+|--------|------|------|
+| `404` | `NOT_FOUND` | Customer does not exist or is already inactive |
+| `403` | `FORBIDDEN` | Technician role |
+
+> This is a soft delete — the customer record is not removed from the database. There is no undo endpoint; reinstatement would require a direct DB update.
 
 ---
 
@@ -337,6 +402,8 @@ No body. **Response 204** — no content.
 | `totalSpend` | number | Sum of all completed/invoiced job totals |
 | `lastVisit` | string \| null | e.g. `"28 May 2026"` |
 | `notes` | string \| null | Internal staff notes |
+| `dob` | string \| null | Date of birth in `YYYY-MM-DD` format e.g. `"1985-03-15"` |
+| `address` | object | `{ line1, line2, suburb, state, postcode }` — all fields `string \| null` |
 | `vehicles` | Vehicle[] | Current vehicles only |
 | `jobHistory` | Job[] | Empty `[]` on list endpoint, populated on single GET |
 

@@ -26,6 +26,16 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (body.email != null) updates.push(['email',          String(body.email).trim()])
     if (body.phone != null) updates.push(['mobile',         String(body.phone).trim()])
     if (body.notes != null) updates.push(['internal_notes', body.notes])
+    if (body.dob   != null) updates.push(['date_of_birth', String(body.dob).trim()])
+
+    if (body.address != null) {
+      const a = body.address as Record<string, unknown>
+      if (a.line1    != null) updates.push(['address_line1', String(a.line1).trim()])
+      if (a.line2    != null) updates.push(['address_line2', String(a.line2).trim()])
+      if (a.suburb   != null) updates.push(['suburb',        String(a.suburb).trim()])
+      if (a.state    != null) updates.push(['state',         String(a.state).trim()])
+      if (a.postcode != null) updates.push(['postcode',      String(a.postcode).trim()])
+    }
 
     if (body.store != null) {
       const [[storeRow]] = await db.query<any[]>(
@@ -52,6 +62,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const [[row]] = await db.query<any[]>(
       `SELECT c.id, c.first_name, c.last_name, c.email, c.mobile, c.internal_notes,
+              c.date_of_birth, c.address_line1, c.address_line2, c.suburb, c.state, c.postcode,
               st.name AS store_name
        FROM customers c JOIN stores st ON st.id = c.store_id
        WHERE c.id = ?`,

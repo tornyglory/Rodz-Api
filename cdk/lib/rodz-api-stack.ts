@@ -125,6 +125,10 @@ export class RodzApiStack extends Stack {
       entry: src('customers/update.ts'), vpc, sharedEnv,
     }).fn
 
+    const customerDeleteFn = new LambdaFn(this, 'CustomerDelete', {
+      entry: src('customers/delete.ts'), vpc, sharedEnv,
+    }).fn
+
     const vehicleCreateFn = new LambdaFn(this, 'VehicleCreate', {
       entry: src('customers/vehicles/create.ts'), vpc, sharedEnv,
     }).fn
@@ -135,6 +139,24 @@ export class RodzApiStack extends Stack {
 
     const vehicleDeleteFn = new LambdaFn(this, 'VehicleDelete', {
       entry: src('customers/vehicles/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    // ── Bookings ────────────────────────────────────────────────────────────
+
+    const bookingListFn = new LambdaFn(this, 'BookingList', {
+      entry: src('bookings/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const bookingCreateFn = new LambdaFn(this, 'BookingCreate', {
+      entry: src('bookings/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const bookingUpdateFn = new LambdaFn(this, 'BookingUpdate', {
+      entry: src('bookings/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const bookingDeleteFn = new LambdaFn(this, 'BookingDelete', {
+      entry: src('bookings/delete.ts'), vpc, sharedEnv,
     }).fn
 
     // ── Email templates ─────────────────────────────────────────────────────
@@ -287,6 +309,13 @@ export class RodzApiStack extends Stack {
     })
 
     httpApi.addRoutes({
+      path: '/customers/{id}',
+      methods: [HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('CustomerDeleteInt', customerDeleteFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
       path: '/customers/{id}/vehicles',
       methods: [HttpMethod.POST],
       integration: new HttpLambdaIntegration('VehicleCreateInt', vehicleCreateFn),
@@ -304,6 +333,34 @@ export class RodzApiStack extends Stack {
       path: '/customers/{customerId}/vehicles/{vehicleId}',
       methods: [HttpMethod.DELETE],
       integration: new HttpLambdaIntegration('VehicleDeleteInt', vehicleDeleteFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/bookings',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('BookingListInt', bookingListFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/bookings',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('BookingCreateInt', bookingCreateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/bookings/{id}',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('BookingUpdateInt', bookingUpdateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/bookings/{id}',
+      methods: [HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('BookingDeleteInt', bookingDeleteFn),
       authorizer,
     })
 

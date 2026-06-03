@@ -63,6 +63,14 @@ export async function buildCustomerList(db: mysql.Pool, rows: any[]) {
       totalSpend:  stats ? Number(Number(stats.totalSpend).toFixed(2)) : 0,
       lastVisit:   stats?.lastVisit ? formatDate(stats.lastVisit) : null,
       notes:       row.internal_notes ?? null,
+      dob:         row.date_of_birth ? (row.date_of_birth instanceof Date ? row.date_of_birth.toISOString().slice(0, 10) : String(row.date_of_birth).slice(0, 10)) : null,
+      address: {
+        line1:    row.address_line1 ?? null,
+        line2:    row.address_line2 ?? null,
+        suburb:   row.suburb ?? null,
+        state:    row.state ?? null,
+        postcode: row.postcode ?? null,
+      },
       vehicles:    vehiclesMap.get(row.id) ?? [],
       jobHistory:  [],
     }
@@ -135,6 +143,14 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
     totalSpend:  Number(Number(statsRow.totalSpend).toFixed(2)),
     lastVisit:   statsRow.lastVisit ? formatDate(statsRow.lastVisit) : null,
     notes:       row.internal_notes ?? null,
+    dob:         row.date_of_birth ? (row.date_of_birth instanceof Date ? row.date_of_birth.toISOString().slice(0, 10) : String(row.date_of_birth).slice(0, 10)) : null,
+    address: {
+      line1:    row.address_line1 ?? null,
+      line2:    row.address_line2 ?? null,
+      suburb:   row.suburb ?? null,
+      state:    row.state ?? null,
+      postcode: row.postcode ?? null,
+    },
     vehicles:    vehicleRows.map((v: any) => ({ id: v.id, rego: v.rego, year: v.year, make: v.make, model: v.model })),
     jobHistory:  jobRows.map((j: any) => ({
       id:      j.id,

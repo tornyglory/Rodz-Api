@@ -21,7 +21,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   if (ctx.role === 'technician') return forbidden()
 
   try {
-    const { name, email, phone, store, tag, notes, vehicles = [] } = JSON.parse(event.body ?? '{}')
+    const { name, email, phone, store, tag, notes, dob, address, vehicles = [] } = JSON.parse(event.body ?? '{}')
 
     if (!name?.trim())  return validationError('name is required.')
     if (!store?.trim()) return validationError('store is required.')
@@ -50,9 +50,15 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const last_name  = parts.slice(1).join(' ') || ''
 
     const [result] = await db.query<any>(
-      `INSERT INTO customers (first_name, last_name, email, mobile, store_id, internal_notes)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [first_name, last_name, email?.trim() ?? '', phone?.trim() ?? '', storeRow.id, notes ?? null],
+      `INSERT INTO customers (first_name, last_name, email, mobile, store_id, internal_notes,
+                              date_of_birth, address_line1, address_line2, suburb, state, postcode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        first_name, last_name, email?.trim() ?? '', phone?.trim() ?? '', storeRow.id, notes ?? null,
+        dob ?? null,
+        address?.line1?.trim() ?? null, address?.line2?.trim() ?? null,
+        address?.suburb?.trim() ?? null, address?.state?.trim() ?? null, address?.postcode?.trim() ?? null,
+      ],
     )
     const customerId = result.insertId
 
@@ -74,6 +80,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const [[row]] = await db.query<any[]>(
       `SELECT c.id, c.first_name, c.last_name, c.email, c.mobile, c.internal_notes,
+              c.date_of_birth, c.address_line1, c.address_line2, c.suburb, c.state, c.postcode,
               st.name AS store_name
        FROM customers c JOIN stores st ON st.id = c.store_id
        WHERE c.id = ?`,
