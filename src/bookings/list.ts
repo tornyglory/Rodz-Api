@@ -3,7 +3,7 @@ import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { ok, forbidden, serverError } from '../shared/errors'
-import { buildBooking, getAllowedStoreIds } from './_helpers'
+import { buildBooking, getAllowedStoreIds, getBookingServices } from './_helpers'
 
 const ready = bootstrap()
 
@@ -95,8 +95,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [...params, limit, offset],
     )
 
+    const bookingIds = rows.map((r: any) => r.id)
+    const servicesMap = await getBookingServices(db, bookingIds)
+
     return ok({
-      bookings: rows.map(buildBooking),
+      bookings: rows.map((r: any) => buildBooking(r, servicesMap.get(r.id) ?? [])),
       pagination: {
         total:  Number(total),
         page,

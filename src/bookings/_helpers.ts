@@ -21,7 +21,7 @@ const BOOKING_SELECT = `
 
 export const BOOKING_SELECT_BY_ID = `${BOOKING_SELECT} WHERE b.id = ? LIMIT 1`
 
-export function buildBooking(row: any) {
+export function buildBooking(row: any, services: any[] = []) {
   const toDate = (d: any) =>
     d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10)
 
@@ -59,6 +59,12 @@ export function buildBooking(row: any) {
     dropOffTime:     toTime(row.booking_time),
     notes:           row.customer_notes ?? null,
     staffNotes:      row.staff_notes ?? null,
+    services:        services.map((s) => ({
+      serviceTypeId:       s.service_type_id,
+      name:                s.name,
+      category:            s.category,
+      customerDescription: s.customer_description ?? null,
+    })),
   }
 }
 
@@ -76,6 +82,43 @@ export async function getAllowedStoreIds(db: mysql.Pool, staffId: string): Promi
     [staffId],
   )
   return rows.map((r) => r.store_id)
+}
+
+export async function getBookingServices(
+  db: mysql.Pool,
+  bookingIds: number[],
+): Promise<Map<number, any[]>> {
+  if (bookingIds.length === 0) return new Map()
+  const placeholders = bookingIds.map(() => '?').join(',')
+  const [rows] = await db.query<mysql.RowDataPacket[]>(
+    `SELECT bs.booking_id, bs.service_type_id, bs.customer_description,
+            st.name, st.category
+     FROM booking_services bs
+     JOIN service_types st ON st.id = bs.service_type_id
+     WHERE bs.booking_id IN (${placeholders})
+     ORDER BY bs.booking_id, bs.sort_order`,
+    bookingIds,
+  )
+  const map = new Map<number, any[]>()
+  for (const row of rows) {
+    if (!map.has(row.booking_id)) map.set(row.booking_id, [])
+    map.get(row.booking_id)!.push(row)
+  }
+  return map
+}
+
+export async function setBookingServices(
+  db: mysql.Pool,
+  bookingId: number,
+  services: Array<{ serviceTypeId: number; customerDescription?: string | null }>,
+): Promise<void> {
+  await db.query('DELETE FROM booking_services WHERE booking_id = ?', [bookingId])
+  if (services.length === 0) return
+  const values = services.map((s, i) => [bookingId, s.serviceTypeId, s.customerDescription ?? null, i])
+  await db.query(
+    'INSERT INTO booking_services (booking_id, service_type_id, customer_description, sort_order) VALUES ?',
+    [values],
+  )
 }
 
 // Excludes lookalike characters: 0, O, I, 1

@@ -159,6 +159,12 @@ export class RodzApiStack extends Stack {
       entry: src('bookings/delete.ts'), vpc, sharedEnv,
     }).fn
 
+    // ── Service types ───────────────────────────────────────────────────────
+
+    const serviceTypeListFn = new LambdaFn(this, 'ServiceTypeList', {
+      entry: src('service-types/list.ts'), vpc, sharedEnv,
+    }).fn
+
     // ── Email templates ─────────────────────────────────────────────────────
 
     const emailTemplatesGetFn = new LambdaFn(this, 'EmailTemplatesGet', {
@@ -361,6 +367,13 @@ export class RodzApiStack extends Stack {
       path: '/bookings/{id}',
       methods: [HttpMethod.DELETE],
       integration: new HttpLambdaIntegration('BookingDeleteInt', bookingDeleteFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/service-types',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('ServiceTypeListInt', serviceTypeListFn),
       authorizer,
     })
 

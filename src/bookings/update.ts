@@ -3,7 +3,10 @@ import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { ok, forbidden, validationError, serverError } from '../shared/errors'
-import { buildBooking, bookingError, getAllowedStoreIds, BOOKING_SELECT_BY_ID } from './_helpers'
+import {
+  buildBooking, bookingError, getAllowedStoreIds,
+  getBookingServices, setBookingServices, BOOKING_SELECT_BY_ID,
+} from './_helpers'
 
 const ready = bootstrap()
 
@@ -32,9 +35,15 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
-    const { status, assignedHoistId, assignedStaffId, dropOffTime } = body
+    const { status, assignedHoistId, assignedStaffId, dropOffTime, services } = body
 
-    if (status == null && assignedHoistId === undefined && assignedStaffId === undefined && dropOffTime === undefined) {
+    if (
+      status === undefined &&
+      assignedHoistId === undefined &&
+      assignedStaffId === undefined &&
+      dropOffTime === undefined &&
+      services === undefined
+    ) {
       return validationError('No valid fields to update.')
     }
 
@@ -48,7 +57,26 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       }
     }
 
-    // ── Build updates ──────────────────────────────────────────────────────
+    // ── Validate services if provided ──────────────────────────────────────
+    if (services !== undefined) {
+      if (!Array.isArray(services) || services.length === 0) {
+        return validationError('services must be a non-empty array.')
+      }
+      for (const s of services as any[]) {
+        if (!s.serviceTypeId) return validationError('Each service must include a serviceTypeId.')
+      }
+      const serviceTypeIds = (services as any[]).map((s) => s.serviceTypeId)
+      const placeholders = serviceTypeIds.map(() => '?').join(',')
+      const [stRows] = await db.query<any[]>(
+        `SELECT id FROM service_types WHERE id IN (${placeholders}) AND is_active = 1`,
+        serviceTypeIds,
+      )
+      if (stRows.length !== serviceTypeIds.length) {
+        return validationError('One or more service types are invalid or inactive.')
+      }
+    }
+
+    // ── Build booking field updates ────────────────────────────────────────
     const updates: [string, unknown][] = []
 
     if (status != null) {
@@ -63,15 +91,23 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (assignedStaffId !== undefined) updates.push(['assigned_staff_id', assignedStaffId])
 
     if (dropOffTime !== undefined) {
-      updates.push(['booking_time', dropOffTime ? `${dropOffTime}:00` : null])
+      updates.push(['booking_time', dropOffTime ? `${dropOffTime}:00` : '00:00:00'])
     }
 
-    const set    = updates.map(([k]) => `${k} = ?`).join(', ')
-    const values = [...updates.map(([, v]) => v), id]
-    await db.query<any>(`UPDATE bookings SET ${set} WHERE id = ?`, values)
+    if (updates.length > 0) {
+      const set    = updates.map(([k]) => `${k} = ?`).join(', ')
+      const values = [...updates.map(([, v]) => v), id]
+      await db.query<any>(`UPDATE bookings SET ${set} WHERE id = ?`, values)
+    }
+
+    // ── Replace services if provided ───────────────────────────────────────
+    if (services !== undefined) {
+      await setBookingServices(db, Number(id), services as any[])
+    }
 
     const [[updated]] = await db.query<any[]>(BOOKING_SELECT_BY_ID, [id])
-    return ok({ booking: buildBooking(updated) })
+    const servicesMap = await getBookingServices(db, [Number(id)])
+    return ok({ booking: buildBooking(updated, servicesMap.get(Number(id)) ?? []) })
   } catch (err) {
     return serverError(err)
   }
