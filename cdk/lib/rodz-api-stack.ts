@@ -107,6 +107,36 @@ export class RodzApiStack extends Stack {
       entry: src('settings/stores/hoists/delete.ts'), vpc, sharedEnv,
     }).fn
 
+    // ── Customers & vehicles ────────────────────────────────────────────────
+
+    const customerListFn = new LambdaFn(this, 'CustomerList', {
+      entry: src('customers/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerGetFn = new LambdaFn(this, 'CustomerGet', {
+      entry: src('customers/get.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerCreateFn = new LambdaFn(this, 'CustomerCreate', {
+      entry: src('customers/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerUpdateFn = new LambdaFn(this, 'CustomerUpdate', {
+      entry: src('customers/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const vehicleCreateFn = new LambdaFn(this, 'VehicleCreate', {
+      entry: src('customers/vehicles/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const vehicleUpdateFn = new LambdaFn(this, 'VehicleUpdate', {
+      entry: src('customers/vehicles/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const vehicleDeleteFn = new LambdaFn(this, 'VehicleDelete', {
+      entry: src('customers/vehicles/delete.ts'), vpc, sharedEnv,
+    }).fn
+
     // ── Email templates ─────────────────────────────────────────────────────
 
     const emailTemplatesGetFn = new LambdaFn(this, 'EmailTemplatesGet', {
@@ -225,6 +255,55 @@ export class RodzApiStack extends Stack {
       path: '/stores/{storeId}/hoists/{hoistId}',
       methods: [HttpMethod.DELETE],
       integration: new HttpLambdaIntegration('HoistDeleteInt', hoistDeleteFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/customers',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('CustomerListInt', customerListFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/customers',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('CustomerCreateInt', customerCreateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/customers/{id}',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('CustomerGetInt', customerGetFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/customers/{id}',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('CustomerUpdateInt', customerUpdateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/customers/{id}/vehicles',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('VehicleCreateInt', vehicleCreateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/customers/{customerId}/vehicles/{vehicleId}',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('VehicleUpdateInt', vehicleUpdateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/customers/{customerId}/vehicles/{vehicleId}',
+      methods: [HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('VehicleDeleteInt', vehicleDeleteFn),
       authorizer,
     })
 
