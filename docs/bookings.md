@@ -363,3 +363,96 @@ No body. **Response `204`** — no content.
 | `page` | number | Current page (1-based) |
 | `limit` | number | Results per page |
 | `pages` | number | Total number of pages |
+
+---
+
+## Frontend implementation guide — services
+
+Services replace the old free-text service field. Every booking must have at least one service selected. Here is exactly what needs to change.
+
+---
+
+### 1. Load service types on app start
+
+Call `GET /service-types` once when the app initialises (or when the booking form first opens) and cache the result in state. Do not hardcode service names.
+
+```
+GET /service-types
+→ store result in e.g. useServiceTypes() or a Redux/Zustand slice
+```
+
+The response groups naturally by `category`. Use this to render category headings in the picker.
+
+---
+
+### 2. Booking creation form — replace free-text with a picker
+
+Remove the current free-text service input. Replace it with a **multi-select service picker**:
+
+- Group services by `category` (e.g. Service, Tyres, Brakes, …)
+- Each row shows `name` and optionally `complexity` badge (`routine`, `moderate`, `complex`)
+- Staff can select multiple services
+- After selecting a service, optionally show a small text input for `customerDescription` (e.g. "Front tyres only") — this is per-service, not per-booking
+- At least one service must be selected before the form can submit
+
+**What to send on `POST /bookings`:**
+
+```json
+"services": [
+  { "serviceTypeId": 1 },
+  { "serviceTypeId": 4, "customerDescription": "Front tyres only" }
+]
+```
+
+---
+
+### 3. Booking cards / list view — display services
+
+Each booking in the list now includes a `services` array. Display service names on the booking card so staff can see at a glance what's booked.
+
+Suggested display: comma-separated names, e.g. `"Full Service, Tyre Rotation"`.
+
+If `customerDescription` is set on a service, show it as a sub-note beneath the service name (e.g. in a tooltip or expanded view).
+
+---
+
+### 4. Booking detail / edit drawer — show and edit services
+
+When a booking is opened for editing:
+
+- Display the current services (from `booking.services`)
+- Allow staff to change the selection
+- On save, send the full updated services array to `PATCH /bookings/{id}`:
+
+```json
+{
+  "services": [
+    { "serviceTypeId": 1 },
+    { "serviceTypeId": 7, "customerDescription": "Check rear brakes" }
+  ]
+}
+```
+
+Sending `services` in the PATCH **replaces all existing services** on the booking. Always send the complete desired list, not just the changes.
+
+---
+
+### 5. What NOT to do
+
+- Do not allow free-text service entry — staff must pick from the catalogue
+- Do not send an empty `services: []` array — the API will reject it with `422`
+- Do not cache service types indefinitely — re-fetch if the user has been idle (e.g. on next app focus)
+
+---
+
+### Service type fields the frontend needs
+
+| Field | Use |
+|-------|-----|
+| `id` | Send as `serviceTypeId` in booking payload |
+| `name` | Display in picker and on booking cards |
+| `category` | Group picker rows under category headings |
+| `description` | Show in picker as a subtitle or tooltip |
+| `complexity` | Optional badge: `routine` (green), `moderate` (yellow), `complex` (red) |
+| `hoistRequired` | Optionally surface as an icon — helps reception flag hoist availability |
+| `fixedPrice` | Optionally show estimated price in picker |
