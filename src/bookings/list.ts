@@ -10,6 +10,22 @@ const ready = bootstrap()
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT     = 200
 
+const BASE_SELECT = `
+  SELECT
+    b.id, b.booking_ref, b.customer_id, b.vehicle_id, b.hoist_id, b.assigned_staff_id,
+    b.booking_date, b.booking_time, b.slot, b.drop_off_type, b.status,
+    b.customer_notes, b.staff_notes, b.created_at,
+    CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
+    c.email                                AS customer_email,
+    s.name                                 AS store_name,
+    h.name                                 AS hoist_name,
+    CONCAT(LEFT(st.first_name, 1), '. ', st.last_name) AS tech_label
+  FROM bookings b
+  JOIN customers c  ON c.id  = b.customer_id
+  JOIN stores s     ON s.id  = b.store_id
+  LEFT JOIN hoists h   ON h.id  = b.hoist_id
+  LEFT JOIN staff st   ON st.id = b.assigned_staff_id`
+
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
   const db = getPool()
@@ -17,11 +33,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   const { store, status, date, page: pageParam, limit: limitParam } = event.queryStringParameters ?? {}
 
   const limit  = Math.min(Math.max(parseInt(limitParam ?? '0') || DEFAULT_LIMIT, 1), MAX_LIMIT)
-  const page   = Math.max(parseInt(pageParam  ?? '0') || 1, 1)
+  const page   = Math.max(parseInt(pageParam ?? '0') || 1, 1)
   const offset = (page - 1) * limit
 
   try {
-    const where: string[] = ['b.deleted_at IS NULL']
+    const where: string[] = ['b.cancelled_at IS NULL']
     const params: unknown[] = []
 
     if (ctx.role === 'super_admin') {
@@ -58,7 +74,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     if (date) {
-      where.push('b.date = ?')
+      where.push('b.booking_date = ?')
       params.push(date)
     }
 
@@ -70,9 +86,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     )
 
     const [rows] = await db.query<any[]>(
-      `SELECT * FROM bookings b
-       WHERE ${whereClause}
-       ORDER BY b.date ASC, b.slot ASC, b.id ASC
+      `${BASE_SELECT} WHERE ${whereClause}
+       ORDER BY b.booking_date ASC, b.slot ASC, b.id ASC
        LIMIT ? OFFSET ?`,
       [...params, limit, offset],
     )

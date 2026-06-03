@@ -17,7 +17,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const [[booking]] = await db.query<any[]>(
-      'SELECT store_id FROM bookings WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+      'SELECT store_id FROM bookings WHERE id = ? AND cancelled_at IS NULL LIMIT 1',
       [id],
     )
     if (!booking) return bookingError(404, 'BOOKING_NOT_FOUND', 'Booking not found.')
@@ -28,8 +28,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     await db.query<any>(
-      'UPDATE bookings SET deleted_at = NOW(), deleted_by = ? WHERE id = ? AND deleted_at IS NULL',
-      [ctx.staffId, id],
+      'UPDATE bookings SET cancelled_at = NOW() WHERE id = ? AND cancelled_at IS NULL',
+      [id],
     )
 
     return noContent()
