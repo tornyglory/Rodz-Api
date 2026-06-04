@@ -4,6 +4,7 @@ import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { ok, forbidden, validationError, serverError } from '../shared/errors'
 import { buildJob, jobError, getJobServices, getAllowedStoreIds, JOB_SELECT_BY_ID } from './_helpers'
+import { sendWorkCommencedEmail, sendWorkCompleteEmail } from '../shared/emailTemplates'
 
 const ready = bootstrap()
 
@@ -86,9 +87,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       }
     }
 
-    const [[updated]] = await db.query<any[]>(JOB_SELECT_BY_ID, [id])
+    const [[updatedRow]] = await db.query<any[]>(JOB_SELECT_BY_ID, [id])
     const servicesMap = await getJobServices(db, [Number(id)])
-    return ok({ job: buildJob(updated, servicesMap.get(Number(id)) ?? []) })
+    const result = buildJob(updatedRow, servicesMap.get(Number(id)) ?? [])
+    if (status === 'in_progress') await sendWorkCommencedEmail(db, result)
+    if (status === 'completed')   await sendWorkCompleteEmail(db, result)
+    return ok({ job: result })
   } catch (err) {
     return serverError(err)
   }

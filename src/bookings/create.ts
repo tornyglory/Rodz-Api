@@ -7,6 +7,7 @@ import {
   buildBooking, bookingError, getAllowedStoreIds, generateBookingRef,
   getBookingServices, setBookingServices, BOOKING_SELECT_BY_ID,
 } from './_helpers'
+import { sendBookingReceivedEmail } from '../shared/emailTemplates'
 
 const ready = bootstrap()
 
@@ -98,7 +99,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const [[row]] = await db.query<any[]>(BOOKING_SELECT_BY_ID, [bookingId])
     const servicesMap = await getBookingServices(db, [bookingId])
-    return created({ booking: buildBooking(row, servicesMap.get(bookingId) ?? []) })
+    const booking = buildBooking(row, servicesMap.get(bookingId) ?? [])
+    await sendBookingReceivedEmail(db, booking)
+    return created({ booking })
   } catch (err) {
     return serverError(err)
   }

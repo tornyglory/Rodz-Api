@@ -2,9 +2,9 @@ import mysql from 'mysql2/promise'
 
 export const JOB_SELECT = `
   SELECT
-    j.id, j.booking_id, j.store_id, j.hoist_id, j.customer_id, j.vehicle_id,
+    j.id, j.job_number, j.booking_id, j.store_id, j.hoist_id, j.customer_id, j.vehicle_id,
     j.status, j.slot, j.scheduled_time, j.sort_order, j.customer_notes, j.quote_id,
-    b.booking_date AS job_date,
+    b.booking_date AS job_date, b.booking_ref,
     CONCAT(c.first_name, ' ', c.last_name)     AS customer_name,
     c.email                                    AS customer_email,
     CONCAT(v.year, ' ', v.make, ' ', v.model)  AS vehicle_label,
@@ -45,7 +45,9 @@ export function buildJob(row: any, services: any[]) {
 
   return {
     id:              row.id,
+    jobNumber:       row.job_number,
     bookingId:       row.booking_id,
+    bookingRef:      row.booking_ref ?? null,
     customer:        row.customer_name,
     customerEmail:   row.customer_email ?? null,
     vehicle:         row.vehicle_label ?? null,

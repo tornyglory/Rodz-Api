@@ -148,11 +148,11 @@ export class RodzApiStack extends Stack {
     }).fn
 
     const bookingCreateFn = new LambdaFn(this, 'BookingCreate', {
-      entry: src('bookings/create.ts'), vpc, sharedEnv,
+      entry: src('bookings/create.ts'), vpc, sharedEnv, needsSes: true,
     }).fn
 
     const bookingUpdateFn = new LambdaFn(this, 'BookingUpdate', {
-      entry: src('bookings/update.ts'), vpc, sharedEnv,
+      entry: src('bookings/update.ts'), vpc, sharedEnv, needsSes: true,
     }).fn
 
     const bookingDeleteFn = new LambdaFn(this, 'BookingDelete', {
@@ -176,7 +176,7 @@ export class RodzApiStack extends Stack {
     }).fn
 
     const jobUpdateFn = new LambdaFn(this, 'JobUpdate', {
-      entry: src('jobs/update.ts'), vpc, sharedEnv,
+      entry: src('jobs/update.ts'), vpc, sharedEnv, needsSes: true,
     }).fn
 
     const jobReorderFn = new LambdaFn(this, 'JobReorder', {

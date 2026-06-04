@@ -8,6 +8,7 @@ import {
   getBookingServices, setBookingServices, BOOKING_SELECT_BY_ID,
 } from './_helpers'
 import { generateJobNumber } from '../jobs/_helpers'
+import { sendBookingConfirmedEmail } from '../shared/emailTemplates'
 
 const ready = bootstrap()
 
@@ -167,9 +168,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       }
     }
 
-    const [[updated]] = await db.query<any[]>(BOOKING_SELECT_BY_ID, [id])
+    const [[updatedRow]] = await db.query<any[]>(BOOKING_SELECT_BY_ID, [id])
     const servicesMap = await getBookingServices(db, [Number(id)])
-    return ok({ booking: buildBooking(updated, servicesMap.get(Number(id)) ?? []) })
+    const result = buildBooking(updatedRow, servicesMap.get(Number(id)) ?? [])
+    if (status === 'confirmed') await sendBookingConfirmedEmail(db, result)
+    return ok({ booking: result })
   } catch (err) {
     return serverError(err)
   }
