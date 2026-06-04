@@ -3,7 +3,7 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { getAuthContext } from '../../shared/auth'
 import { ok, forbidden, serverError } from '../../shared/errors'
-import { buildApiUser } from './_helpers'
+import { buildApiUser, STAFF_SELECT } from './_helpers'
 
 const ready = bootstrap()
 
@@ -12,15 +12,37 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   const db = getPool()
   const ctx = getAuthContext(event)
 
-  if (ctx.role !== 'super_admin') return forbidden()
+  if (ctx.role === 'technician') return forbidden()
+
+  const { store, status } = event.queryStringParameters ?? {}
 
   try {
+    const where: string[] = []
+    const params: unknown[] = []
+
+    if (ctx.role === 'super_admin') {
+      if (store) {
+        const [[storeRow]] = await db.query<any[]>(
+          'SELECT id FROM stores WHERE name LIKE ? LIMIT 1',
+          [`%${store}%`],
+        )
+        if (!storeRow) return ok({ users: [] })
+        where.push('s.store_id = ?')
+        params.push(storeRow.id)
+      }
+    } else {
+      where.push('s.store_id = ?')
+      params.push(ctx.storeId)
+    }
+
+    if (status === 'active')   where.push('s.is_active = 1')
+    if (status === 'inactive') where.push('s.is_active = 0')
+
+    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
+
     const [rows] = await db.query<any[]>(
-      `SELECT s.id, s.first_name, s.last_name, s.email, s.role, s.is_active, s.created_at,
-              st.name AS store_name
-       FROM staff s
-       JOIN stores st ON st.id = s.store_id
-       ORDER BY s.first_name, s.last_name`,
+      `${STAFF_SELECT} ${whereClause} ORDER BY s.store_id ASC, s.last_name ASC, s.first_name ASC`,
+      params,
     )
     return ok({ users: rows.map(buildApiUser) })
   } catch (err) {
