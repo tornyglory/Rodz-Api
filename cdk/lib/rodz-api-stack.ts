@@ -159,6 +159,30 @@ export class RodzApiStack extends Stack {
       entry: src('bookings/delete.ts'), vpc, sharedEnv,
     }).fn
 
+    // ── Hoists (operational) ────────────────────────────────────────────────
+
+    const hoistListFn = new LambdaFn(this, 'HoistList', {
+      entry: src('hoists/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const hoistAssignTechFn = new LambdaFn(this, 'HoistAssignTech', {
+      entry: src('hoists/assignTech.ts'), vpc, sharedEnv,
+    }).fn
+
+    // ── Jobs ────────────────────────────────────────────────────────────────
+
+    const jobListFn = new LambdaFn(this, 'JobList', {
+      entry: src('jobs/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const jobUpdateFn = new LambdaFn(this, 'JobUpdate', {
+      entry: src('jobs/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const jobReorderFn = new LambdaFn(this, 'JobReorder', {
+      entry: src('jobs/reorder.ts'), vpc, sharedEnv,
+    }).fn
+
     // ── Service types ───────────────────────────────────────────────────────
 
     const serviceTypeListFn = new LambdaFn(this, 'ServiceTypeList', {
@@ -367,6 +391,41 @@ export class RodzApiStack extends Stack {
       path: '/bookings/{id}',
       methods: [HttpMethod.DELETE],
       integration: new HttpLambdaIntegration('BookingDeleteInt', bookingDeleteFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/hoists',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('HoistListInt', hoistListFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/hoists/{id}',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('HoistAssignTechInt', hoistAssignTechFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/hoists/{id}/jobs/reorder',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('JobReorderInt', jobReorderFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/jobs',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('JobListInt', jobListFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/jobs/{id}',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('JobUpdateInt', jobUpdateFn),
       authorizer,
     })
 

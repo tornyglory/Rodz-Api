@@ -7,6 +7,7 @@ import {
   buildBooking, bookingError, getAllowedStoreIds,
   getBookingServices, setBookingServices, BOOKING_SELECT_BY_ID,
 } from './_helpers'
+import { generateJobNumber } from '../jobs/_helpers'
 
 const ready = bootstrap()
 
@@ -103,6 +104,67 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     // ── Replace services if provided ───────────────────────────────────────
     if (services !== undefined) {
       await setBookingServices(db, Number(id), services as any[])
+    }
+
+    // ── Auto-create job on confirm ─────────────────────────────────────────
+    if (status === 'confirmed') {
+      const [[existingJob]] = await db.query<any[]>(
+        'SELECT id FROM service_jobs WHERE booking_id = ? LIMIT 1',
+        [id],
+      )
+
+      if (!existingJob) {
+        const hoistIdForJob = assignedHoistId !== undefined ? assignedHoistId : booking.hoist_id
+
+        if (hoistIdForJob) {
+          // Inherit hoist's permanent tech (prefer body's assignedStaffId)
+          const [[hoistRow]] = await db.query<any[]>(
+            'SELECT assigned_staff_id FROM hoists WHERE id = ? LIMIT 1',
+            [hoistIdForJob],
+          )
+          const techId =
+            assignedStaffId !== undefined
+              ? assignedStaffId
+              : hoistRow?.assigned_staff_id ?? null
+
+          // Resolve start time
+          const rawTime = dropOffTime !== undefined
+            ? (dropOffTime ? String(dropOffTime) : null)
+            : (booking.booking_time && String(booking.booking_time) !== '00:00:00'
+              ? String(booking.booking_time).slice(0, 5)
+              : null)
+          const startTime = rawTime ?? (booking.slot === 'morning' ? '08:00' : '13:00')
+
+          // Resolve sort_order (append to active jobs on this hoist)
+          const [[{ maxOrder }]] = await db.query<any[]>(
+            `SELECT COALESCE(MAX(sort_order), 0) + 1 AS maxOrder
+             FROM service_jobs WHERE hoist_id = ? AND status NOT IN ('completed','invoiced','cancelled')`,
+            [hoistIdForJob],
+          )
+
+          const jobNumber = await generateJobNumber(db)
+
+          const [jobResult] = await db.query<any>(
+            `INSERT INTO service_jobs
+               (job_number, booking_id, hoist_id, store_id, customer_id, vehicle_id,
+                slot, scheduled_time, sort_order, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')`,
+            [
+              jobNumber, id, hoistIdForJob, booking.store_id,
+              booking.customer_id, booking.vehicle_id,
+              booking.slot, `${startTime}:00`, maxOrder,
+            ],
+          )
+
+          if (techId) {
+            await db.query(
+              `INSERT INTO service_job_staff (service_job_id, staff_id, role_on_job, created_at)
+               VALUES (?, ?, 'lead_mechanic', NOW())`,
+              [jobResult.insertId, techId],
+            )
+          }
+        }
+      }
     }
 
     const [[updated]] = await db.query<any[]>(BOOKING_SELECT_BY_ID, [id])
