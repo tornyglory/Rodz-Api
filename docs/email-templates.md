@@ -84,21 +84,20 @@ Send the complete settings object — all five templates must be included. This 
 
 Variables use `{{variableName}}` syntax in both `subject` and `body`. The backend substitutes real values at send time. Unrecognised variables are left unchanged, so the UI can safely display them as-is.
 
-| Variable | Available in |
-|----------|-------------|
-| `{{customerName}}` | All |
-| `{{vehicle}}` | All |
-| `{{rego}}` | All |
-| `{{store}}` | All |
-| `{{storeAddress}}` | `workCompleteTemplate` |
-| `{{quoteNumber}}` | `quoteTemplate` |
-| `{{quoteLink}}` | `quoteTemplate` |
-| `{{total}}` | `quoteTemplate` |
-| `{{service}}` | Booking templates, `workCommencedTemplate` |
-| `{{date}}` | `bookingReceivedTemplate`, `bookingConfirmedTemplate` |
-| `{{slot}}` | `bookingReceivedTemplate`, `bookingConfirmedTemplate` |
-| `{{hoist}}` | `bookingConfirmedTemplate` |
-| `{{tech}}` | `workCommencedTemplate` |
+| Variable | Available in | Notes |
+|----------|-------------|-------|
+| `{{customerName}}` | All | Full name e.g. `"Jane Smith"` |
+| `{{firstName}}` | All | First name only e.g. `"Jane"` |
+| `{{vehicle}}` | All | `"2020 Toyota Corolla"` |
+| `{{rego}}` | All | `"ABC123"` |
+| `{{store}}` | All | Short store name e.g. `"Grey Lynn"` |
+| `{{services}}` | All | Comma-joined service names e.g. `"WOF, Oil Change"` |
+| `{{bookingRef}}` | Booking templates, job templates | 8-char ref e.g. `"AB3K9XZ1"` |
+| `{{date}}` | All | Formatted e.g. `"Tue 10 Jun 2026"` |
+| `{{slot}}` | Booking templates | `"Morning"` or `"Afternoon"` |
+| `{{dropOffTime}}` | `bookingReceivedTemplate`, `bookingConfirmedTemplate` | `"09:00"` or empty string |
+| `{{techName}}` | `bookingConfirmedTemplate`, `workCommencedTemplate`, `workCompleteTemplate` | `"A. Ross"` or `"TBA"` |
+| `{{jobNumber}}` | `workCommencedTemplate`, `workCompleteTemplate` | `"J00042"` |
 
 ---
 
