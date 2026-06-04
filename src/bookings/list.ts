@@ -29,11 +29,18 @@ const BASE_SELECT = `
   LEFT JOIN staff st   ON st.id = b.assigned_staff_id
   LEFT JOIN vehicles v ON v.id  = b.vehicle_id`
 
+// COUNT uses the same joins as BASE_SELECT so search by name/rego works correctly
+const BASE_COUNT = `
+  SELECT COUNT(*) AS total
+  FROM bookings b
+  JOIN customers c  ON c.id = b.customer_id
+  LEFT JOIN vehicles v ON v.id = b.vehicle_id`
+
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
   const db = getPool()
   const ctx = getAuthContext(event)
-  const { store, status, date, page: pageParam, limit: limitParam } = event.queryStringParameters ?? {}
+  const { store, status, date, search, page: pageParam, limit: limitParam } = event.queryStringParameters ?? {}
 
   const limit  = Math.min(Math.max(parseInt(limitParam ?? '0') || DEFAULT_LIMIT, 1), MAX_LIMIT)
   const page   = Math.max(parseInt(pageParam ?? '0') || 1, 1)
@@ -81,10 +88,16 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       params.push(date)
     }
 
+    if (search?.trim()) {
+      const term = `%${search.trim()}%`
+      where.push('(CONCAT(c.first_name, \' \', c.last_name) LIKE ? OR v.rego LIKE ?)')
+      params.push(term, term)
+    }
+
     const whereClause = where.join(' AND ')
 
     const [[{ total }]] = await db.query<any[]>(
-      `SELECT COUNT(*) AS total FROM bookings b WHERE ${whereClause}`,
+      `${BASE_COUNT} WHERE ${whereClause}`,
       params,
     )
 

@@ -68,6 +68,7 @@ Authorization: Bearer <accessToken>
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
+| `search` | string | — | Partial match against customer full name or rego plate. Case-insensitive. e.g. `"Karen"` or `"KWA"`. |
 | `store` | string | — | Filter by store name (partial match e.g. `"Somerville"`). Omit or `"all"` → all accessible stores. |
 | `status` | string | — | `pending` \| `confirmed` \| `rejected`. Omit → all statuses. |
 | `date` | string | — | ISO date `YYYY-MM-DD`. Omit → all dates. |
