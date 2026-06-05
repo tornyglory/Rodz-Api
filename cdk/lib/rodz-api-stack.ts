@@ -208,6 +208,42 @@ export class RodzApiStack extends Stack {
       entry: src('service-types/delete.ts'), vpc, sharedEnv,
     }).fn
 
+    // ── Suppliers ───────────────────────────────────────────────────────────
+
+    const supplierListFn = new LambdaFn(this, 'SupplierList', {
+      entry: src('suppliers/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const supplierCreateFn = new LambdaFn(this, 'SupplierCreate', {
+      entry: src('suppliers/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const supplierUpdateFn = new LambdaFn(this, 'SupplierUpdate', {
+      entry: src('suppliers/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const supplierDeleteFn = new LambdaFn(this, 'SupplierDelete', {
+      entry: src('suppliers/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    // ── Parts ────────────────────────────────────────────────────────────────
+
+    const partListFn = new LambdaFn(this, 'PartList', {
+      entry: src('parts/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const partCreateFn = new LambdaFn(this, 'PartCreate', {
+      entry: src('parts/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const partUpdateFn = new LambdaFn(this, 'PartUpdate', {
+      entry: src('parts/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const partDeleteFn = new LambdaFn(this, 'PartDelete', {
+      entry: src('parts/delete.ts'), vpc, sharedEnv,
+    }).fn
+
     // ── Email templates ─────────────────────────────────────────────────────
 
     const emailTemplatesGetFn = new LambdaFn(this, 'EmailTemplatesGet', {
@@ -550,6 +586,62 @@ export class RodzApiStack extends Stack {
       path: '/service-types/{id}',
       methods: [HttpMethod.DELETE],
       integration: new HttpLambdaIntegration('ServiceTypeDeleteInt', serviceTypeDeleteFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/suppliers',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('SupplierListInt', supplierListFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/suppliers',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('SupplierCreateInt', supplierCreateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/suppliers/{id}',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('SupplierUpdateInt', supplierUpdateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/suppliers/{id}',
+      methods: [HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('SupplierDeleteInt', supplierDeleteFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/parts',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('PartListInt', partListFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/parts',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('PartCreateInt', partCreateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/parts/{id}',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('PartUpdateInt', partUpdateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/parts/{id}',
+      methods: [HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('PartDeleteInt', partDeleteFn),
       authorizer,
     })
 

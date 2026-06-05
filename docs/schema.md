@@ -12,7 +12,7 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | [Bookings](#bookings) | `bookings`, `booking_services` |
 | [Jobs](#jobs) | `service_jobs`, `service_job_items`, `service_job_parts`, `service_job_staff` |
 | [Financials](#financials) | `invoices`, `payments`, `quotes`, `quote_items`, `purchase_orders`, `purchase_order_items` |
-| [Catalog](#catalog) | `service_types`, `catalog_items`, `parts` |
+| [Catalog](#catalog) | `service_types`, `catalog_items`, `parts`, `suppliers` |
 | [Inspections](#inspections) | `job_inspections`, `job_inspection_results`, `inspection_checklist_items`, `job_documents` |
 | [Customers — extended](#customers--extended) | `customer_tags`, `customer_communications`, `loyalty_transactions` |
 | [Vehicles — extended](#vehicles--extended) | `vehicle_service_history` |
@@ -531,24 +531,42 @@ Pre-built line items (labour templates, common parts).
 
 ---
 
+### `suppliers`
+
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `id` | int unsigned | NO | — |
+| `name` | varchar(100) | NO | — |
+| `contact_name` | varchar(100) | YES | — |
+| `phone` | varchar(20) | YES | — |
+| `email` | varchar(255) | YES | — |
+| `website` | varchar(255) | YES | — |
+| `account_number` | varchar(60) | YES | — |
+| `notes` | text | YES | — |
+| `is_active` | tinyint(1) | NO | `1` |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+---
+
 ### `parts`
 
-Inventory parts.
+Inventory parts. `supplier_id` FK to `suppliers`. The old `supplier varchar(80)` column is replaced by this FK.
 
-| Column | Type | Null |
-|--------|------|------|
-| `id` | bigint unsigned | NO |
-| `part_number` | varchar(60) | NO |
-| `name` | varchar(150) | NO |
-| `category` | varchar(60) | YES |
-| `supplier` | varchar(80) | YES |
-| `supplier_part_number` | varchar(60) | YES |
-| `cost_price` | decimal(10,2) | NO |
-| `sell_price` | decimal(10,2) | NO |
-| `gst_applicable` | tinyint(1) | NO |
-| `stock_on_hand` | int | NO |
-| `reorder_point` | int | NO |
-| `is_active` | tinyint(1) | NO |
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `id` | bigint unsigned | NO | — |
+| `part_number` | varchar(60) | NO | — |
+| `name` | varchar(150) | NO | — |
+| `category` | varchar(60) | YES | — |
+| `supplier_id` | int unsigned | YES | — |
+| `supplier_part_number` | varchar(60) | YES | — |
+| `cost_price` | decimal(10,2) | NO | — |
+| `sell_price` | decimal(10,2) | NO | — |
+| `gst_applicable` | tinyint(1) | NO | `1` |
+| `stock_on_hand` | int | NO | `0` |
+| `reorder_point` | int | NO | `0` |
+| `is_active` | tinyint(1) | NO | `1` |
 
 ---
 
