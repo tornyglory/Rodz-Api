@@ -244,6 +244,24 @@ export class RodzApiStack extends Stack {
       entry: src('parts/delete.ts'), vpc, sharedEnv,
     }).fn
 
+    // ── Part names ───────────────────────────────────────────────────────────
+
+    const partNameListFn = new LambdaFn(this, 'PartNameList', {
+      entry: src('part-names/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const partNameCreateFn = new LambdaFn(this, 'PartNameCreate', {
+      entry: src('part-names/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const partNameUpdateFn = new LambdaFn(this, 'PartNameUpdate', {
+      entry: src('part-names/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const partNameDeleteFn = new LambdaFn(this, 'PartNameDelete', {
+      entry: src('part-names/delete.ts'), vpc, sharedEnv,
+    }).fn
+
     // ── Email templates ─────────────────────────────────────────────────────
 
     const emailTemplatesGetFn = new LambdaFn(this, 'EmailTemplatesGet', {
@@ -642,6 +660,34 @@ export class RodzApiStack extends Stack {
       path: '/parts/{id}',
       methods: [HttpMethod.DELETE],
       integration: new HttpLambdaIntegration('PartDeleteInt', partDeleteFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/part-names',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('PartNameListInt', partNameListFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/part-names',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('PartNameCreateInt', partNameCreateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/part-names/{id}',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('PartNameUpdateInt', partNameUpdateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/part-names/{id}',
+      methods: [HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('PartNameDeleteInt', partNameDeleteFn),
       authorizer,
     })
 

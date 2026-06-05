@@ -12,7 +12,7 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | [Bookings](#bookings) | `bookings`, `booking_services` |
 | [Jobs](#jobs) | `service_jobs`, `service_job_items`, `service_job_parts`, `service_job_staff` |
 | [Financials](#financials) | `invoices`, `payments`, `quotes`, `quote_items`, `purchase_orders`, `purchase_order_items` |
-| [Catalog](#catalog) | `service_types`, `catalog_items`, `parts`, `suppliers` |
+| [Catalog](#catalog) | `service_types`, `catalog_items`, `parts`, `suppliers`, `part_names` |
 | [Inspections](#inspections) | `job_inspections`, `job_inspection_results`, `inspection_checklist_items`, `job_documents` |
 | [Customers — extended](#customers--extended) | `customer_tags`, `customer_communications`, `loyalty_transactions` |
 | [Vehicles — extended](#vehicles--extended) | `vehicle_service_history` |
@@ -528,6 +528,19 @@ Pre-built line items (labour templates, common parts).
 | `is_active` | tinyint(1) | NO |
 
 **`type` enum:** `labour`, `part`, `other`
+
+---
+
+### `part_names`
+
+Master list of part name templates used as a reference when creating parts or quoting.
+
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `id` | int unsigned | NO | — |
+| `name` | varchar(150) | NO | — |
+| `category` | varchar(60) | YES | — |
+| `is_active` | tinyint(1) | NO | `1` |
 
 ---
 
