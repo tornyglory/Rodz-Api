@@ -196,6 +196,18 @@ export class RodzApiStack extends Stack {
       entry: src('service-types/list.ts'), vpc, sharedEnv,
     }).fn
 
+    const serviceTypeCreateFn = new LambdaFn(this, 'ServiceTypeCreate', {
+      entry: src('service-types/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const serviceTypeUpdateFn = new LambdaFn(this, 'ServiceTypeUpdate', {
+      entry: src('service-types/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const serviceTypeDeleteFn = new LambdaFn(this, 'ServiceTypeDelete', {
+      entry: src('service-types/delete.ts'), vpc, sharedEnv,
+    }).fn
+
     // ── Email templates ─────────────────────────────────────────────────────
 
     const emailTemplatesGetFn = new LambdaFn(this, 'EmailTemplatesGet', {
@@ -517,6 +529,27 @@ export class RodzApiStack extends Stack {
       path: '/service-types',
       methods: [HttpMethod.GET],
       integration: new HttpLambdaIntegration('ServiceTypeListInt', serviceTypeListFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/service-types',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('ServiceTypeCreateInt', serviceTypeCreateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/service-types/{id}',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('ServiceTypeUpdateInt', serviceTypeUpdateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/service-types/{id}',
+      methods: [HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('ServiceTypeDeleteInt', serviceTypeDeleteFn),
       authorizer,
     })
 
