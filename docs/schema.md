@@ -27,6 +27,7 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | [Audit](#audit) | `audit_log` |
 | [Reviews](#reviews) | `reviews` |
 | [Warranty](#warranty) | `warranty_claims` |
+| [Photos](#photos) | `photos` |
 
 ---
 
@@ -965,3 +966,25 @@ Tracks all insert/update/delete operations across the system.
 | `credit_amount` | decimal(10,2) | YES |
 
 **`resolution` enum:** `pending`, `approved_replace`, `approved_refund`, `denied`, `escalated_to_supplier`
+
+---
+
+## Photos
+
+### `photos`
+
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `id` | int unsigned | NO | — |
+| `image_id` | varchar(255) | NO | — |
+| `vehicle_rego` | varchar(20) | NO | — |
+| `quote_id` | int unsigned | YES | — |
+| `quote_item_id` | int unsigned | YES | — |
+| `uploaded_by` | int unsigned | NO | — |
+| `caption` | varchar(255) | YES | — |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+`image_id` is the Cloudflare Images image ID. Image URLs are derived at read time — never stored:
+`https://imagedelivery.net/{CF_ACCOUNT_ID}/{image_id}/{variant}` where variant is `thumbnail` or `public`.
+
+`quote_id` and `quote_item_id` are both nullable. A photo attached to a specific line item sets both. A photo for a quote but not a line item sets `quote_id` only. A general condition photo sets neither.

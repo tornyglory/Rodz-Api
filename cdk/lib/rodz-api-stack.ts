@@ -29,8 +29,11 @@ export class RodzApiStack extends Stack {
       DB_PORT:     process.env.DB_PORT     ?? '3306',
       DB_USER:     process.env.DB_USER     ?? '',
       DB_PASSWORD: process.env.DB_PASSWORD ?? '',
-      DB_NAME:     process.env.DB_NAME     ?? 'rodz',
-      JWT_SECRET:  process.env.JWT_SECRET  ?? '',
+      DB_NAME:          process.env.DB_NAME          ?? 'rodz',
+      JWT_SECRET:       process.env.JWT_SECRET       ?? '',
+      FRONTEND_URL:     process.env.FRONTEND_URL     ?? '',
+      CF_ACCOUNT_ID:    process.env.CF_ACCOUNT_ID    ?? '',
+      CF_IMAGES_TOKEN:  process.env.CF_IMAGES_TOKEN  ?? '',
     }
 
     const src = (p: string) => path.join(__dirname, '../../src', p)
@@ -179,6 +182,10 @@ export class RodzApiStack extends Stack {
       entry: src('jobs/update.ts'), vpc, sharedEnv, needsSes: true,
     }).fn
 
+    const jobGetFn = new LambdaFn(this, 'JobGet', {
+      entry: src('jobs/get.ts'), vpc, sharedEnv,
+    }).fn
+
     const jobReorderFn = new LambdaFn(this, 'JobReorder', {
       entry: src('jobs/reorder.ts'), vpc, sharedEnv,
     }).fn
@@ -198,6 +205,76 @@ export class RodzApiStack extends Stack {
     const emailTemplatesUpdateFn = new LambdaFn(this, 'EmailTemplatesUpdate', {
       entry: src('settings/email-templates/update.ts'), vpc, sharedEnv,
       needsSes: true,
+    }).fn
+
+    // ── Photos ──────────────────────────────────────────────────────────────
+
+    const photoUploadUrlFn = new LambdaFn(this, 'PhotoUploadUrl', {
+      entry: src('photos/uploadUrl.ts'), vpc, sharedEnv,
+    }).fn
+
+    const photoCreateFn = new LambdaFn(this, 'PhotoCreate', {
+      entry: src('photos/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const photoListFn = new LambdaFn(this, 'PhotoList', {
+      entry: src('photos/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const photoDeleteFn = new LambdaFn(this, 'PhotoDelete', {
+      entry: src('photos/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    // ── Catalog ─────────────────────────────────────────────────────────────
+
+    const catalogListFn = new LambdaFn(this, 'CatalogList', {
+      entry: src('catalog/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const catalogCreateFn = new LambdaFn(this, 'CatalogCreate', {
+      entry: src('catalog/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const catalogUpdateFn = new LambdaFn(this, 'CatalogUpdate', {
+      entry: src('catalog/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const catalogDeleteFn = new LambdaFn(this, 'CatalogDelete', {
+      entry: src('catalog/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    // ── Quotes ──────────────────────────────────────────────────────────────
+
+    const quoteListFn = new LambdaFn(this, 'QuoteList', {
+      entry: src('quotes/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const quoteGetFn = new LambdaFn(this, 'QuoteGet', {
+      entry: src('quotes/get.ts'), vpc, sharedEnv,
+    }).fn
+
+    const quoteCreateFn = new LambdaFn(this, 'QuoteCreate', {
+      entry: src('quotes/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const quoteUpdateFn = new LambdaFn(this, 'QuoteUpdate', {
+      entry: src('quotes/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const quoteDeleteFn = new LambdaFn(this, 'QuoteDelete', {
+      entry: src('quotes/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    const quoteSendFn = new LambdaFn(this, 'QuoteSend', {
+      entry: src('quotes/send.ts'), vpc, sharedEnv, needsSes: true,
+    }).fn
+
+    const quotePublicGetFn = new LambdaFn(this, 'QuotePublicGet', {
+      entry: src('quotes/public/get.ts'), vpc, sharedEnv,
+    }).fn
+
+    const quotePublicApproveFn = new LambdaFn(this, 'QuotePublicApprove', {
+      entry: src('quotes/public/approve.ts'), vpc, sharedEnv,
     }).fn
 
     // ── API Gateway + JWT authorizer ────────────────────────────────────────
@@ -424,6 +501,13 @@ export class RodzApiStack extends Stack {
 
     httpApi.addRoutes({
       path: '/jobs/{id}',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('JobGetInt', jobGetFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/jobs/{id}',
       methods: [HttpMethod.PATCH],
       integration: new HttpLambdaIntegration('JobUpdateInt', jobUpdateFn),
       authorizer,
@@ -448,6 +532,117 @@ export class RodzApiStack extends Stack {
       methods: [HttpMethod.PUT],
       integration: new HttpLambdaIntegration('EmailTemplatesUpdateInt', emailTemplatesUpdateFn),
       authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/photos/upload-url',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('PhotoUploadUrlInt', photoUploadUrlFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/photos',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('PhotoCreateInt', photoCreateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/vehicles/{rego}/photos',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('PhotoListInt', photoListFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/photos/{id}',
+      methods: [HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('PhotoDeleteInt', photoDeleteFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/catalog',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('CatalogListInt', catalogListFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/catalog',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('CatalogCreateInt', catalogCreateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/catalog/{id}',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('CatalogUpdateInt', catalogUpdateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/catalog/{id}',
+      methods: [HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('CatalogDeleteInt', catalogDeleteFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/quotes',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('QuoteListInt', quoteListFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/quotes',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('QuoteCreateInt', quoteCreateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/quotes/{id}',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('QuoteGetInt', quoteGetFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/quotes/{id}',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('QuoteUpdateInt', quoteUpdateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/quotes/{id}',
+      methods: [HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('QuoteDeleteInt', quoteDeleteFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/quotes/{id}/send',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('QuoteSendInt', quoteSendFn),
+      authorizer,
+    })
+
+    // Public quote routes — no JWT authorizer
+    httpApi.addRoutes({
+      path: '/q/{token}',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('QuotePublicGetInt', quotePublicGetFn),
+    })
+
+    httpApi.addRoutes({
+      path: '/q/{token}/approve',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('QuotePublicApproveInt', quotePublicApproveFn),
     })
   }
 }
