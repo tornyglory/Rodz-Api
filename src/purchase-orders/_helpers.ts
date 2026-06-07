@@ -36,6 +36,7 @@ export function buildPOItem(row: any) {
     partId:           row.part_id ?? null,
     serviceJobId:     row.service_job_id ?? null,
     description:      row.description,
+    partNumber:       row.part_number ?? null,
     quantityOrdered:  Number(row.quantity_ordered),
     quantityReceived: Number(row.quantity_received ?? 0),
     unitCost:         Number(row.unit_cost),
@@ -53,7 +54,7 @@ export function poError(statusCode: number, code: string, message: string) {
 
 export async function getPOItems(db: mysql.Pool, poId: number): Promise<any[]> {
   const [rows] = await db.query<any[]>(
-    `SELECT id, part_id, service_job_id, description, quantity_ordered, quantity_received, unit_cost, notes
+    `SELECT id, part_id, service_job_id, description, part_number, quantity_ordered, quantity_received, unit_cost, notes
      FROM purchase_order_items WHERE purchase_order_id = ? ORDER BY id`,
     [poId],
   )
@@ -64,7 +65,7 @@ export async function getPOItemsBatch(db: mysql.Pool, poIds: number[]): Promise<
   if (poIds.length === 0) return new Map()
   const placeholders = poIds.map(() => '?').join(',')
   const [rows] = await db.query<any[]>(
-    `SELECT id, purchase_order_id, part_id, service_job_id, description, quantity_ordered, quantity_received, unit_cost, notes
+    `SELECT id, purchase_order_id, part_id, service_job_id, description, part_number, quantity_ordered, quantity_received, unit_cost, notes
      FROM purchase_order_items WHERE purchase_order_id IN (${placeholders}) ORDER BY purchase_order_id, id`,
     poIds,
   )

@@ -32,7 +32,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     const body = JSON.parse(event.body ?? '{}') as Record<string, any>
-    const { description, quantityOrdered, unitCost, partId, serviceJobId, notes } = body
+    const { description, partNumber, quantityOrdered, unitCost, partId, serviceJobId, notes } = body
 
     if (!description) return validationError('description is required.')
     if (quantityOrdered == null) return validationError('quantityOrdered is required.')
@@ -40,9 +40,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     await db.query(
       `INSERT INTO purchase_order_items
-         (purchase_order_id, part_id, service_job_id, description, quantity_ordered, quantity_received, unit_cost, notes)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
-      [poId, partId ?? null, serviceJobId ?? null, description, Number(quantityOrdered), Number(unitCost), notes ?? null],
+         (purchase_order_id, part_id, service_job_id, description, part_number, quantity_ordered, quantity_received, unit_cost, notes)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+      [poId, partId ?? null, serviceJobId ?? null, description, partNumber ?? null, Number(quantityOrdered), Number(unitCost), notes ?? null],
     )
 
     await recalcPOTotals(db, Number(poId))

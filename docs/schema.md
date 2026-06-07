@@ -531,6 +531,7 @@ Soft-delete: `deleted_at IS NULL` for active records. Status is also set to `can
 | `part_id` | bigint unsigned | YES |
 | `service_job_id` | bigint unsigned | YES |
 | `description` | varchar(500) | NO |
+| `part_number` | varchar(100) | YES |
 | `quantity_ordered` | decimal(8,2) | NO |
 | `quantity_received` | decimal(8,2) | NO |
 | `unit_cost` | decimal(10,2) | NO |

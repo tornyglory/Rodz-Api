@@ -63,6 +63,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       item.partId ?? null,
       item.serviceJobId ?? null,
       item.description,
+      item.partNumber ?? null,
       Number(item.quantityOrdered),
       0,
       Number(item.unitCost),
@@ -70,7 +71,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     ])
     await db.query(
       `INSERT INTO purchase_order_items
-         (purchase_order_id, part_id, service_job_id, description, quantity_ordered, quantity_received, unit_cost, notes)
+         (purchase_order_id, part_id, service_job_id, description, part_number, quantity_ordered, quantity_received, unit_cost, notes)
        VALUES ?`,
       [itemRows],
     )

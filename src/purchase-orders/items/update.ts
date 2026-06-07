@@ -35,9 +35,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!item) return poError(404, 'ITEM_NOT_FOUND', 'Item not found on this purchase order.')
 
     const body = JSON.parse(event.body ?? '{}') as Record<string, any>
-    const { description, quantityOrdered, unitCost, notes, quantityReceived } = body
+    const { description, partNumber, quantityOrdered, unitCost, notes, quantityReceived } = body
 
-    const hasEditFields = description !== undefined || quantityOrdered !== undefined || unitCost !== undefined || notes !== undefined
+    const hasEditFields = description !== undefined || partNumber !== undefined || quantityOrdered !== undefined || unitCost !== undefined || notes !== undefined
     const hasReceiveField = quantityReceived !== undefined
 
     if (!hasEditFields && !hasReceiveField) return validationError('No valid fields to update.')
@@ -49,6 +49,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       }
       const updates: [string, unknown][] = []
       if (description !== undefined) updates.push(['description', description])
+      if (partNumber !== undefined) updates.push(['part_number', partNumber ?? null])
       if (quantityOrdered !== undefined) updates.push(['quantity_ordered', Number(quantityOrdered)])
       if (unitCost !== undefined) updates.push(['unit_cost', Number(unitCost)])
       if (notes !== undefined) updates.push(['notes', notes ?? null])
