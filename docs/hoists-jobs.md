@@ -466,7 +466,11 @@ No body. **Response `204`** — no content.
 | Field | Type | Notes |
 |-------|------|-------|
 | `id` | number | |
+| `jobNumber` | string | Auto-generated e.g. `J00042` |
 | `bookingId` | number | FK to bookings |
+| `customerId` | number | FK to customers |
+| `vehicleId` | number \| null | FK to vehicles. `null` if no vehicle attached. |
+| `bookingRef` | string \| null | Human-readable booking reference |
 | `customer` | string | Full name, live-joined |
 | `customerEmail` | string \| null | Live-joined from customers |
 | `vehicle` | string \| null | `"{year} {make} {model}"`, live-joined |
@@ -489,7 +493,136 @@ No body. **Response `204`** — no content.
 | `durationMins` | number | Computed from services. Minimum `60`. |
 | `sortOrder` | number | Position on the hoist board for this date |
 | `notes` | string \| null | Customer-facing notes |
-| `quoteId` | number \| null | FK to a quote, if generated |
+| `quoteId` | number \| null | FK to a quote. Set if a quote has been generated directly on the job, or via the linked booking. `null` if no quote exists. |
+
+---
+
+## Job drawer — fetching the quote
+
+When a job drawer opens, check `job.quoteId`. If it is not `null`, fetch the quote to show line items, approval status, and parts order details.
+
+```
+GET /quotes/{quoteId}
+Authorization: Bearer <accessToken>
+```
+
+### Quote response
+
+```json
+{
+  "quote": {
+    "id": 18,
+    "quoteNumber": "Q-2606-001",
+    "bookingId": 7,
+    "customerName": "Jane Smith",
+    "customerEmail": "jane@example.com",
+    "customerPhone": "021 555 0100",
+    "vehicle": "2020 Toyota Corolla",
+    "rego": "ABC123",
+    "store": "Grey Lynn",
+    "tech": "J. Smith",
+    "status": "approved",
+    "notes": null,
+    "token": "abc123token",
+    "sentAt": "2026-06-08T02:00:00.000Z",
+    "createdAt": "2026-06-07",
+    "subtotal": 350.00,
+    "gst": 35.00,
+    "total": 385.00,
+    "items": [
+      {
+        "id": 101,
+        "catalogItemId": null,
+        "partId": 12,
+        "partNumber": "RF234",
+        "partName": "Repco Oil Filter",
+        "costPrice": 18.50,
+        "serviceTypeId": null,
+        "supplierId": 3,
+        "supplierName": "Repco",
+        "description": "Oil Filter",
+        "type": "part",
+        "hours": null,
+        "qty": 1,
+        "unitPrice": 45.00,
+        "approved": true
+      },
+      {
+        "id": 102,
+        "catalogItemId": null,
+        "partId": null,
+        "partNumber": null,
+        "partName": null,
+        "costPrice": null,
+        "serviceTypeId": 1,
+        "supplierId": null,
+        "supplierName": null,
+        "description": "Oil Change — Labour",
+        "type": "labour",
+        "hours": 0.5,
+        "qty": 1,
+        "unitPrice": 80.00,
+        "approved": true
+      }
+    ]
+  }
+}
+```
+
+### Quote item fields
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | number | Quote item ID |
+| `type` | string | `"part"` \| `"labour"` \| `"sublet"` |
+| `description` | string | Display label for the line item |
+| `qty` | number | Quantity |
+| `unitPrice` | number | Sell price per unit (inc. markup) |
+| `hours` | number \| null | Labour hours. `null` for non-labour items. |
+| `approved` | boolean \| null | Customer approval: `true` = approved, `false` = rejected, `null` = pending |
+| `partId` | number \| null | FK to `parts`. Set on `type: "part"` items only. |
+| `partNumber` | string \| null | Supplier part number. `null` for labour/sublet items. |
+| `partName` | string \| null | Part name from the parts catalogue. `null` for labour/sublet items. |
+| `costPrice` | number \| null | Cost price (what we pay the supplier). `null` for non-part items. |
+| `supplierId` | number \| null | FK to suppliers. `null` for non-part items. |
+| `supplierName` | string \| null | Supplier display name. `null` for non-part items. |
+| `serviceTypeId` | number \| null | FK to service_types. Set on `type: "labour"` items that map to a service. |
+| `catalogItemId` | number \| null | FK to catalog_items. Set if item came from the service catalogue. |
+
+### Quote status values
+
+| Status | Meaning |
+|--------|---------|
+| `draft` | Being built — not yet sent to customer |
+| `sent` | Sent to customer awaiting response |
+| `approved` | Customer approved — items may be individually approved/rejected |
+| `rejected` | Customer rejected the quote |
+| `invoiced` | Invoice raised |
+| `paid` | Payment received |
+
+### Parts order workflow from the job drawer
+
+Use the quote items to drive the parts ordering UI:
+
+1. **Check `job.quoteId`** — if `null`, no quote yet; show "Create Quote" button
+2. **Fetch `GET /quotes/{quoteId}`** — get full items list
+3. **Filter `items` where `type === "part" && approved === true`** — these are the approved parts that need to be ordered
+4. **Check purchase orders** via `GET /purchase-orders?jobId={job.id}` — see if a PO already exists for this job
+5. **Create a PO** if needed — use `POST /purchase-orders`, pre-filling items from the approved part items using `partId`, `partNumber`, `description`, `qty`, and `costPrice` as the `unitCost`
+
+Each approved part item contains everything needed to pre-fill a PO line:
+
+```json
+{
+  "description": "Oil Filter",
+  "partNumber": "RF234",
+  "partId": 12,
+  "quantityOrdered": 1,
+  "unitCost": 18.50
+}
+```
+
+See `docs/purchase-orders.md` for the full PO API reference.
 
 ---
 
