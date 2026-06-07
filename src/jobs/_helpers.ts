@@ -51,6 +51,8 @@ export function buildJob(row: any, services: any[]) {
     id:              row.id,
     jobNumber:       row.job_number,
     bookingId:       row.booking_id,
+    customerId:      row.customer_id,
+    vehicleId:       row.vehicle_id,
     bookingRef:      row.booking_ref ?? null,
     customer:        row.customer_name,
     customerEmail:   row.customer_email ?? null,
