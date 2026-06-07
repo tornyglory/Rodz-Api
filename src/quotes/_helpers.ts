@@ -145,7 +145,26 @@ export async function setQuoteItems(
   quoteId: number,
   items: any[],
 ): Promise<{ subtotal: number; gst: number; total: number }> {
+  // Collect existing part_ids before replacing items
+  const [oldItemRows] = await db.query<any[]>(
+    'SELECT part_id FROM quote_items WHERE quote_id = ? AND part_id IS NOT NULL',
+    [quoteId],
+  )
+  const oldPartIds: number[] = oldItemRows.map((r: any) => r.part_id)
+
   await db.query('DELETE FROM quote_items WHERE quote_id = ?', [quoteId])
+
+  // Clean up parts that are no longer referenced anywhere
+  if (oldPartIds.length > 0) {
+    const ph = oldPartIds.map(() => '?').join(',')
+    await db.query(
+      `DELETE FROM parts WHERE id IN (${ph})
+       AND NOT EXISTS (SELECT 1 FROM quote_items qi WHERE qi.part_id = parts.id)
+       AND NOT EXISTS (SELECT 1 FROM purchase_order_items poi WHERE poi.part_id = parts.id)`,
+      oldPartIds,
+    )
+  }
+
   if (items.length === 0) return { subtotal: 0, gst: 0, total: 0 }
 
   // Validate catalogItemIds — null out any that don't exist in catalog_items

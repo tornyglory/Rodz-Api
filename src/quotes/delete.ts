@@ -38,9 +38,27 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       if (!allowedIds.includes(quote.store_id)) return forbidden()
     }
 
+    // ── Collect part_ids before deleting items ────────────────────────────
+    const [itemRows] = await db.query<any[]>(
+      'SELECT part_id FROM quote_items WHERE quote_id = ? AND part_id IS NOT NULL',
+      [id],
+    )
+    const partIds: number[] = itemRows.map((r: any) => r.part_id)
+
     // ── Delete items then quote ────────────────────────────────────────────
     await db.query('DELETE FROM quote_items WHERE quote_id = ?', [id])
     await db.query('DELETE FROM quotes WHERE id = ?', [id])
+
+    // ── Clean up orphaned parts (not referenced by any other quote or PO) ──
+    if (partIds.length > 0) {
+      const ph = partIds.map(() => '?').join(',')
+      await db.query(
+        `DELETE FROM parts WHERE id IN (${ph})
+         AND NOT EXISTS (SELECT 1 FROM quote_items qi WHERE qi.part_id = parts.id)
+         AND NOT EXISTS (SELECT 1 FROM purchase_order_items poi WHERE poi.part_id = parts.id)`,
+        partIds,
+      )
+    }
 
     return noContent()
   } catch (err) {
