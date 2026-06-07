@@ -4,6 +4,35 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 
 ---
 
+## Conventions
+
+**Soft deletes** — pattern varies by table:
+
+| Table | Pattern |
+|-------|---------|
+| `customers`, `vehicles`, `staff`, `parts`, `suppliers`, `part_names`, `service_types`, `catalog_items` | `is_active = 0` |
+| `bookings` | `cancelled_at = NOW()` — filter with `cancelled_at IS NULL` |
+| `purchase_orders` | `deleted_at = NOW()` + `status = 'cancelled'` — filter with `deleted_at IS NULL` |
+
+**Generated columns** — MySQL computes these; never include in INSERT or UPDATE:
+
+| Table | Column | Expression |
+|-------|--------|------------|
+| `quote_items` | `line_total` | `quantity * unit_price` |
+| `service_job_items` | `line_total` | `quantity * unit_price` |
+| `purchase_order_items` | `line_total` | `quantity_ordered * unit_cost` |
+
+**Key relationships:**
+
+- `quotes.booking_id` → `bookings.id` (nullable — quotes can exist without a booking)
+- `service_jobs.booking_id` → `bookings.id` (nullable)
+- `service_jobs.quote_id` → `quotes.id` (nullable — direct link; also derivable via `quotes.booking_id`)
+- `purchase_order_items.service_job_id` → `service_jobs.id` (nullable — links PO items to a job)
+- `vehicle_owners` is the join table between `vehicles` and `customers`; `is_current = 1` is the active owner
+- `staff_store_access` controls which stores a staff member can access; filter with `revoked_at IS NULL`
+
+---
+
 ## Table index
 
 | Group | Tables |
@@ -304,6 +333,8 @@ Line items on a job (labour, parts, sublets, discounts).
 
 **`line_type` enum:** `labour`, `part`, `sublet`, `discount`
 
+`line_total` is a generated column (`quantity * unit_price`) — do not insert or update it directly.
+
 ---
 
 ### `service_job_parts`
@@ -459,9 +490,11 @@ Staff assigned to a job with time tracking.
 
 **`line_type` enum:** `labour`, `part`, `sublet`, `discount`, `note`
 
+`line_total` is a generated column (`quantity * unit_price`) — do not insert or update it directly.
+
 ---
 
-### `purchase_orders` / `purchase_order_items`
+### `purchase_orders`
 
 | Column | Type | Null |
 |--------|------|------|
@@ -479,8 +512,32 @@ Staff assigned to a job with time tracking.
 | `supplier_invoice_ref` | varchar(60) | YES |
 | `notes` | text | YES |
 | `created_by_staff_id` | bigint unsigned | YES |
+| `created_at` | datetime | NO |
+| `updated_at` | datetime | NO |
+| `deleted_at` | datetime | YES |
 
 **`status` enum:** `draft`, `ordered`, `partial`, `received`, `cancelled`
+
+Soft-delete: `deleted_at IS NULL` for active records. Status is also set to `cancelled` on delete.
+
+---
+
+### `purchase_order_items`
+
+| Column | Type | Null |
+|--------|------|------|
+| `id` | bigint unsigned | NO |
+| `purchase_order_id` | bigint unsigned | NO |
+| `part_id` | bigint unsigned | YES |
+| `service_job_id` | bigint unsigned | YES |
+| `description` | varchar(500) | NO |
+| `quantity_ordered` | decimal(8,2) | NO |
+| `quantity_received` | decimal(8,2) | NO |
+| `unit_cost` | decimal(10,2) | NO |
+| `line_total` | decimal(10,2) | YES |
+| `notes` | text | YES |
+
+`line_total` is a generated column (`quantity_ordered * unit_cost`) — do not insert or update it directly.
 
 ---
 
@@ -622,6 +679,23 @@ Individual checklist item results within an inspection.
 | `generated_quote_item_id` | bigint unsigned | YES |
 
 **`condition_rating` enum:** `good`, `advisory`, `attention`, `urgent`, `na`
+
+---
+
+### `inspection_checklist_items`
+
+Master list of items that appear on every vehicle inspection.
+
+| Column | Type | Null |
+|--------|------|------|
+| `id` | smallint unsigned | NO |
+| `category` | varchar(60) | NO |
+| `name` | varchar(120) | NO |
+| `description` | varchar(300) | YES |
+| `sort_order` | smallint | NO |
+| `is_active` | tinyint(1) | NO |
+
+Referenced by `job_inspection_results.checklist_item_id`.
 
 ---
 
@@ -795,6 +869,23 @@ All outbound messages to customers.
 **`channel` enum:** `email`, `sms`, `push`, `in_app`
 
 **`status` enum:** `queued`, `sent`, `delivered`, `opened`, `clicked`, `failed`, `bounced`, `unsubscribed`
+
+---
+
+### `notification_templates`
+
+Reusable message templates for each notification type.
+
+| Column | Type | Null |
+|--------|------|------|
+| `id` | smallint unsigned | NO |
+| `notification_type` | varchar(60) | NO |
+| `channel` | enum | NO |
+| `subject` | varchar(255) | YES |
+| `body_template` | text | NO |
+| `is_active` | tinyint(1) | NO |
+
+**`channel` enum:** `email`, `sms`, `push`, `in_app`
 
 ---
 

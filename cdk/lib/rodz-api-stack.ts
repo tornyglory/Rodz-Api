@@ -262,6 +262,40 @@ export class RodzApiStack extends Stack {
       entry: src('part-names/delete.ts'), vpc, sharedEnv,
     }).fn
 
+    // ── Purchase orders ─────────────────────────────────────────────────────
+
+    const poListFn = new LambdaFn(this, 'POList', {
+      entry: src('purchase-orders/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const poGetFn = new LambdaFn(this, 'POGet', {
+      entry: src('purchase-orders/get.ts'), vpc, sharedEnv,
+    }).fn
+
+    const poCreateFn = new LambdaFn(this, 'POCreate', {
+      entry: src('purchase-orders/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const poUpdateFn = new LambdaFn(this, 'POUpdate', {
+      entry: src('purchase-orders/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const poDeleteFn = new LambdaFn(this, 'PODelete', {
+      entry: src('purchase-orders/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    const poItemCreateFn = new LambdaFn(this, 'POItemCreate', {
+      entry: src('purchase-orders/items/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const poItemUpdateFn = new LambdaFn(this, 'POItemUpdate', {
+      entry: src('purchase-orders/items/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const poItemDeleteFn = new LambdaFn(this, 'POItemDelete', {
+      entry: src('purchase-orders/items/delete.ts'), vpc, sharedEnv,
+    }).fn
+
     // ── Email templates ─────────────────────────────────────────────────────
 
     const emailTemplatesGetFn = new LambdaFn(this, 'EmailTemplatesGet', {
@@ -800,6 +834,64 @@ export class RodzApiStack extends Stack {
       path: '/quotes/{id}/send',
       methods: [HttpMethod.POST],
       integration: new HttpLambdaIntegration('QuoteSendInt', quoteSendFn),
+      authorizer,
+    })
+
+    // ── Purchase order routes ───────────────────────────────────────────────
+
+    httpApi.addRoutes({
+      path: '/purchase-orders',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('POListInt', poListFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/purchase-orders',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('POCreateInt', poCreateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/purchase-orders/{id}',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('POGetInt', poGetFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/purchase-orders/{id}',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('POUpdateInt', poUpdateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/purchase-orders/{id}',
+      methods: [HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('PODeleteInt', poDeleteFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/purchase-orders/{id}/items',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('POItemCreateInt', poItemCreateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/purchase-orders/{id}/items/{itemId}',
+      methods: [HttpMethod.PATCH],
+      integration: new HttpLambdaIntegration('POItemUpdateInt', poItemUpdateFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/purchase-orders/{id}/items/{itemId}',
+      methods: [HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('POItemDeleteInt', poItemDeleteFn),
       authorizer,
     })
 

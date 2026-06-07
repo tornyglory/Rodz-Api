@@ -2,7 +2,7 @@ import mysql from 'mysql2/promise'
 
 export const QUOTE_SELECT = `
   SELECT
-    q.id, q.quote_number, q.store_id, q.prepared_by_staff_id,
+    q.id, q.quote_number, q.booking_id, q.store_id, q.prepared_by_staff_id,
     q.customer_id, q.vehicle_id, q.status, q.internal_notes,
     q.token, q.sent_at, q.created_at,
     q.subtotal, q.gst_amount, q.total,
@@ -23,6 +23,7 @@ export function buildQuote(row: any, items: any[]) {
   return {
     id:            row.id,
     quoteNumber:   row.quote_number,
+    bookingId:     row.booking_id ?? null,
     customerName:  row.customer_name,
     customerEmail: row.customer_email ?? null,
     customerPhone: row.customer_phone ?? null,
