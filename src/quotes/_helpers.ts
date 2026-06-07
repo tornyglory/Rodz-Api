@@ -48,6 +48,9 @@ export function buildItem(row: any) {
     id:            row.id,
     catalogItemId: row.catalog_item_id ?? null,
     partId:        row.part_id ?? null,
+    partNumber:    row.part_number ?? null,
+    partName:      row.part_name ?? null,
+    costPrice:     row.cost_price != null ? Number(row.cost_price) : null,
     serviceTypeId: row.service_type_id ?? null,
     supplierId:    row.supplier_id ?? null,
     supplierName:  row.supplier_name ?? null,
@@ -72,7 +75,7 @@ export async function getQuoteItems(db: mysql.Pool, quoteId: number): Promise<an
   const [rows] = await db.query<any[]>(
     `SELECT qi.id, qi.catalog_item_id, qi.part_id, qi.service_type_id, qi.description, qi.line_type, qi.hours,
             qi.quantity, qi.unit_price, qi.is_accepted, qi.sort_order,
-            p.supplier_id, s.name AS supplier_name
+            p.part_number, p.name AS part_name, p.cost_price, p.supplier_id, s.name AS supplier_name
      FROM quote_items qi
      LEFT JOIN parts p      ON p.id = qi.part_id
      LEFT JOIN suppliers s  ON s.id = p.supplier_id
@@ -88,7 +91,7 @@ export async function getQuoteItemsBatch(db: mysql.Pool, quoteIds: number[]): Pr
   const [rows] = await db.query<any[]>(
     `SELECT qi.id, qi.quote_id, qi.catalog_item_id, qi.part_id, qi.service_type_id, qi.description, qi.line_type, qi.hours,
             qi.quantity, qi.unit_price, qi.is_accepted, qi.sort_order,
-            p.supplier_id, s.name AS supplier_name
+            p.part_number, p.name AS part_name, p.cost_price, p.supplier_id, s.name AS supplier_name
      FROM quote_items qi
      LEFT JOIN parts p      ON p.id = qi.part_id
      LEFT JOIN suppliers s  ON s.id = p.supplier_id
