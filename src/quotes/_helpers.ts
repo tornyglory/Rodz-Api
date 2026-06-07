@@ -95,12 +95,28 @@ export async function setQuoteItems(
 ): Promise<{ subtotal: number; gst: number; total: number }> {
   await db.query('DELETE FROM quote_items WHERE quote_id = ?', [quoteId])
   if (items.length === 0) return { subtotal: 0, gst: 0, total: 0 }
+
+  // Validate catalogItemIds — null out any that don't exist in catalog_items
+  const requestedIds = items.map((i: any) => i.catalogItemId).filter((id: any) => id != null)
+  const validCatalogIds = new Set<number>()
+  if (requestedIds.length > 0) {
+    const placeholders = requestedIds.map(() => '?').join(',')
+    const [catalogRows] = await db.query<any[]>(
+      `SELECT id FROM catalog_items WHERE id IN (${placeholders})`,
+      requestedIds,
+    )
+    for (const r of catalogRows) validCatalogIds.add(r.id)
+  }
+
   let subtotal = 0
   const rows = items.map((item: any, i: number) => {
     subtotal += Number(item.qty ?? 1) * Number(item.unitPrice)
+    const catalogItemId = item.catalogItemId != null && validCatalogIds.has(Number(item.catalogItemId))
+      ? item.catalogItemId
+      : null
     return [
       quoteId,
-      item.catalogItemId ?? null,
+      catalogItemId,
       item.description,
       item.type ?? 'labour',
       item.hours ?? null,
