@@ -47,6 +47,9 @@ export function buildItem(row: any) {
   return {
     id:            row.id,
     catalogItemId: row.catalog_item_id ?? null,
+    partId:        row.part_id ?? null,
+    supplierId:    row.supplier_id ?? null,
+    supplierName:  row.supplier_name ?? null,
     description:   row.description,
     type:          row.line_type,
     hours:         row.hours !== null && row.hours !== undefined ? Number(row.hours) : null,
@@ -66,8 +69,13 @@ export function quoteError(statusCode: number, code: string, message: string) {
 
 export async function getQuoteItems(db: mysql.Pool, quoteId: number): Promise<any[]> {
   const [rows] = await db.query<any[]>(
-    `SELECT id, catalog_item_id, description, line_type, hours, quantity, unit_price, is_accepted, sort_order
-     FROM quote_items WHERE quote_id = ? ORDER BY sort_order, id`,
+    `SELECT qi.id, qi.catalog_item_id, qi.part_id, qi.description, qi.line_type, qi.hours,
+            qi.quantity, qi.unit_price, qi.is_accepted, qi.sort_order,
+            p.supplier_id, s.name AS supplier_name
+     FROM quote_items qi
+     LEFT JOIN parts p      ON p.id = qi.part_id
+     LEFT JOIN suppliers s  ON s.id = p.supplier_id
+     WHERE qi.quote_id = ? ORDER BY qi.sort_order, qi.id`,
     [quoteId],
   )
   return rows.map(buildItem)
@@ -77,8 +85,13 @@ export async function getQuoteItemsBatch(db: mysql.Pool, quoteIds: number[]): Pr
   if (quoteIds.length === 0) return new Map()
   const placeholders = quoteIds.map(() => '?').join(',')
   const [rows] = await db.query<any[]>(
-    `SELECT id, quote_id, catalog_item_id, description, line_type, hours, quantity, unit_price, is_accepted, sort_order
-     FROM quote_items WHERE quote_id IN (${placeholders}) ORDER BY quote_id, sort_order, id`,
+    `SELECT qi.id, qi.quote_id, qi.catalog_item_id, qi.part_id, qi.description, qi.line_type, qi.hours,
+            qi.quantity, qi.unit_price, qi.is_accepted, qi.sort_order,
+            p.supplier_id, s.name AS supplier_name
+     FROM quote_items qi
+     LEFT JOIN parts p      ON p.id = qi.part_id
+     LEFT JOIN suppliers s  ON s.id = p.supplier_id
+     WHERE qi.quote_id IN (${placeholders}) ORDER BY qi.quote_id, qi.sort_order, qi.id`,
     quoteIds,
   )
   const map = new Map<number, any[]>()
