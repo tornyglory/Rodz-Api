@@ -126,7 +126,7 @@ export async function generateQuoteNumber(db: mysql.Pool): Promise<string> {
   const mm = String(now.getMonth() + 1).padStart(2, '0')
   const prefix = `Q-${yy}${mm}-`
   const [[{ nextSeq }]] = await db.query<any[]>(
-    `SELECT COALESCE(MAX(CAST(SUBSTRING(quote_number, 7) AS UNSIGNED)), 0) + 1 AS nextSeq
+    `SELECT COALESCE(MAX(CAST(SUBSTRING(quote_number, 8) AS UNSIGNED)), 0) + 1 AS nextSeq
      FROM quotes WHERE quote_number LIKE ?`,
     [`${prefix}%`],
   )
