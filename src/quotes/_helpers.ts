@@ -48,6 +48,7 @@ export function buildItem(row: any) {
     id:            row.id,
     catalogItemId: row.catalog_item_id ?? null,
     partId:        row.part_id ?? null,
+    serviceTypeId: row.service_type_id ?? null,
     supplierId:    row.supplier_id ?? null,
     supplierName:  row.supplier_name ?? null,
     description:   row.description,
@@ -69,7 +70,7 @@ export function quoteError(statusCode: number, code: string, message: string) {
 
 export async function getQuoteItems(db: mysql.Pool, quoteId: number): Promise<any[]> {
   const [rows] = await db.query<any[]>(
-    `SELECT qi.id, qi.catalog_item_id, qi.part_id, qi.description, qi.line_type, qi.hours,
+    `SELECT qi.id, qi.catalog_item_id, qi.part_id, qi.service_type_id, qi.description, qi.line_type, qi.hours,
             qi.quantity, qi.unit_price, qi.is_accepted, qi.sort_order,
             p.supplier_id, s.name AS supplier_name
      FROM quote_items qi
@@ -85,7 +86,7 @@ export async function getQuoteItemsBatch(db: mysql.Pool, quoteIds: number[]): Pr
   if (quoteIds.length === 0) return new Map()
   const placeholders = quoteIds.map(() => '?').join(',')
   const [rows] = await db.query<any[]>(
-    `SELECT qi.id, qi.quote_id, qi.catalog_item_id, qi.part_id, qi.description, qi.line_type, qi.hours,
+    `SELECT qi.id, qi.quote_id, qi.catalog_item_id, qi.part_id, qi.service_type_id, qi.description, qi.line_type, qi.hours,
             qi.quantity, qi.unit_price, qi.is_accepted, qi.sort_order,
             p.supplier_id, s.name AS supplier_name
      FROM quote_items qi
@@ -134,6 +135,18 @@ export async function setQuoteItems(
     for (const r of partRows) validPartIds.add(r.id)
   }
 
+  // Validate serviceTypeIds — null out any that don't exist in service_types
+  const requestedServiceTypeIds = items.map((i: any) => i.serviceTypeId).filter((id: any) => id != null)
+  const validServiceTypeIds = new Set<number>()
+  if (requestedServiceTypeIds.length > 0) {
+    const placeholders = requestedServiceTypeIds.map(() => '?').join(',')
+    const [serviceTypeRows] = await db.query<any[]>(
+      `SELECT id FROM service_types WHERE id IN (${placeholders})`,
+      requestedServiceTypeIds,
+    )
+    for (const r of serviceTypeRows) validServiceTypeIds.add(r.id)
+  }
+
   let subtotal = 0
   const rows = items.map((item: any, i: number) => {
     subtotal += Number(item.qty ?? 1) * Number(item.unitPrice)
@@ -143,10 +156,14 @@ export async function setQuoteItems(
     const partId = item.partId != null && validPartIds.has(Number(item.partId))
       ? item.partId
       : null
+    const serviceTypeId = item.serviceTypeId != null && validServiceTypeIds.has(Number(item.serviceTypeId))
+      ? item.serviceTypeId
+      : null
     return [
       quoteId,
       catalogItemId,
       partId,
+      serviceTypeId,
       item.description,
       item.type ?? 'labour',
       item.hours ?? null,
@@ -158,7 +175,7 @@ export async function setQuoteItems(
     ]
   })
   await db.query(
-    `INSERT INTO quote_items (quote_id, catalog_item_id, part_id, description, line_type, hours, quantity, unit_price, gst_applicable, is_optional, sort_order)
+    `INSERT INTO quote_items (quote_id, catalog_item_id, part_id, service_type_id, description, line_type, hours, quantity, unit_price, gst_applicable, is_optional, sort_order)
      VALUES ?`,
     [rows],
   )
