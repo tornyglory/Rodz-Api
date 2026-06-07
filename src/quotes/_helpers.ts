@@ -97,8 +97,7 @@ export async function setQuoteItems(
   if (items.length === 0) return { subtotal: 0, gst: 0, total: 0 }
   let subtotal = 0
   const rows = items.map((item: any, i: number) => {
-    const lineTotal = Number(item.qty ?? 1) * Number(item.unitPrice)
-    subtotal += lineTotal
+    subtotal += Number(item.qty ?? 1) * Number(item.unitPrice)
     return [
       quoteId,
       item.catalogItemId ?? null,
@@ -107,14 +106,13 @@ export async function setQuoteItems(
       item.hours ?? null,
       item.qty ?? 1,
       item.unitPrice,
-      lineTotal,
       1,
       0,
       i,
     ]
   })
   await db.query(
-    `INSERT INTO quote_items (quote_id, catalog_item_id, description, line_type, hours, quantity, unit_price, line_total, gst_applicable, is_optional, sort_order)
+    `INSERT INTO quote_items (quote_id, catalog_item_id, description, line_type, hours, quantity, unit_price, gst_applicable, is_optional, sort_order)
      VALUES ?`,
     [rows],
   )
