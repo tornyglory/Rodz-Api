@@ -111,15 +111,27 @@ export async function setQuoteItems(
   if (items.length === 0) return { subtotal: 0, gst: 0, total: 0 }
 
   // Validate catalogItemIds — null out any that don't exist in catalog_items
-  const requestedIds = items.map((i: any) => i.catalogItemId).filter((id: any) => id != null)
+  const requestedCatalogIds = items.map((i: any) => i.catalogItemId).filter((id: any) => id != null)
   const validCatalogIds = new Set<number>()
-  if (requestedIds.length > 0) {
-    const placeholders = requestedIds.map(() => '?').join(',')
+  if (requestedCatalogIds.length > 0) {
+    const placeholders = requestedCatalogIds.map(() => '?').join(',')
     const [catalogRows] = await db.query<any[]>(
       `SELECT id FROM catalog_items WHERE id IN (${placeholders})`,
-      requestedIds,
+      requestedCatalogIds,
     )
     for (const r of catalogRows) validCatalogIds.add(r.id)
+  }
+
+  // Validate partIds — null out any that don't exist in parts
+  const requestedPartIds = items.map((i: any) => i.partId).filter((id: any) => id != null)
+  const validPartIds = new Set<number>()
+  if (requestedPartIds.length > 0) {
+    const placeholders = requestedPartIds.map(() => '?').join(',')
+    const [partRows] = await db.query<any[]>(
+      `SELECT id FROM parts WHERE id IN (${placeholders})`,
+      requestedPartIds,
+    )
+    for (const r of partRows) validPartIds.add(r.id)
   }
 
   let subtotal = 0
@@ -128,9 +140,13 @@ export async function setQuoteItems(
     const catalogItemId = item.catalogItemId != null && validCatalogIds.has(Number(item.catalogItemId))
       ? item.catalogItemId
       : null
+    const partId = item.partId != null && validPartIds.has(Number(item.partId))
+      ? item.partId
+      : null
     return [
       quoteId,
       catalogItemId,
+      partId,
       item.description,
       item.type ?? 'labour',
       item.hours ?? null,
@@ -142,7 +158,7 @@ export async function setQuoteItems(
     ]
   })
   await db.query(
-    `INSERT INTO quote_items (quote_id, catalog_item_id, description, line_type, hours, quantity, unit_price, gst_applicable, is_optional, sort_order)
+    `INSERT INTO quote_items (quote_id, catalog_item_id, part_id, description, line_type, hours, quantity, unit_price, gst_applicable, is_optional, sort_order)
      VALUES ?`,
     [rows],
   )
