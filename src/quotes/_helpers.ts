@@ -103,6 +103,43 @@ export async function getQuoteItemsBatch(db: mysql.Pool, quoteIds: number[]): Pr
   return map
 }
 
+async function resolvePartId(db: mysql.Pool, item: any): Promise<number | null> {
+  // Explicit partId — validate it exists
+  if (item.partId != null) {
+    const [[row]] = await db.query<any[]>('SELECT id FROM parts WHERE id = ? LIMIT 1', [item.partId])
+    return row ? Number(item.partId) : null
+  }
+
+  // No partNumber — nothing to upsert
+  if (!item.partNumber) return null
+
+  const name       = item.partName ?? item.description
+  const supplierId = item.supplierId ?? null
+  const costPrice  = item.costPrice  ?? 0
+  const sellPrice  = item.unitPrice  ?? 0
+
+  // Find existing by part_number + supplier_id (NULL-safe)
+  const [[existing]] = await db.query<any[]>(
+    'SELECT id FROM parts WHERE part_number = ? AND supplier_id <=> ? LIMIT 1',
+    [item.partNumber, supplierId],
+  )
+
+  if (existing) {
+    await db.query(
+      'UPDATE parts SET cost_price = ?, sell_price = ? WHERE id = ?',
+      [costPrice, sellPrice, existing.id],
+    )
+    return Number(existing.id)
+  }
+
+  const [result] = await db.query<any>(
+    `INSERT INTO parts (name, part_number, supplier_id, cost_price, sell_price, gst_applicable, stock_on_hand, reorder_point, is_active)
+     VALUES (?, ?, ?, ?, ?, 1, 0, 0, 1)`,
+    [name, item.partNumber, supplierId, costPrice, sellPrice],
+  )
+  return result.insertId
+}
+
 export async function setQuoteItems(
   db: mysql.Pool,
   quoteId: number,
@@ -123,18 +160,6 @@ export async function setQuoteItems(
     for (const r of catalogRows) validCatalogIds.add(r.id)
   }
 
-  // Validate partIds — null out any that don't exist in parts
-  const requestedPartIds = items.map((i: any) => i.partId).filter((id: any) => id != null)
-  const validPartIds = new Set<number>()
-  if (requestedPartIds.length > 0) {
-    const placeholders = requestedPartIds.map(() => '?').join(',')
-    const [partRows] = await db.query<any[]>(
-      `SELECT id FROM parts WHERE id IN (${placeholders})`,
-      requestedPartIds,
-    )
-    for (const r of partRows) validPartIds.add(r.id)
-  }
-
   // Validate serviceTypeIds — null out any that don't exist in service_types
   const requestedServiceTypeIds = items.map((i: any) => i.serviceTypeId).filter((id: any) => id != null)
   const validServiceTypeIds = new Set<number>()
@@ -147,14 +172,16 @@ export async function setQuoteItems(
     for (const r of serviceTypeRows) validServiceTypeIds.add(r.id)
   }
 
+  // Resolve partIds — upsert into parts table for part-type items
+  const resolvedPartIds = await Promise.all(
+    items.map((item: any) => item.type === 'part' ? resolvePartId(db, item) : Promise.resolve(null)),
+  )
+
   let subtotal = 0
   const rows = items.map((item: any, i: number) => {
     subtotal += Number(item.qty ?? 1) * Number(item.unitPrice)
     const catalogItemId = item.catalogItemId != null && validCatalogIds.has(Number(item.catalogItemId))
       ? item.catalogItemId
-      : null
-    const partId = item.partId != null && validPartIds.has(Number(item.partId))
-      ? item.partId
       : null
     const serviceTypeId = item.serviceTypeId != null && validServiceTypeIds.has(Number(item.serviceTypeId))
       ? item.serviceTypeId
@@ -162,7 +189,7 @@ export async function setQuoteItems(
     return [
       quoteId,
       catalogItemId,
-      partId,
+      resolvedPartIds[i],
       serviceTypeId,
       item.description,
       item.type ?? 'labour',
