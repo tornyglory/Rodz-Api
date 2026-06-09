@@ -21,24 +21,24 @@ No body. Returns the saved settings, or built-in defaults if nothing has been sa
   "fromAddress": "bookings@rodz.com.au",
   "replyTo": "",
   "quoteTemplate": {
-    "subject": "Your quote from Rodz Auto — {{quoteNumber}}",
-    "body": "Hi {{customerName}},\n\nWe've prepared a quote for your {{vehicle}} ({{rego}}).\n\nQuote #{{quoteNumber}} — Total: {{total}}\n\nView your quote here: {{quoteLink}}\n\nIf you have any questions, feel free to reply to this email.\n\nRodz Auto {{store}}"
+    "subject": "Your quote from Rodz Auto {{store}} — {{quoteNumber}}",
+    "body": "Hi {{firstName}},\n\nWe've prepared a quote for your {{vehicle}} ({{rego}}).\n\nQuote #{{quoteNumber}}\n\nView and approve your quote here:\n{{approvalLink}}\n\nIf you have any questions, feel free to reply to this email.\n\nRodz Auto {{store}}"
   },
   "bookingReceivedTemplate": {
-    "subject": "Booking received — {{service}} at Rodz Auto {{store}}",
-    "body": "Hi {{customerName}},\n\nThanks for booking with us! We've received your booking request and will confirm shortly.\n\nVehicle: {{vehicle}} ({{rego}})\nService: {{service}}\nRequested date: {{date}}\nTime slot: {{slot}}\n\nRodz Auto {{store}}"
+    "subject": "Booking received — {{services}} at Rodz Auto {{store}}",
+    "body": "Hi {{firstName}},\n\nThanks for booking with us! We've received your booking request and will confirm shortly.\n\nVehicle: {{vehicle}} ({{rego}})\nService: {{services}}\nRequested date: {{date}}\nTime slot: {{slot}}\n\nRodz Auto {{store}}"
   },
   "bookingConfirmedTemplate": {
-    "subject": "Booking confirmed — {{service}} on {{date}}",
-    "body": "Hi {{customerName}},\n\nGreat news — your booking is confirmed!\n\nVehicle: {{vehicle}} ({{rego}})\nService: {{service}}\nDate: {{date}}\nTime slot: {{slot}}\nHoist: {{hoist}}\n\nRodz Auto {{store}}"
+    "subject": "Booking confirmed — {{services}} on {{date}}",
+    "body": "Hi {{firstName}},\n\nGreat news — your booking is confirmed!\n\nVehicle: {{vehicle}} ({{rego}})\nService: {{services}}\nDate: {{date}}\nTime slot: {{slot}}\nTechnician: {{techName}}\n\nRodz Auto {{store}}"
   },
   "workCommencedTemplate": {
     "subject": "Work has commenced on your {{vehicle}}",
-    "body": "Hi {{customerName}},\n\nJust letting you know that work has started on your {{vehicle}} ({{rego}}).\n\nTechnician: {{tech}}\nService: {{service}}\nStore: {{store}}\n\nWe'll be in touch when your vehicle is ready.\n\nRodz Auto"
+    "body": "Hi {{firstName}},\n\nJust letting you know that work has started on your {{vehicle}} ({{rego}}).\n\nJob: {{jobNumber}}\nTechnician: {{techName}}\nService: {{services}}\nStore: {{store}}\n\nWe'll be in touch when your vehicle is ready.\n\nRodz Auto"
   },
   "workCompleteTemplate": {
     "subject": "Your {{vehicle}} is ready for pickup",
-    "body": "Hi {{customerName}},\n\nGreat news — your {{vehicle}} ({{rego}}) is ready for pickup!\n\nYou can collect your vehicle from:\n{{storeAddress}}\n\nRodz Auto {{store}}"
+    "body": "Hi {{firstName}},\n\nGreat news — your {{vehicle}} ({{rego}}) is ready for pickup!\n\nJob: {{jobNumber}}\nService: {{services}}\n\nRodz Auto {{store}}"
   }
 }
 ```
@@ -84,20 +84,24 @@ Send the complete settings object — all five templates must be included. This 
 
 Variables use `{{variableName}}` syntax in both `subject` and `body`. The backend substitutes real values at send time. Unrecognised variables are left unchanged, so the UI can safely display them as-is.
 
-| Variable | Available in | Notes |
-|----------|-------------|-------|
-| `{{customerName}}` | All | Full name e.g. `"Jane Smith"` |
-| `{{firstName}}` | All | First name only e.g. `"Jane"` |
-| `{{vehicle}}` | All | `"2020 Toyota Corolla"` |
-| `{{rego}}` | All | `"ABC123"` |
-| `{{store}}` | All | Short store name e.g. `"Grey Lynn"` |
-| `{{services}}` | All | Comma-joined service names e.g. `"WOF, Oil Change"` |
-| `{{bookingRef}}` | Booking templates, job templates | 8-char ref e.g. `"AB3K9XZ1"` |
-| `{{date}}` | All | Formatted e.g. `"Tue 10 Jun 2026"` |
-| `{{slot}}` | Booking templates | `"Morning"` or `"Afternoon"` |
-| `{{dropOffTime}}` | `bookingReceivedTemplate`, `bookingConfirmedTemplate` | `"09:00"` or empty string |
-| `{{techName}}` | `bookingConfirmedTemplate`, `workCommencedTemplate`, `workCompleteTemplate` | `"A. Ross"` or `"TBA"` |
-| `{{jobNumber}}` | `workCommencedTemplate`, `workCompleteTemplate` | `"J00042"` |
+| Variable | Available in | Example |
+|----------|-------------|---------|
+| `{{firstName}}` | All | `Brett` |
+| `{{customerName}}` | All | `Brett Legend` |
+| `{{vehicle}}` | All | `2026 Toyota Corolla` |
+| `{{rego}}` | All | `HUT665` |
+| `{{store}}` | All | `Rodz Auto Somerville` *(quote template strips the "Rodz " prefix)* |
+| `{{date}}` | All booking + job templates | `Wed, 10 Jun 2026` |
+| `{{services}}` | All booking + job templates | `Medium Service, Cabin Filter` |
+| `{{bookingRef}}` | Booking + job templates | `EC3FL2BV` |
+| `{{slot}}` | `bookingReceivedTemplate`, `bookingConfirmedTemplate` | `Morning` or `Afternoon` |
+| `{{dropOffTime}}` | `bookingReceivedTemplate`, `bookingConfirmedTemplate` | `09:00` *(empty string if not set)* |
+| `{{techName}}` | `bookingConfirmedTemplate`, `workCommencedTemplate`, `workCompleteTemplate` | `Howard R.` *(or `TBA` if unassigned)* |
+| `{{jobNumber}}` | `workCommencedTemplate`, `workCompleteTemplate` | `J00005` |
+| `{{quoteNumber}}` | `quoteTemplate` | `Q00009` |
+| `{{approvalLink}}` | `quoteTemplate` | `https://workshop.rodz.com.au/q/abc123` |
+
+> **Note:** Use `{{services}}` (plural). The variable `{{service}}` does not exist — any unrecognised variable is left as literal text in the sent email.
 
 ---
 
@@ -109,3 +113,146 @@ Variables use `{{variableName}}` syntax in both `subject` and `body`. The backen
 - The save button should PUT the full object assembled from all five sections plus `fromAddress`/`replyTo`. There is no partial save — always send everything.
 - Consider highlighting `{{variable}}` tokens in the body textarea so editors can see which variables are in use.
 - On success, update local state with the response — do not re-fetch.
+
+---
+
+## Sender settings
+
+| Field | Value |
+|-------|-------|
+| **From address** | `Rodz Smart Auto <bookings@rodz.com.au>` |
+| **Reply-to** | Optional — leave blank or set to a monitored inbox |
+
+---
+
+## Correct template content
+
+Copy-paste ready. All variable names are verified against the backend.
+
+---
+
+### Quote sent
+
+> Sent when a quote is sent to a customer via the Quotes screen.
+
+**Subject**
+```
+Your quote from Rodz Smart Auto {{store}} — {{quoteNumber}}
+```
+
+**Body**
+```
+Hi {{firstName}},
+
+We've prepared a quote for your {{vehicle}} ({{rego}}).
+
+Quote #{{quoteNumber}}
+
+View and approve your quote here:
+{{approvalLink}}
+
+If you have any questions, feel free to reply to this email.
+
+Rodz Smart Auto {{store}}
+```
+
+---
+
+### Booking received
+
+> Sent immediately when a new booking is created (status: pending).
+
+**Subject**
+```
+Booking received — {{services}} at Rodz Smart Auto {{store}}
+```
+
+**Body**
+```
+Hi {{firstName}},
+
+Thanks for booking with us! We've received your booking request and will confirm shortly.
+
+Vehicle: {{vehicle}} ({{rego}})
+Service: {{services}}
+Requested date: {{date}}
+Time slot: {{slot}}
+
+Rodz Smart Auto {{store}}
+```
+
+---
+
+### Booking confirmed
+
+> Sent when a booking is moved to confirmed status.
+
+**Subject**
+```
+Booking confirmed — {{services}} on {{date}}
+```
+
+**Body**
+```
+Hi {{firstName}},
+
+Great news — your booking is confirmed!
+
+Vehicle: {{vehicle}} ({{rego}})
+Service: {{services}}
+Date: {{date}}
+Time slot: {{slot}}
+Technician: {{techName}}
+
+Rodz Smart Auto {{store}}
+```
+
+---
+
+### Work commenced
+
+> Sent when a job is moved to In Progress on the Kanban board.
+
+**Subject**
+```
+Work has commenced on your {{vehicle}}
+```
+
+**Body**
+```
+Hi {{firstName}},
+
+Just letting you know that work has started on your {{vehicle}} ({{rego}}).
+
+Job: {{jobNumber}}
+Technician: {{techName}}
+Service: {{services}}
+Store: {{store}}
+
+We'll be in touch when your vehicle is ready.
+
+Rodz Smart Auto
+```
+
+---
+
+### Ready for pickup
+
+> Sent when a job is moved to Completed on the Kanban board.
+
+**Subject**
+```
+Your {{vehicle}} is ready for pickup
+```
+
+**Body**
+```
+Hi {{firstName}},
+
+Great news — your {{vehicle}} ({{rego}}) is ready for pickup!
+
+Job: {{jobNumber}}
+Service: {{services}}
+
+Rodz Smart Auto {{store}}
+```

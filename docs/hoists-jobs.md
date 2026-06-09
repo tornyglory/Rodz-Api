@@ -249,7 +249,9 @@ Total pages = `Math.ceil(total / limit)`.
       "durationMins": 90,
       "sortOrder": 1,
       "notes": null,
-      "quoteId": null
+      "quoteId": null,
+      "quoteStatus": null,
+      "odometerIn": null
     }
   ],
   "total": 142,
@@ -278,6 +280,8 @@ Total pages = `Math.ceil(total / limit)`.
 | `sortOrder` | Position on the hoist for this date. Use this + `date` + `hoistId` to position cards on the board. |
 | `notes` | Customer-facing notes. `null` if empty. |
 | `quoteId` | FK to a quote if one has been generated. `null` otherwise. |
+| `quoteStatus` | Current status of the linked quote. `null` when no quote. Values: `draft`, `sent`, `approved`, `rejected`, `invoiced`, `paid`. |
+| `odometerIn` | Vehicle odometer reading at drop-off. `null` if not recorded. |
 | `total` | Total matching records across all pages. |
 | `limit` | Effective page size (echoed from request, capped at `200`). |
 | `offset` | Effective offset (echoed from request). |
@@ -368,6 +372,7 @@ The job is appended to the end of the target hoist's queue for that date.
 | `hoistId` | number | Reassign to another hoist. Job appended at end of target queue. **Technician role cannot change this field — 403.** |
 | `assignedStaffId` | number \| null | Replaces the lead mechanic assignment. `null` clears it. |
 | `notes` | string \| null | Customer-facing notes. `null` clears. |
+| `odometerIn` | number \| null | Vehicle odometer reading at drop-off. `null` clears it. |
 
 ### Response `200`
 
@@ -528,6 +533,8 @@ No body. **Response `204`** — no content.
 | `sortOrder` | number | Position on the hoist board for this date |
 | `notes` | string \| null | Customer-facing notes |
 | `quoteId` | number \| null | FK to a quote. Set if a quote has been generated directly on the job, or via the linked booking. `null` if no quote exists. |
+| `quoteStatus` | string \| null | Current status of the linked quote. `null` when `quoteId` is `null`. Values: `draft` \| `sent` \| `approved` \| `rejected` \| `invoiced` \| `paid`. |
+| `odometerIn` | number \| null | Vehicle odometer reading at drop-off. `null` if not recorded. |
 
 ---
 
@@ -741,6 +748,33 @@ Body: { "assignedStaffId": 12 }
 ```
 
 This sets the default tech for the hoist AND reassigns all currently open jobs on that hoist. The response returns the updated hoist with the new `assignedTech` and `assignedStaffId`.
+
+---
+
+### Quote approved badge
+
+Show a **"Quote approved"** badge on a job card when:
+
+```js
+job.quoteStatus === 'approved'
+```
+
+No separate API call needed — `quoteStatus` is always included in the job response. The badge should be visible regardless of `job.status` (a job can be `in_progress` with an approved quote if additional work was approved mid-job).
+
+When a customer approves a quote via the public link, the backend automatically moves the job from `awaiting_approval` back to `open`. The next poll of `GET /jobs` will reflect this — no special handling needed on the frontend.
+
+---
+
+### Recording odometer at drop-off
+
+When a vehicle arrives and the tech records the odometer:
+
+```
+PATCH /jobs/{id}
+Body: { "odometerIn": 87400 }
+```
+
+Can be sent alone or combined with a status change. Send `null` to clear a mistaken entry.
 
 ---
 

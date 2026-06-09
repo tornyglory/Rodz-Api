@@ -21,7 +21,7 @@ export async function sendEmail(params: {
     ReplyToAddresses: params.replyTo ? [params.replyTo] : undefined,
     Message: {
       Subject: { Data: interpolate(params.subject, vars), Charset: 'UTF-8' },
-      Body:    { Text: { Data: interpolate(params.body,    vars), Charset: 'UTF-8' } },
+      Body:    { Html: { Data: interpolate(params.body,    vars), Charset: 'UTF-8' } },
     },
   }))
 }
