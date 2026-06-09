@@ -11,13 +11,15 @@ export const JOB_FROM = `
   LEFT JOIN staff st_tech             ON st_tech.id = sjs.staff_id
   LEFT JOIN quotes bq ON bq.booking_id = j.booking_id AND bq.id = (
     SELECT MAX(q2.id) FROM quotes q2 WHERE q2.booking_id = j.booking_id
-  )`
+  )
+  LEFT JOIN quotes jq ON jq.id = j.quote_id`
 
 export const JOB_SELECT = `
   SELECT
     j.id, j.job_number, j.booking_id, j.store_id, j.hoist_id, j.customer_id, j.vehicle_id,
     j.status, j.slot, j.scheduled_time, j.sort_order, j.customer_notes, j.odometer_in,
     COALESCE(j.quote_id, bq.id) AS quote_id,
+    COALESCE(jq.status, bq.status) AS quote_status,
     b.booking_date AS job_date, b.booking_ref,
     CONCAT(c.first_name, ' ', c.last_name)     AS customer_name,
     c.email                                    AS customer_email,
@@ -81,6 +83,7 @@ export function buildJob(row: any, services: any[]) {
     sortOrder:       row.sort_order,
     notes:           row.customer_notes ?? null,
     quoteId:         row.quote_id ?? null,
+    quoteStatus:     row.quote_status ?? null,
     odometerIn:      row.odometer_in ?? null,
   }
 }

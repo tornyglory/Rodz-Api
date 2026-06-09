@@ -59,6 +59,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [quote.id],
     )
 
+    // Move linked job back to open so the kanban badge appears
+    await db.query(
+      "UPDATE service_jobs SET status = 'open' WHERE quote_id = ? AND status = 'awaiting_approval'",
+      [quote.id],
+    )
+
     const [[row]] = await db.query<any[]>(
       `${QUOTE_SELECT} WHERE q.id = ? LIMIT 1`,
       [quote.id],
