@@ -104,6 +104,7 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
          sj.completed_at,
          sj.status,
          sj.odometer_in                             AS km,
+         sj.next_service_due_km,
          v.make, v.model, v.rego,
          st.name                                    AS store_name,
          COALESCE(tot.amount, 0)                    AS amount,
@@ -161,7 +162,8 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
       store:   j.store_name,
       status:  j.status,
       tech:    j.tech ?? null,
-      km:      j.km ?? null,
+      km:              j.km ?? null,
+      nextServiceDueKm: j.next_service_due_km ?? null,
     })),
   }
 }

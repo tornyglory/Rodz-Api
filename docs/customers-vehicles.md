@@ -13,20 +13,36 @@ All routes require `Authorization: Bearer <accessToken>`.
 
 ## GET /customers
 
-List customers. All query params are optional.
+List customers with pagination and server-side search. All query params are optional.
 
 ```
-GET /customers?store=Somerville&search=james&tag=VIP
+GET /customers
+GET /customers?search=james&limit=50&offset=0
+GET /customers?store=Somerville&tag=VIP
 Authorization: Bearer <accessToken>
 ```
 
+### Query parameters
+
 | Param | Type | Description |
 |-------|------|-------------|
-| `store` | string | Filter by store name (super_admin only — partial match e.g. `Somerville`) |
-| `search` | string | Match against name, email, phone, or rego |
-| `tag` | string | `VIP`, `Regular`, or `New` |
+| `store` | string | Filter by store name (super_admin only — partial match e.g. `"Somerville"`). Ignored for `store_manager` and `technician`. |
+| `search` | string | Partial match across customer name, email, phone, and rego. |
+| `tag` | string | `VIP`, `Regular`, or `New`. |
+| `limit` | number | Page size. Default `50`, max `200`. |
+| `offset` | number | Number of records to skip. Default `0`. |
 
-**Response 200**
+### Pagination
+
+```
+page 1 → ?limit=50&offset=0
+page 2 → ?limit=50&offset=50
+```
+
+Total pages = `Math.ceil(total / limit)`. Has next page = `offset + customers.length < total`.
+
+### Response 200
+
 ```json
 {
   "customers": [
@@ -54,14 +70,17 @@ Authorization: Bearer <accessToken>
       ],
       "jobHistory": []
     }
-  ]
+  ],
+  "total": 84,
+  "limit": 50,
+  "offset": 0
 }
 ```
 
 > `jobHistory` is always `[]` on the list endpoint. Use `GET /customers/{id}` for the full history.  
 > `lastVisit` is `null` if the customer has no completed jobs.  
 > `tags` can contain multiple values e.g. `["VIP", "Regular"]`.  
-> store_managers and technicians only see customers from their own store — the `store` filter param is ignored for them.
+> `store_manager` and `technician` only see customers from their own store — the `store` filter is ignored for them.
 
 **Errors**
 
@@ -115,7 +134,8 @@ Authorization: Bearer <accessToken>
         "store": "Rodz Somerville",
         "status": "completed",
         "tech": "A. Ross",
-        "km": 84200
+        "km": 84200,
+        "nextServiceDueKm": 94200
       }
     ]
   }
@@ -129,7 +149,8 @@ Authorization: Bearer <accessToken>
 - `amount` — total of all line items (labour + parts + sublets).
 - `status` — `open` | `in_progress` | `awaiting_parts` | `awaiting_approval` | `completed` | `invoiced` | `cancelled`
 - `tech` — lead mechanic formatted as `"A. Ross"`. `null` if no lead assigned.
-- `km` — odometer reading at check-in. `null` if not recorded.
+- `km` — odometer reading at drop-off. `null` if not recorded.
+- `nextServiceDueKm` — recommended next service odometer milestone. `null` if not set.
 
 **Errors**
 

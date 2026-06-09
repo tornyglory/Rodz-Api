@@ -173,11 +173,14 @@ Content-Type: application/json
 
 ## GET /jobs
 
-Returns service jobs. Defaults to today + all future dates, plus any unfinished past jobs that haven't been completed/cancelled.
+Returns service jobs with pagination and server-side search.
+
+**Default behaviour (no params):** returns today + all future dates, plus any unfinished past jobs, excluding cancelled jobs.
 
 ```
 GET /jobs
 GET /jobs?hoistId=1&date=2026-06-10&status=open
+GET /jobs?search=toyota&limit=50&offset=0
 Authorization: Bearer <accessToken>
 ```
 
@@ -187,8 +190,27 @@ Authorization: Bearer <accessToken>
 |-------|------|-------------|
 | `store` | string | Partial store name filter (e.g. `"Grey Lynn"`). Omit → all accessible stores. |
 | `hoistId` | number | Filter by hoist. |
-| `date` | string | ISO `YYYY-MM-DD`. If omitted, returns open range (today + future + in-flight past). |
-| `status` | string | One of: `open`, `in_progress`, `awaiting_parts`, `awaiting_approval`, `completed`, `cancelled`. Omit → all statuses. |
+| `date` | string | ISO `YYYY-MM-DD`. Filters to an exact date. If omitted without `search`, returns the open range (today + future + in-flight past). |
+| `status` | string | One of: `open`, `in_progress`, `awaiting_parts`, `awaiting_approval`, `completed`, `cancelled`. Omit → all statuses **except** `cancelled`. |
+| `search` | string | Partial match across customer name, rego, vehicle make/model, and job number. Lifts the default date restriction so historical jobs are included. Can be combined with `date` to search within a specific day. |
+| `limit` | number | Page size. Default `50`, max `200`. |
+| `offset` | number | Number of records to skip. Default `0`. |
+
+### Cancelled jobs
+
+Cancelled jobs are **excluded by default**. To retrieve them, pass `status=cancelled` explicitly. This applies to all query combinations — including `search`.
+
+### Pagination
+
+The response always includes `total`, `limit`, and `offset`. Use these to build paged UIs:
+
+```
+page 1 → ?limit=50&offset=0    (total might be 142)
+page 2 → ?limit=50&offset=50
+page 3 → ?limit=50&offset=100
+```
+
+Total pages = `Math.ceil(total / limit)`.
 
 ### Response `200`
 
@@ -197,7 +219,11 @@ Authorization: Bearer <accessToken>
   "jobs": [
     {
       "id": 42,
+      "jobNumber": "J00042",
       "bookingId": 7,
+      "customerId": 3,
+      "vehicleId": 5,
+      "bookingRef": "BK-001",
       "customer": "Jane Smith",
       "customerEmail": "jane@example.com",
       "vehicle": "2020 Toyota Corolla",
@@ -225,7 +251,10 @@ Authorization: Bearer <accessToken>
       "notes": null,
       "quoteId": null
     }
-  ]
+  ],
+  "total": 142,
+  "limit": 50,
+  "offset": 0
 }
 ```
 
@@ -233,6 +262,8 @@ Authorization: Bearer <accessToken>
 
 | Field | Notes |
 |-------|-------|
+| `jobNumber` | Human-readable job reference e.g. `"J00042"`. |
+| `bookingRef` | Optional booking reference string. `null` if not set. |
 | `service` | Convenience string — comma-joined service names e.g. `"WOF, Oil Change"`. Good for compact card display. |
 | `services` | Full array of attached services. Use for detail views and editing. |
 | `vehicle` | `"{year} {make} {model}"`. `null` if no vehicle attached. |
@@ -242,11 +273,14 @@ Authorization: Bearer <accessToken>
 | `store` | `"Rodz "` prefix stripped e.g. `"Grey Lynn"`. |
 | `date` | ISO `YYYY-MM-DD`. This is the booking date. |
 | `slot` | `"morning"` or `"afternoon"`. |
-| `startTime` | `"HH:MM"` 24h. `null` if no specific time has been set (booking_time was `00:00`). |
+| `startTime` | `"HH:MM"` 24h. `null` if no specific time has been set. |
 | `durationMins` | Computed from attached service type estimates. Defaults to `60` if no services are attached. |
 | `sortOrder` | Position on the hoist for this date. Use this + `date` + `hoistId` to position cards on the board. |
 | `notes` | Customer-facing notes. `null` if empty. |
 | `quoteId` | FK to a quote if one has been generated. `null` otherwise. |
+| `total` | Total matching records across all pages. |
+| `limit` | Effective page size (echoed from request, capped at `200`). |
+| `offset` | Effective offset (echoed from request). |
 
 ### Job status values
 
@@ -257,7 +291,7 @@ Authorization: Bearer <accessToken>
 | `awaiting_parts` | Waiting on parts before work can continue |
 | `awaiting_approval` | Waiting for customer or management approval |
 | `completed` | Work complete |
-| `cancelled` | Job cancelled |
+| `cancelled` | Job cancelled — excluded by default, request with `status=cancelled` |
 
 ### Errors
 

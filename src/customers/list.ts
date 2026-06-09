@@ -11,7 +11,10 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   await ready
   const db = getPool()
   const ctx = getAuthContext(event)
-  const { store, search, tag } = event.queryStringParameters ?? {}
+  const { store, search, tag, limit: limitParam, offset: offsetParam } = event.queryStringParameters ?? {}
+
+  const limit = Math.min(Math.max(parseInt(limitParam ?? '50', 10) || 50, 1), 200)
+  const offset = Math.max(parseInt(offsetParam ?? '0', 10) || 0, 0)
 
   try {
     const where: string[] = ['c.is_active = 1']
@@ -45,20 +48,27 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       params.push(tag)
     }
 
+    const whereClause = `WHERE ${where.join(' AND ')}`
+
+    const [[{ total }]] = await db.query<any[]>(
+      `SELECT COUNT(*) AS total FROM customers c JOIN stores st ON st.id = c.store_id ${whereClause}`,
+      params,
+    )
+
     const [rows] = await db.query<any[]>(
       `SELECT c.id, c.first_name, c.last_name, c.email, c.mobile, c.internal_notes,
               c.date_of_birth, c.address_line1, c.address_line2, c.suburb, c.state, c.postcode,
               st.name AS store_name
        FROM customers c
        JOIN stores st ON st.id = c.store_id
-       WHERE ${where.join(' AND ')}
+       ${whereClause}
        ORDER BY c.last_name, c.first_name
-       LIMIT 200`,
-      params,
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset],
     )
 
     const customers = await buildCustomerList(db, rows)
-    return ok({ customers })
+    return ok({ customers, total: Number(total), limit, offset })
   } catch (err) {
     return serverError(err)
   }

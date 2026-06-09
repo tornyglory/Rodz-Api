@@ -51,11 +51,11 @@ Status transitions are enforced by the backend. Invalid transitions return `409 
 
 ### GET /purchase-orders
 
-Returns all active (non-deleted) purchase orders for the caller's store(s).
+Returns purchase orders for the caller's store(s) with pagination and search.
 
 ```
 GET /purchase-orders
-GET /purchase-orders?status=ordered
+GET /purchase-orders?status=ordered&limit=50&offset=0
 GET /purchase-orders?search=Repco
 GET /purchase-orders?jobId=42
 GET /purchase-orders?storeId=1
@@ -68,6 +68,8 @@ Authorization: Bearer <accessToken>
 | `status` | string | One of `draft`, `ordered`, `partial`, `received`, `cancelled`. |
 | `jobId` | number | Returns all POs that have at least one item linked to this job. |
 | `storeId` | number | `super_admin` only — filter to a specific store. |
+| `limit` | number | Page size. Default `50`, max `200`. |
+| `offset` | number | Number of records to skip. Default `0`. |
 
 ### Response `200`
 
@@ -103,11 +105,16 @@ Authorization: Bearer <accessToken>
         }
       ]
     }
-  ]
+  ],
+  "total": 38,
+  "limit": 50,
+  "offset": 0
 }
 ```
 
 Items are always included in the list response — no second fetch needed.
+
+Total pages = `Math.ceil(total / limit)`. Has next page = `offset + purchaseOrders.length < total`.
 
 ---
 

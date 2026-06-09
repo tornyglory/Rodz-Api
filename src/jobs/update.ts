@@ -32,9 +32,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
-    const { status, startTime, hoistId, assignedStaffId, notes } = body
+    const { status, startTime, hoistId, assignedStaffId, notes, odometerIn } = body
 
-    if (status === undefined && startTime === undefined && hoistId === undefined && assignedStaffId === undefined && notes === undefined) {
+    if (status === undefined && startTime === undefined && hoistId === undefined && assignedStaffId === undefined && notes === undefined && odometerIn === undefined) {
       return validationError('No valid fields to update.')
     }
 
@@ -55,6 +55,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (status != null) updates.push(['status', status])
     if (startTime !== undefined) updates.push(['scheduled_time', startTime ? `${startTime}:00` : null])
     if (notes !== undefined) updates.push(['customer_notes', notes ?? null])
+    if (odometerIn !== undefined) updates.push(['odometer_in', odometerIn ?? null])
 
     if (hoistId !== undefined && hoistId !== null) {
       // Resolve sort_order on target hoist

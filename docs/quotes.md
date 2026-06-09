@@ -340,11 +340,11 @@ Returns the full updated quote object. `status` is now `"sent"`, `sentAt` is set
 
 ## GET /quotes
 
-Returns all quotes visible to the caller, newest first.
+Returns quotes visible to the caller, newest first. Supports pagination and search.
 
 ```
 GET /quotes
-GET /quotes?status=draft
+GET /quotes?status=draft&limit=50&offset=0
 GET /quotes?search=Karen
 GET /quotes?store=Somerville&status=sent
 Authorization: Bearer <accessToken>
@@ -357,6 +357,8 @@ Authorization: Bearer <accessToken>
 | `status` | string | `draft` \| `sent` \| `approved` \| `invoiced` \| `paid` \| `rejected`. Omit → all. |
 | `search` | string | Partial match on customer name, rego, or quote number (e.g. `"Q-2506"`). |
 | `store` | string | `super_admin` only — partial store name filter (e.g. `"Somerville"`). Ignored for other roles. |
+| `limit` | number | Page size. Default `50`, max `200`. |
+| `offset` | number | Number of records to skip. Default `0`. |
 
 ### Response `200`
 
@@ -383,8 +385,14 @@ Authorization: Bearer <accessToken>
       "total": 302.50,
       "items": [ ... ]
     }
-  ]
+  ],
+  "total": 84,
+  "limit": 50,
+  "offset": 0
 }
+```
+
+Total pages = `Math.ceil(total / limit)`. Has next page = `offset + quotes.length < total`.
 ```
 
 ---

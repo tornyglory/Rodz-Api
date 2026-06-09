@@ -17,7 +17,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const body = JSON.parse(event.body ?? '{}') as Record<string, any>
-    const { customerId, vehicleId, notes, items, bookingId } = body
+    const { customerId, vehicleId, notes, odometerIn, items, bookingId } = body
     let { storeId, techId } = body
 
     if (!customerId) return validationError('customerId is required.')
@@ -57,9 +57,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const [result] = await db.query<any>(
       `INSERT INTO quotes
          (store_id, prepared_by_staff_id, customer_id, vehicle_id, quote_number, booking_id,
-          status, valid_days, valid_until, internal_notes, subtotal, gst_amount, total)
-       VALUES (?, ?, ?, ?, ?, ?, 'draft', 30, DATE_ADD(CURDATE(), INTERVAL 30 DAY), ?, 0, 0, 0)`,
-      [storeId, techId, customerId, vehicleId, quoteNumber, bookingId ?? null, notes ?? null],
+          status, valid_days, valid_until, internal_notes, odometer_in, subtotal, gst_amount, total)
+       VALUES (?, ?, ?, ?, ?, ?, 'draft', 30, DATE_ADD(CURDATE(), INTERVAL 30 DAY), ?, ?, 0, 0, 0)`,
+      [storeId, techId, customerId, vehicleId, quoteNumber, bookingId ?? null, notes ?? null, odometerIn ?? null],
     )
 
     const quoteId: number = result.insertId

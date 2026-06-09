@@ -1,9 +1,16 @@
 import mysql from 'mysql2/promise'
 
+export const QUOTE_FROM = `
+  FROM quotes q
+  JOIN customers c  ON c.id = q.customer_id
+  JOIN stores s     ON s.id = q.store_id
+  LEFT JOIN vehicles v ON v.id = q.vehicle_id
+  LEFT JOIN staff st   ON st.id = q.prepared_by_staff_id`
+
 export const QUOTE_SELECT = `
   SELECT
     q.id, q.quote_number, q.booking_id, q.store_id, q.prepared_by_staff_id,
-    q.customer_id, q.vehicle_id, q.status, q.internal_notes,
+    q.customer_id, q.vehicle_id, q.status, q.internal_notes, q.odometer_in,
     q.token, q.sent_at, q.created_at,
     q.subtotal, q.gst_amount, q.total,
     CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
@@ -13,11 +20,7 @@ export const QUOTE_SELECT = `
     CONCAT(v.year, ' ', v.make, ' ', v.model) AS vehicle_label,
     s.name   AS store_name,
     CONCAT(LEFT(st.first_name, 1), '. ', st.last_name) AS tech_label
-  FROM quotes q
-  JOIN customers c  ON c.id = q.customer_id
-  JOIN stores s     ON s.id = q.store_id
-  LEFT JOIN vehicles v ON v.id = q.vehicle_id
-  LEFT JOIN staff st   ON st.id = q.prepared_by_staff_id`
+  ${QUOTE_FROM}`
 
 export function buildQuote(row: any, items: any[]) {
   return {
@@ -33,6 +36,7 @@ export function buildQuote(row: any, items: any[]) {
     tech:          row.tech_label ?? null,
     status:        row.status,
     notes:         row.internal_notes ?? null,
+    odometerIn:    row.odometer_in ?? null,
     token:         row.token ?? null,
     sentAt:        row.sent_at ? new Date(row.sent_at).toISOString() : null,
     createdAt:     row.created_at instanceof Date ? row.created_at.toISOString().slice(0, 10) : String(row.created_at).slice(0, 10),

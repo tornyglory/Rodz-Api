@@ -17,7 +17,7 @@ export function buildPO(row: any, items: any[]) {
     supplier:           row.supplier,
     status:             row.status,
     orderedAt:          row.ordered_at ? new Date(row.ordered_at).toISOString() : null,
-    expectedDelivery:   row.expected_delivery ? String(row.expected_delivery).slice(0, 10) : null,
+    expectedDelivery:   row.expected_delivery ? (row.expected_delivery instanceof Date ? row.expected_delivery.toISOString().slice(0, 10) : String(row.expected_delivery).slice(0, 10)) : null,
     receivedAt:         row.received_at ? new Date(row.received_at).toISOString() : null,
     subtotal:           Number(row.subtotal ?? 0),
     gst:                Number(row.gst_amount ?? 0),

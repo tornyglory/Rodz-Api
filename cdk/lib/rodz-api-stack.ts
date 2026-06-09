@@ -144,6 +144,10 @@ export class RodzApiStack extends Stack {
       entry: src('customers/vehicles/delete.ts'), vpc, sharedEnv,
     }).fn
 
+    const vehicleListFn = new LambdaFn(this, 'VehicleList', {
+      entry: src('vehicles/list.ts'), vpc, sharedEnv,
+    }).fn
+
     // ── Bookings ────────────────────────────────────────────────────────────
 
     const bookingListFn = new LambdaFn(this, 'BookingList', {
@@ -540,6 +544,13 @@ export class RodzApiStack extends Stack {
       path: '/customers/{customerId}/vehicles/{vehicleId}',
       methods: [HttpMethod.DELETE],
       integration: new HttpLambdaIntegration('VehicleDeleteInt', vehicleDeleteFn),
+      authorizer,
+    })
+
+    httpApi.addRoutes({
+      path: '/vehicles',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('VehicleListInt', vehicleListFn),
       authorizer,
     })
 

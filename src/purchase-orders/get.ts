@@ -15,7 +15,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const [[row]] = await db.query<any[]>(
-      `${PO_SELECT} WHERE po.id = ? AND po.deleted_at IS NULL LIMIT 1`,
+      // TODO: restore 'AND po.deleted_at IS NULL' once the deleted_at migration has been run
+      `${PO_SELECT} WHERE po.id = ? LIMIT 1`,
       [id],
     )
     if (!row) return poError(404, 'NOT_FOUND', 'Purchase order not found.')
