@@ -32,9 +32,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
-    const { status, startTime, hoistId, assignedStaffId, notes, odometerIn } = body
+    const { status, startTime, hoistId, assignedStaffId, notes, odometerIn, durationMins } = body
 
-    if (status === undefined && startTime === undefined && hoistId === undefined && assignedStaffId === undefined && notes === undefined && odometerIn === undefined) {
+    if (status === undefined && startTime === undefined && hoistId === undefined && assignedStaffId === undefined && notes === undefined && odometerIn === undefined && durationMins === undefined) {
       return validationError('No valid fields to update.')
     }
 
@@ -52,8 +52,19 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     // ── Build job field updates ────────────────────────────────────────────
     const updates: [string, unknown][] = []
 
-    if (status != null) updates.push(['status', status])
+    if (status != null) {
+      updates.push(['status', status])
+      if (status === 'in_progress')  updates.push(['started_at',   new Date()])
+      if (status === 'completed')    updates.push(['completed_at', new Date()])
+      if (status === 'cancelled')    updates.push(['cancelled_at', new Date()])
+    }
     if (startTime !== undefined) updates.push(['scheduled_time', startTime ? `${startTime}:00` : null])
+    if (durationMins !== undefined) {
+      if (!Number.isInteger(durationMins) || Number(durationMins) < 15) {
+        return validationError('durationMins must be an integer >= 15.')
+      }
+      updates.push(['duration_mins', Number(durationMins)])
+    }
     if (notes !== undefined) updates.push(['customer_notes', notes ?? null])
     if (odometerIn !== undefined) updates.push(['odometer_in', odometerIn ?? null])
 
@@ -91,6 +102,15 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const [[updatedRow]] = await db.query<any[]>(JOB_SELECT_BY_ID, [id])
     const servicesMap = await getJobServices(db, [Number(id)])
     const result = buildJob(updatedRow, servicesMap.get(Number(id)) ?? [])
+
+    // Mirror odometer to vehicles so the prediction engine has a fresh reference point
+    if (odometerIn != null && updatedRow.vehicle_id) {
+      await db.query(
+        `UPDATE vehicles SET odometer_current = ?, odometer_recorded_at = CURDATE(), updated_at = NOW() WHERE id = ?`,
+        [Number(odometerIn), updatedRow.vehicle_id],
+      )
+    }
+
     if (status === 'in_progress') await sendWorkCommencedEmail(db, result)
     if (status === 'completed')   await sendWorkCompleteEmail(db, result)
     return ok({ job: result })

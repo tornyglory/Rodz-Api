@@ -20,6 +20,7 @@ export class ApiGateway extends Construct {
       description: 'Rodz staff portal API',
       corsPreflight: {
         allowOrigins: [
+          '*',
           'https://workshop.rodz.com.au',
           'http://localhost:5173',
           'http://localhost:5177',
@@ -33,7 +34,7 @@ export class ApiGateway extends Construct {
           CorsHttpMethod.DELETE,
           CorsHttpMethod.OPTIONS,
         ],
-        allowHeaders: ['Content-Type', 'Authorization'],
+        allowHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
         maxAge: Duration.days(1),
       },
     })

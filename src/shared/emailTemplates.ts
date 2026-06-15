@@ -85,6 +85,7 @@ export async function sendWorkCommencedEmail(db: mysql.Pool, job: any): Promise<
     rego:         job.rego      ?? '',
     store:        job.store     ?? '',
     services:     job.service   ?? '',
+    tech:         job.tech      ?? '',
     techName:     job.tech      ?? '',
   })
 }
@@ -101,6 +102,137 @@ export async function sendWorkCompleteEmail(db: mysql.Pool, job: any): Promise<v
     rego:         job.rego      ?? '',
     store:        job.store     ?? '',
     services:     job.service   ?? '',
+    tech:         job.tech      ?? '',
     techName:     job.tech      ?? '',
   })
+}
+
+const URGENCY_COLOUR: Record<string, string> = {
+  urgent:      '#dc2626',
+  important:   '#ea580c',
+  recommended: '#2563eb',
+  advisory:    '#16a34a',
+}
+
+const URGENCY_LABEL: Record<string, string> = {
+  urgent:      'Urgent',
+  important:   'Important',
+  recommended: 'Recommended',
+  advisory:    'Advisory',
+}
+
+export async function sendMaintenanceReminderEmail(db: mysql.Pool, opts: {
+  customerEmail: string
+  firstName:     string
+  vehicleLabel:  string
+  rego:          string
+  title:         string
+  body:          string
+  urgency:       string
+  currentKm:     number
+  dueKm:         number
+  costMin:       number | null
+  costMax:       number | null
+}): Promise<void> {
+  if (!opts.customerEmail) return
+
+  try {
+    const settings = await getSettings(db)
+    if (!settings?.fromAddress) return
+
+    const kmRemaining  = Math.max(0, opts.dueKm - opts.currentKm)
+    const urgencyColor = URGENCY_COLOUR[opts.urgency] ?? '#2563eb'
+    const urgencyLabel = URGENCY_LABEL[opts.urgency]  ?? 'Recommended'
+
+    const costLine = (opts.costMin && opts.costMax)
+      ? `<p style="margin:0 0 8px;font-size:14px;color:#6b7280;">Estimated cost: <strong>$${opts.costMin}–$${opts.costMax}</strong></p>`
+      : ''
+
+    const bookingUrl = process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/book` : '#'
+
+    const body = `
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:32px 16px;">
+    <tr><td align="center">
+      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:580px;background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1);">
+
+        <!-- Header -->
+        <tr><td style="background:#111827;padding:24px 32px;">
+          <p style="margin:0;font-size:22px;font-weight:bold;color:#ffffff;letter-spacing:-0.5px;">Rodz</p>
+          <p style="margin:4px 0 0;font-size:13px;color:#9ca3af;">Service Reminder</p>
+        </td></tr>
+
+        <!-- Body -->
+        <tr><td style="padding:32px;">
+
+          <p style="margin:0 0 20px;font-size:15px;color:#374151;">Hi ${opts.firstName},</p>
+
+          <!-- Vehicle badge -->
+          <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:24px;">
+            <tr><td style="padding:14px 18px;">
+              <p style="margin:0;font-size:13px;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">Your vehicle</p>
+              <p style="margin:4px 0 0;font-size:16px;font-weight:bold;color:#111827;">${opts.vehicleLabel}</p>
+              <p style="margin:2px 0 0;font-size:13px;color:#6b7280;">${opts.rego}</p>
+            </td></tr>
+          </table>
+
+          <!-- Urgency badge + title -->
+          <p style="margin:0 0 6px;">
+            <span style="display:inline-block;background:${urgencyColor};color:#fff;font-size:11px;font-weight:bold;padding:2px 10px;border-radius:999px;text-transform:uppercase;letter-spacing:.5px;">${urgencyLabel}</span>
+          </p>
+          <h2 style="margin:0 0 14px;font-size:20px;color:#111827;">${opts.title}</h2>
+
+          <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.6;">${opts.body.replace(/{{vehicleLabel}}/g, opts.vehicleLabel)}</p>
+
+          <!-- Odometer status -->
+          <table width="100%" cellpadding="0" cellspacing="0" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;margin-bottom:20px;">
+            <tr><td style="padding:14px 18px;">
+              <p style="margin:0 0 6px;font-size:13px;color:#6b7280;">Odometer status</p>
+              <p style="margin:0;font-size:15px;color:#1e40af;">
+                Current: <strong>${opts.currentKm.toLocaleString()} km</strong> &nbsp;·&nbsp;
+                Due at: <strong>${opts.dueKm.toLocaleString()} km</strong> &nbsp;·&nbsp;
+                <strong>${kmRemaining.toLocaleString()} km to go</strong>
+              </p>
+            </td></tr>
+          </table>
+
+          ${costLine}
+
+          <!-- CTA -->
+          <table cellpadding="0" cellspacing="0" style="margin:24px 0 0;">
+            <tr><td style="background:#111827;border-radius:6px;">
+              <a href="${bookingUrl}" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;">Book this service →</a>
+            </td></tr>
+          </table>
+
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:20px 32px;">
+          <p style="margin:0;font-size:12px;color:#9ca3af;">
+            This reminder was sent because you have a vehicle serviced at Rodz.
+            If you believe this was sent in error, please reply to this email.
+          </p>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`
+
+    const { sendEmail } = await import('./ses')
+    await sendEmail({
+      to:          opts.customerEmail,
+      subject:     `Your ${opts.vehicleLabel} — ${opts.title}`,
+      body,
+      fromAddress: settings.fromAddress,
+      replyTo:     settings.replyTo || undefined,
+    })
+  } catch {
+    // Non-fatal
+  }
 }
