@@ -16,7 +16,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   if (ctx.role === 'technician') return forbidden()
 
   try {
-    const { firstName, lastName, email, password, role, storeId, status } = JSON.parse(event.body ?? '{}')
+    const { firstName, lastName, email, mobile, password, role, storeId, status } = JSON.parse(event.body ?? '{}')
 
     if (!firstName?.trim() || !lastName?.trim() || !email?.trim() || !role || !password?.trim()) {
       return userError(422, 'VALIDATION_ERROR', 'firstName, lastName, email, role, and password are required.')
@@ -52,9 +52,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const hash     = await bcrypt.hash(password, 12)
 
     const [result] = await db.query<any>(
-      `INSERT INTO staff (store_id, first_name, last_name, email, role, is_active, hired_at)
-       VALUES (?, ?, ?, ?, ?, ?, CURDATE())`,
-      [targetStoreId, firstName.trim(), lastName.trim(), email.trim().toLowerCase(), dbRole, isActive],
+      `INSERT INTO staff (store_id, first_name, last_name, email, mobile, role, is_active, hired_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE())`,
+      [targetStoreId, firstName.trim(), lastName.trim(), email.trim().toLowerCase(), mobile?.trim() ?? null, dbRole, isActive],
     )
 
     await db.query(

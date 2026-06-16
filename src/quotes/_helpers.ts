@@ -19,7 +19,8 @@ export const QUOTE_SELECT = `
     v.rego   AS vehicle_rego,
     CONCAT(v.year, ' ', v.make, ' ', v.model) AS vehicle_label,
     s.name   AS store_name,
-    CONCAT(LEFT(st.first_name, 1), '. ', st.last_name) AS tech_label
+    CONCAT(LEFT(st.first_name, 1), '. ', st.last_name) AS tech_label,
+    st.mobile AS tech_mobile
   ${QUOTE_FROM}`
 
 export function buildQuote(row: any, items: any[]) {
@@ -34,6 +35,7 @@ export function buildQuote(row: any, items: any[]) {
     rego:          row.vehicle_rego ?? null,
     store:         (row.store_name ?? '').replace(/^Rodz /, ''),
     tech:          row.tech_label ?? null,
+    techMobile:    row.tech_mobile ?? null,
     status:        row.status,
     notes:         row.internal_notes ?? null,
     odometerIn:    row.odometer_in ?? null,
@@ -152,88 +154,123 @@ export async function setQuoteItems(
   quoteId: number,
   items: any[],
 ): Promise<{ subtotal: number; gst: number; total: number }> {
-  // Collect existing part_ids before replacing items
-  const [oldItemRows] = await db.query<any[]>(
-    'SELECT part_id FROM quote_items WHERE quote_id = ? AND part_id IS NOT NULL',
+  // Load current items so we know which IDs are valid for this quote
+  const [existingRows] = await db.query<any[]>(
+    'SELECT id, part_id FROM quote_items WHERE quote_id = ?',
     [quoteId],
   )
-  const oldPartIds: number[] = oldItemRows.map((r: any) => r.part_id)
+  const existingMap = new Map<number, { id: number; part_id: number | null }>()
+  for (const row of existingRows) existingMap.set(row.id, row)
 
-  await db.query('DELETE FROM quote_items WHERE quote_id = ?', [quoteId])
+  // Which incoming items have a valid existing ID for this quote
+  const incomingIds = new Set(
+    items
+      .filter((item: any) => item.id && existingMap.has(Number(item.id)))
+      .map((item: any) => Number(item.id)),
+  )
 
-  // Clean up parts that are no longer referenced anywhere
-  if (oldPartIds.length > 0) {
-    const ph = oldPartIds.map(() => '?').join(',')
+  // Items in DB but absent from payload → delete
+  const toDeleteIds = [...existingMap.keys()].filter(id => !incomingIds.has(id))
+
+  // Collect part_ids that may become orphaned (from deleted + updated items)
+  const partIdsToCheck: number[] = []
+  for (const id of toDeleteIds) {
+    const row = existingMap.get(id)!
+    if (row.part_id) partIdsToCheck.push(row.part_id)
+  }
+  for (const [id, row] of existingMap) {
+    if (incomingIds.has(id) && row.part_id) partIdsToCheck.push(row.part_id)
+  }
+
+  if (toDeleteIds.length > 0) {
+    const ph = toDeleteIds.map(() => '?').join(',')
     await db.query(
-      `DELETE FROM parts WHERE id IN (${ph})
-       AND NOT EXISTS (SELECT 1 FROM quote_items qi WHERE qi.part_id = parts.id)
-       AND NOT EXISTS (SELECT 1 FROM purchase_order_items poi WHERE poi.part_id = parts.id)`,
-      oldPartIds,
+      `DELETE FROM quote_items WHERE id IN (${ph}) AND quote_id = ?`,
+      [...toDeleteIds, quoteId],
     )
   }
 
-  if (items.length === 0) return { subtotal: 0, gst: 0, total: 0 }
+  if (items.length === 0) {
+    await cleanupOrphanedParts(db, partIdsToCheck)
+    return { subtotal: 0, gst: 0, total: 0 }
+  }
 
-  // Validate catalogItemIds — null out any that don't exist in catalog_items
+  // Validate catalogItemIds in batch
   const requestedCatalogIds = items.map((i: any) => i.catalogItemId).filter((id: any) => id != null)
   const validCatalogIds = new Set<number>()
   if (requestedCatalogIds.length > 0) {
-    const placeholders = requestedCatalogIds.map(() => '?').join(',')
-    const [catalogRows] = await db.query<any[]>(
-      `SELECT id FROM catalog_items WHERE id IN (${placeholders})`,
-      requestedCatalogIds,
-    )
-    for (const r of catalogRows) validCatalogIds.add(r.id)
+    const ph = requestedCatalogIds.map(() => '?').join(',')
+    const [rows] = await db.query<any[]>(`SELECT id FROM catalog_items WHERE id IN (${ph})`, requestedCatalogIds)
+    for (const r of rows) validCatalogIds.add(r.id)
   }
 
-  // Validate serviceTypeIds — null out any that don't exist in service_types
+  // Validate serviceTypeIds in batch
   const requestedServiceTypeIds = items.map((i: any) => i.serviceTypeId).filter((id: any) => id != null)
   const validServiceTypeIds = new Set<number>()
   if (requestedServiceTypeIds.length > 0) {
-    const placeholders = requestedServiceTypeIds.map(() => '?').join(',')
-    const [serviceTypeRows] = await db.query<any[]>(
-      `SELECT id FROM service_types WHERE id IN (${placeholders})`,
-      requestedServiceTypeIds,
-    )
-    for (const r of serviceTypeRows) validServiceTypeIds.add(r.id)
+    const ph = requestedServiceTypeIds.map(() => '?').join(',')
+    const [rows] = await db.query<any[]>(`SELECT id FROM service_types WHERE id IN (${ph})`, requestedServiceTypeIds)
+    for (const r of rows) validServiceTypeIds.add(r.id)
   }
 
-  // Resolve partIds — upsert into parts table for part-type items
+  // Resolve partIds for part-type items
   const resolvedPartIds = await Promise.all(
     items.map((item: any) => item.type === 'part' ? resolvePartId(db, item) : Promise.resolve(null)),
   )
 
   let subtotal = 0
-  const rows = items.map((item: any, i: number) => {
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
     subtotal += Number(item.qty ?? 1) * Number(item.unitPrice)
+
     const catalogItemId = item.catalogItemId != null && validCatalogIds.has(Number(item.catalogItemId))
-      ? item.catalogItemId
-      : null
+      ? item.catalogItemId : null
     const serviceTypeId = item.serviceTypeId != null && validServiceTypeIds.has(Number(item.serviceTypeId))
-      ? item.serviceTypeId
-      : null
-    return [
-      quoteId,
-      catalogItemId,
-      resolvedPartIds[i],
-      serviceTypeId,
-      item.description,
-      item.type ?? 'labour',
-      item.hours ?? null,
-      item.qty ?? 1,
-      item.unitPrice,
-      1,
-      0,
-      i,
-    ]
-  })
-  await db.query(
-    `INSERT INTO quote_items (quote_id, catalog_item_id, part_id, service_type_id, description, line_type, hours, quantity, unit_price, gst_applicable, is_optional, sort_order)
-     VALUES ?`,
-    [rows],
-  )
+      ? item.serviceTypeId : null
+    const partId = resolvedPartIds[i]
+
+    if (item.id && incomingIds.has(Number(item.id))) {
+      // UPDATE existing row — preserve the id so photo FK stays valid
+      await db.query(
+        `UPDATE quote_items
+            SET catalog_item_id = ?, part_id = ?, service_type_id = ?,
+                description = ?, line_type = ?, hours = ?,
+                quantity = ?, unit_price = ?, sort_order = ?
+          WHERE id = ? AND quote_id = ?`,
+        [catalogItemId, partId, serviceTypeId,
+         item.description, item.type ?? 'labour', item.hours ?? null,
+         item.qty ?? 1, item.unitPrice, i,
+         Number(item.id), quoteId],
+      )
+    } else {
+      // INSERT new row
+      await db.query(
+        `INSERT INTO quote_items
+           (quote_id, catalog_item_id, part_id, service_type_id, description,
+            line_type, hours, quantity, unit_price, gst_applicable, is_optional, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?)`,
+        [quoteId, catalogItemId, partId, serviceTypeId, item.description,
+         item.type ?? 'labour', item.hours ?? null, item.qty ?? 1, item.unitPrice, i],
+      )
+    }
+  }
+
+  await cleanupOrphanedParts(db, partIdsToCheck)
+
   const gst = Math.round(subtotal * 0.1 * 100) / 100
   return { subtotal, gst, total: subtotal + gst }
+}
+
+async function cleanupOrphanedParts(db: mysql.Pool, partIds: number[]): Promise<void> {
+  if (partIds.length === 0) return
+  const ph = partIds.map(() => '?').join(',')
+  await db.query(
+    `DELETE FROM parts WHERE id IN (${ph})
+     AND NOT EXISTS (SELECT 1 FROM quote_items qi      WHERE qi.part_id  = parts.id)
+     AND NOT EXISTS (SELECT 1 FROM purchase_order_items poi WHERE poi.part_id = parts.id)`,
+    partIds,
+  )
 }
 
 export async function generateQuoteNumber(db: mysql.Pool): Promise<string> {

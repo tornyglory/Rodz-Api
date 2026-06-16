@@ -107,6 +107,18 @@ export async function sendWorkCompleteEmail(db: mysql.Pool, job: any): Promise<v
   })
 }
 
+export async function sendPickupReadyEmail(db: mysql.Pool, job: any): Promise<void> {
+  if (!job.customerEmail) return
+  await dispatch(db, 'pickupReadyTemplate', job.customerEmail, {
+    customerName: job.customer   ?? '',
+    firstName:    String(job.customer ?? '').split(' ')[0],
+    vehicle:      job.vehicle    ?? '',
+    rego:         job.rego       ?? '',
+    store:        job.store      ?? '',
+    storePhone:   job.storePhone ?? '',
+  })
+}
+
 const URGENCY_COLOUR: Record<string, string> = {
   urgent:      '#dc2626',
   important:   '#ea580c',

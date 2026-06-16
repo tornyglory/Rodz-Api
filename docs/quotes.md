@@ -612,7 +612,7 @@ The quote builder is a staff-only screen that handles steps 1–5.
 3. Staff can override any field before confirming
 4. Items are saved via `PATCH /quotes/{id}` with the full updated list on each change
 
-Always send the **complete item list** on every PATCH — not a delta. The backend replaces everything.
+When `items` is provided the backend **upserts** the item list: items with an existing `id` are updated in place, items without an `id` are inserted, and any items present in the DB but absent from the payload are deleted. Item `id` values are preserved across saves so that `quote_item_id` foreign keys in the `photos` table remain valid.
 
 **Photos on a line item:**
 

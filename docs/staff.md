@@ -40,6 +40,8 @@ Authorization: Bearer <accessToken>
       "lastName": "Ross",
       "displayName": "A. Ross",
       "email": "a.ross@rodz.com.au",
+      "mobile": "0412 345 678",
+      "avatarUrl": "https://imagedelivery.net/{accountHash}/a1b2c3d4.../thumbnail",
       "role": "senior_mechanic",
       "store": "Somerville",
       "storeId": 1,
@@ -108,6 +110,7 @@ Content-Type: application/json
   "firstName": "Ben",
   "lastName": "Tate",
   "email": "b.tate@rodz.com.au",
+  "mobile": "0412 345 678",
   "password": "TemporaryPass1!",
   "role": "tyre_tech",
   "storeId": 1,
@@ -122,6 +125,7 @@ Content-Type: application/json
 | `firstName` | Yes | |
 | `lastName` | Yes | |
 | `email` | Yes | Must be unique. Stored lowercase. |
+| `mobile` | No | Phone number string. Stored as-is. |
 | `password` | Yes | Min 8 characters. Hashed before storage — never returned. |
 | `role` | Yes | Must be a valid role value. |
 | `storeId` | No | FK to stores. Defaults to the caller's store if omitted. `super_admin` should supply this. |
@@ -164,6 +168,7 @@ Content-Type: application/json
   "firstName": "Benjamin",
   "lastName": "Tate",
   "email": "ben.tate@rodz.com.au",
+  "mobile": "0412 345 678",
   "role": "senior_mechanic",
   "storeId": 2,
   "status": "inactive"
@@ -177,6 +182,8 @@ Content-Type: application/json
 | `firstName` | |
 | `lastName` | |
 | `email` | Must be unique. |
+| `mobile` | Phone number string. Pass `""` (empty string) to clear it. |
+| `avatarImageId` | Cloudflare image ID from `POST /photos/upload-url`. Pass `null` to clear the avatar. |
 | `role` | Must be a valid role value. |
 | `storeId` | Reassigns to another store. Automatically clears any hoist assignment the staff member had at their old store. |
 | `status` | `"active"` or `"inactive"`. |
@@ -192,6 +199,85 @@ Content-Type: application/json
 - `super_admin` → any staff member, any role, any store.
 - `store_manager` → own store's non-admin staff only. Cannot promote to `super_admin` or `store_manager`. Cannot reassign to a different store.
 - `technician` → `403`.
+
+---
+
+## Staff avatar — upload flow
+
+Staff profile photos are stored in Cloudflare Images using the same direct-upload pattern as vehicle photos. Two steps are required: get an upload URL, upload the image directly to Cloudflare, then save the image ID against the staff record.
+
+```
+1. POST /photos/upload-url       → receive { uploadUrl, imageId }
+2. PUT {uploadUrl}  (image file) → direct to Cloudflare, no Lambda involved
+3. PATCH /staff/{id}             → save { avatarImageId } against the staff record
+```
+
+### Step 1 — Get an upload URL
+
+```
+POST /photos/upload-url
+Authorization: Bearer <accessToken>
+```
+
+No request body. Response:
+
+```json
+{
+  "uploadUrl": "https://upload.imagedelivery.net/...",
+  "imageId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
+```
+
+Store both values in component state. The URL is single-use and expires in 30 minutes.
+
+### Step 2 — Upload directly to Cloudflare
+
+```
+PUT {uploadUrl}
+Content-Type: image/jpeg
+[binary image data]
+```
+
+No `Authorization` header — this goes directly to Cloudflare, not to the Rodz API. A `2xx` response means the upload succeeded.
+
+### Step 3 — Save the image ID
+
+```
+PATCH /staff/{id}
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+```
+
+```json
+{ "avatarImageId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890" }
+```
+
+The updated user object is returned with `avatarUrl` populated:
+
+```json
+{
+  "user": {
+    "id": 2,
+    "fullName": "Aaron Ross",
+    "avatarUrl": "https://imagedelivery.net/{accountHash}/a1b2c3d4-e5f6-.../thumbnail",
+    ...
+  }
+}
+```
+
+### Displaying the avatar
+
+Use `avatarUrl` directly — it is already the Cloudflare thumbnail variant (max 400px). Show it as a rounded avatar wherever the staff member appears (settings list, hoist board tech label, job detail header). Fall back to initials (`displayName` first letter + last name initial) when `avatarUrl` is `null`.
+
+### Clearing an avatar
+
+Send `null` to remove the avatar:
+
+```json
+{ "avatarImageId": null }
+```
+
+The response will have `avatarUrl: null`. The image is not deleted from Cloudflare — it is simply unlinked from the staff record.
 
 ### Errors
 
@@ -275,6 +361,8 @@ Password must be at least 8 characters.
 | `lastName` | string | |
 | `displayName` | string | `"F. Last"` — matches `assignedTech` on hoists/jobs |
 | `email` | string | |
+| `mobile` | string \| null | Phone number. `null` if not set. |
+| `avatarUrl` | string \| null | Cloudflare thumbnail URL. `null` if no avatar set. |
 | `role` | string | See role values table |
 | `store` | string \| null | Short store name. `null` for `super_admin`. |
 | `storeId` | number \| null | FK to stores. `null` for `super_admin`. |

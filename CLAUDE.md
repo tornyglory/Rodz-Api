@@ -11,12 +11,22 @@ Key things to verify before writing SQL:
 
 ## Stack overview
 
-- **Stack:** `RodzApiStack` in `cdk/lib/rodz-api-stack.ts`
+Two CDK stacks share the same HTTP API and VPC:
+
+| Stack | File | Contains |
+|-------|------|----------|
+| `RodzApiStack` | `cdk/lib/rodz-api-stack.ts` | All existing Lambdas, HTTP API, VPC, authorizer |
+| `RodzApiStack2` | `cdk/lib/rodz-api-stack2.ts` | New Lambdas (reports, AI, rego lookup, etc.) |
+
 - **Runtime:** Node.js Lambda (TypeScript, compiled via esbuild)
 - **Database:** MySQL (Azure) accessed via `getPool()` from `src/shared/db.ts`
 - **Auth:** `getAuthContext(event)` returns `{ staffId, role, storeId, permissions }`
 - **Roles:** `super_admin` | `store_manager` | `technician`
-- **Deploy:** `npx cdk deploy`
+- **Deploy (existing endpoints):** `npx cdk deploy RodzApiStack`
+- **Deploy (new endpoints):** `npx cdk deploy RodzApiStack2`
+- **Deploy (both):** `npx cdk deploy RodzApiStack RodzApiStack2`
+
+`RodzApiStack` is at the 500-resource CloudFormation limit. **All new Lambda functions and routes must go in `RodzApiStack2`.** Use `new HttpRoute()` (not `httpApi.addRoutes()`) so that route resources are scoped to `RodzApiStack2`.
 
 ## Endpoint structure
 
@@ -62,13 +72,26 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 | `notFound(msg)` | 404 | Resource not found |
 | `serverError(err)` | 500 | Unexpected DB/runtime error |
 
-### CDK route registration (`cdk/lib/rodz-api-stack.ts`)
+### CDK route registration (new endpoints → `cdk/lib/rodz-api-stack2.ts`)
 
 Each new endpoint needs:
-1. A Lambda function definition (pointing to the handler file via `entry`)
-2. A route added to the HTTP API
+1. A `LambdaFn` definition (pointing to the handler file via `entry`)
+2. A `new HttpRoute()` call (NOT `httpApi.addRoutes()`) so resources go in `RodzApiStack2`
 
-Follow the existing booking/customer Lambda definitions as the template — same `bundling`, `vpc`, `environment`, `layers`, and `securityGroups` config must be copied exactly.
+```typescript
+const myFn = new LambdaFn(this, 'MyHandler', {
+  entry: src('myfeature/handler.ts'), vpc, sharedEnv,
+}).fn
+
+new HttpRoute(this, 'MyHandlerRoute', {
+  httpApi,
+  integration: new HttpLambdaIntegration('MyHandlerInt', myFn),
+  routeKey: HttpRouteKey.with('/my-path', HttpMethod.GET),
+  authorizer,
+})
+```
+
+For SES-sending Lambdas, add `needsSes: true` to `LambdaFn` props.
 
 ## Auth context
 

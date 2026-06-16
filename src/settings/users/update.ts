@@ -3,6 +3,7 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { getAuthContext } from '../../shared/auth'
 import { ok, forbidden, serverError } from '../../shared/errors'
+import { verifyImage, deleteCloudflareImage } from '../../shared/cloudflare'
 import { buildApiUser, toDbRole, userError, ADMIN_ROLES, VALID_ROLES, STAFF_SELECT } from './_helpers'
 
 const ready = bootstrap()
@@ -19,7 +20,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const [[target]] = await db.query<any[]>(
-      'SELECT id, store_id, role FROM staff WHERE id = ? LIMIT 1',
+      'SELECT id, store_id, role, avatar_image_id FROM staff WHERE id = ? LIMIT 1',
       [staffId],
     )
     if (!target) return userError(404, 'USER_NOT_FOUND', 'User not found.')
@@ -31,9 +32,10 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
-    const { firstName, lastName, email, role, storeId, status } = body
+    const { firstName, lastName, email, mobile, avatarImageId, role, storeId, status } = body
 
     if (firstName === undefined && lastName === undefined && email === undefined &&
+        mobile === undefined && avatarImageId === undefined &&
         role === undefined && storeId === undefined && status === undefined) {
       return userError(422, 'VALIDATION_ERROR', 'No valid fields to update.')
     }
@@ -47,6 +49,14 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     if (firstName != null) updates.push(['first_name', String(firstName).trim()])
     if (lastName  != null) updates.push(['last_name',  String(lastName).trim()])
+    if (mobile    != null) updates.push(['mobile',     String(mobile).trim() || null])
+    if (avatarImageId !== undefined) {
+      if (avatarImageId !== null) {
+        const exists = await verifyImage(String(avatarImageId))
+        if (!exists) return userError(422, 'VALIDATION_ERROR', 'Image not found on Cloudflare — upload may have failed.')
+      }
+      updates.push(['avatar_image_id', avatarImageId ?? null])
+    }
     if (email     != null) {
       const normalised = String(email).trim().toLowerCase()
       const [[dup]] = await db.query<any[]>(
@@ -86,11 +96,20 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       )
     }
 
+    // Delete old avatar from Cloudflare after DB write succeeds
+    if (avatarImageId !== undefined && target.avatar_image_id &&
+        target.avatar_image_id !== avatarImageId) {
+      deleteCloudflareImage(target.avatar_image_id).catch((err: unknown) => {
+        console.error('Failed to delete old avatar from Cloudflare:', err)
+      })
+    }
+
     const [[row]] = await db.query<any[]>(
       `${STAFF_SELECT} WHERE s.id = ? LIMIT 1`,
       [staffId],
     )
-    return ok({ user: buildApiUser(row) })
+    const user = buildApiUser(row)
+    return ok({ user })
   } catch (err) {
     return serverError(err)
   }

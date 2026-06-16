@@ -13,11 +13,12 @@ All routes require `Authorization: Bearer <accessToken>`.
 
 ## GET /hoists
 
-Returns all active hoists the current user can access. Status is computed live from today's jobs.
+Returns all active hoists the current user can access. Status is computed live from jobs on the requested date (defaults to today).
 
 ```
 GET /hoists
-GET /hoists?store=Grey Lynn
+GET /hoists?date=2026-06-10
+GET /hoists?date=2026-06-10&store=Somerville
 Authorization: Bearer <accessToken>
 ```
 
@@ -25,7 +26,8 @@ Authorization: Bearer <accessToken>
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `store` | string | Partial store name filter (e.g. `"Grey Lynn"`). Omit or `"all"` → all accessible stores. |
+| `store` | string | Partial store name filter (e.g. `"Somerville"`). Omit or `"all"` → all accessible stores. |
+| `date` | string | ISO `YYYY-MM-DD`. Hoist status reflects jobs on this date. Omit → today. |
 
 ### Response `200`
 
@@ -58,7 +60,7 @@ Authorization: Bearer <accessToken>
 | `roles` | Array of service role tags assigned to this hoist. Empty array if none. |
 | `assignedTech` | Formatted `"First L."` — permanent tech assigned to this hoist. `null` if unassigned. |
 | `assignedStaffId` | FK to staff. `null` if unassigned. |
-| `status` | Derived from today's jobs. See status table below. |
+| `status` | Derived from jobs on the requested date. See status table below. |
 
 ### Hoist status values
 
@@ -175,7 +177,7 @@ Content-Type: application/json
 
 Returns service jobs with pagination and server-side search.
 
-**Default behaviour (no params):** returns today + all future dates, plus any unfinished past jobs, excluding cancelled jobs.
+**Default behaviour (no params):** returns today + all future dates, plus any non-cancelled, non-invoiced past jobs (including completed). Pass `?date=` to see a specific day.
 
 ```
 GET /jobs
@@ -190,7 +192,7 @@ Authorization: Bearer <accessToken>
 |-------|------|-------------|
 | `store` | string | Partial store name filter (e.g. `"Grey Lynn"`). Omit → all accessible stores. |
 | `hoistId` | number | Filter by hoist. |
-| `date` | string | ISO `YYYY-MM-DD`. Filters to an exact date. If omitted without `search`, returns the open range (today + future + in-flight past). |
+| `date` | string | ISO `YYYY-MM-DD`. Filters to an exact booking date. If omitted without `search`, returns the open range (today + future + all non-cancelled/invoiced past jobs). |
 | `status` | string | One of: `open`, `in_progress`, `awaiting_parts`, `awaiting_approval`, `completed`, `cancelled`. Omit → all statuses **except** `cancelled`. |
 | `search` | string | Partial match across customer name, rego, vehicle make/model, and job number. Lifts the default date restriction so historical jobs are included. Can be combined with `date` to search within a specific day. |
 | `limit` | number | Page size. Default `50`, max `200`. |
@@ -251,7 +253,9 @@ Total pages = `Math.ceil(total / limit)`.
       "notes": null,
       "quoteId": null,
       "quoteStatus": null,
-      "odometerIn": null
+      "odometerIn": null,
+      "startedAt": null,
+      "completedAt": null
     }
   ],
   "total": 142,
@@ -282,6 +286,8 @@ Total pages = `Math.ceil(total / limit)`.
 | `quoteId` | FK to a quote if one has been generated. `null` otherwise. |
 | `quoteStatus` | Current status of the linked quote. `null` when no quote. Values: `draft`, `sent`, `approved`, `rejected`, `invoiced`, `paid`. |
 | `odometerIn` | Vehicle odometer reading at drop-off. `null` if not recorded. |
+| `startedAt` | ISO 8601 datetime when work was started. `null` if not yet started. |
+| `completedAt` | ISO 8601 datetime when job was completed. `null` if not yet complete. |
 | `total` | Total matching records across all pages. |
 | `limit` | Effective page size (echoed from request, capped at `200`). |
 | `offset` | Effective offset (echoed from request). |
@@ -535,6 +541,8 @@ No body. **Response `204`** — no content.
 | `quoteId` | number \| null | FK to a quote. Set if a quote has been generated directly on the job, or via the linked booking. `null` if no quote exists. |
 | `quoteStatus` | string \| null | Current status of the linked quote. `null` when `quoteId` is `null`. Values: `draft` \| `sent` \| `approved` \| `rejected` \| `invoiced` \| `paid`. |
 | `odometerIn` | number \| null | Vehicle odometer reading at drop-off. `null` if not recorded. |
+| `startedAt` | string \| null | ISO 8601 datetime when work was started. `null` if not yet started. |
+| `completedAt` | string \| null | ISO 8601 datetime when job was completed. `null` if not yet complete. |
 
 ---
 
@@ -688,14 +696,14 @@ This triggers job creation server-side. A hoist must be assigned on the booking 
 
 The board shows one column per hoist. Each column contains the jobs for a selected date, ordered by `sortOrder`.
 
-**Recommended data fetch on board load:**
+**Recommended data fetch on board load — always pass the same date to both calls:**
 
 ```
-GET /hoists?store=Grey Lynn         → render columns
-GET /jobs?date=2026-06-10&store=Grey Lynn  → populate each column
+GET /hoists?date=2026-06-10&store=Somerville   → render columns with correct status
+GET /jobs?date=2026-06-10&store=Somerville     → populate each column
 ```
 
-Match jobs to hoist columns using `job.hoistId`.
+Match jobs to hoist columns using `job.hoistId`. Both calls must use the same date so hoist status and job cards are in sync.
 
 ---
 
@@ -775,6 +783,51 @@ Body: { "odometerIn": 87400 }
 ```
 
 Can be sent alone or combined with a status change. Send `null` to clear a mistaken entry.
+
+---
+
+### Date filtering — workshop board and jobs page
+
+Both `GET /hoists` and `GET /jobs` accept `?date=YYYY-MM-DD`. Always pass the same date to both so the board stays in sync.
+
+```
+GET /hoists?date=2026-06-10&store=Somerville
+GET /jobs?date=2026-06-10&store=Somerville
+```
+
+**Recommended UI pattern:**
+
+1. Default the date picker to today: `new Date().toISOString().slice(0, 10)`
+2. On date change, re-fetch both endpoints with the new date
+3. Combine with `?status=` or `?hoistId=` as needed
+
+```js
+// Fetch board for a given date
+async function loadBoard(date, store) {
+  const [hoists, jobs] = await Promise.all([
+    fetch(`/hoists?date=${date}&store=${store}`),
+    fetch(`/jobs?date=${date}&store=${store}`),
+  ])
+  // match jobs to hoists by job.hoistId
+}
+```
+
+**Showing when a job was worked on:**
+
+Use `startedAt` and `completedAt` to display timestamps or duration on job cards:
+
+```js
+// e.g. "Started 09:15 — Completed 10:40"
+const started   = job.startedAt   ? new Date(job.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null
+const completed = job.completedAt ? new Date(job.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null
+
+// Duration in minutes (when both are set)
+const durationMins = job.startedAt && job.completedAt
+  ? Math.round((new Date(job.completedAt) - new Date(job.startedAt)) / 60000)
+  : null
+```
+
+Both are `null` if the job hasn't reached that stage yet.
 
 ---
 

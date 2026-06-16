@@ -31,7 +31,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const [rows] = await db.query<any[]>(
       `SELECT
          s.id, s.first_name, s.last_name, s.email, s.mobile,
-         s.role, s.colour_code, s.store_id, s.is_active,
+         s.role, s.colour_code, s.store_id, s.is_active, s.avatar_image_id,
          sa.password_hash, sa.failed_login_attempts, sa.locked_until, sa.force_reset
        FROM staff s
        JOIN staff_auth sa ON sa.staff_id = s.id

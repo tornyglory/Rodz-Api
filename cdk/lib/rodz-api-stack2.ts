@@ -86,11 +86,34 @@ export class RodzApiStack2 extends Stack {
       routeKey: HttpRouteKey.with('/public/availability', HttpMethod.GET),
     })
 
+    const publicServicesFn = new LambdaFn(this, 'PublicServices', {
+      entry: src('public/services.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'PublicServicesRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('PublicServicesInt', publicServicesFn),
+      routeKey: HttpRouteKey.with('/public/services', HttpMethod.GET),
+    })
+
+    // ── Vehicle recommendations ─────────────────────────────────────────────
+
+    const vehicleRecommendationsFn = new LambdaFn(this, 'VehicleRecommendations', {
+      entry: src('customers/vehicles/recommendations.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'VehicleRecommendationsRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleRecommendationsInt', vehicleRecommendationsFn),
+      routeKey: HttpRouteKey.with('/customers/{customerId}/vehicles/{vehicleId}/recommendations', HttpMethod.GET),
+      authorizer,
+    })
+
     // ── AI — Recommendation Engine ──────────────────────────────────────────
 
     const aiRecommendationFn = new LambdaFn(this, 'AIRecommendationEngine', {
       entry: src('ai/recommendation-engine.ts'), vpc, sharedEnv,
-      timeout: Duration.seconds(60),
+      timeout: Duration.seconds(120),
     }).fn
 
     // Allow the public booking Lambda to invoke it async
@@ -110,6 +133,41 @@ export class RodzApiStack2 extends Stack {
       schedule: events.Schedule.cron({ hour: '5', minute: '0' }),
     })
     dailyReminderRule.addTarget(new targets.LambdaFunction(reminderDispatcherFn))
+
+    // ── Job card ────────────────────────────────────────────────────────────
+
+    const jobCardGetFn = new LambdaFn(this, 'JobCardGet', {
+      entry: src('jobs/card-get.ts'), vpc, sharedEnv,
+    }).fn
+
+    const jobCardUpdateFn = new LambdaFn(this, 'JobCardUpdate', {
+      entry: src('jobs/card-update.ts'), vpc, sharedEnv, needsSes: true,
+    }).fn
+
+    const jobNotifyPickupFn = new LambdaFn(this, 'JobNotifyPickup', {
+      entry: src('jobs/notify-pickup.ts'), vpc, sharedEnv, needsSes: true,
+    }).fn
+
+    new HttpRoute(this, 'JobCardGetRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('JobCardGetInt', jobCardGetFn),
+      routeKey: HttpRouteKey.with('/jobs/{id}/card', HttpMethod.GET),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'JobCardUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('JobCardUpdateInt', jobCardUpdateFn),
+      routeKey: HttpRouteKey.with('/jobs/{id}/card/{itemId}', HttpMethod.PATCH),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'JobNotifyPickupRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('JobNotifyPickupInt', jobNotifyPickupFn),
+      routeKey: HttpRouteKey.with('/jobs/{id}/notify-pickup', HttpMethod.POST),
+      authorizer,
+    })
 
     // ── Reports ─────────────────────────────────────────────────────────────
 

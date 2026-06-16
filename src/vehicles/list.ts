@@ -103,11 +103,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
            LIMIT 1
          ) AS last_service,
          (
-           SELECT sj.odometer_in
+           SELECT NULLIF(GREATEST(
+             COALESCE(MAX(sj.odometer_in), 0),
+             COALESCE(MAX(sj.odometer_out), 0)
+           ), 0)
            FROM service_jobs sj
-           WHERE sj.vehicle_id = v.id AND sj.completed_at IS NOT NULL
-           ORDER BY sj.completed_at DESC
-           LIMIT 1
+           WHERE sj.vehicle_id = v.id
          ) AS last_service_km,
          (
            SELECT sj.status

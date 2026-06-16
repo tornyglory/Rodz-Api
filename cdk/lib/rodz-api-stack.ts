@@ -1,18 +1,25 @@
 import * as path from 'path'
 import { Stack, StackProps, CfnOutput } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
-import { HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2'
+import * as ec2 from 'aws-cdk-lib/aws-ec2'
+import { HttpApi, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2'
+import { HttpLambdaAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers'
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations'
 import { RodzVpc } from './constructs/vpc'
 import { LambdaFn } from './constructs/lambda-fn'
 import { ApiGateway } from './constructs/api-gateway'
 
 export class RodzApiStack extends Stack {
+  public readonly httpApi: HttpApi
+  public readonly authorizer: HttpLambdaAuthorizer
+  public readonly vpc: ec2.IVpc
+
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props)
 
     // VPC: Lambda in private subnets → NAT Gateway (static Elastic IP) → Azure MySQL
     const { vpc } = new RodzVpc(this, 'Vpc')
+    this.vpc = vpc
 
     // Output the NAT Gateway Elastic IP — whitelist this in Azure MySQL firewall
     const natEip = vpc.publicSubnets[0].node.findChild('EIP') as any
@@ -33,6 +40,7 @@ export class RodzApiStack extends Stack {
       JWT_SECRET:       process.env.JWT_SECRET       ?? '',
       FRONTEND_URL:     process.env.FRONTEND_URL     ?? '',
       CF_ACCOUNT_ID:    process.env.CF_ACCOUNT_ID    ?? '',
+      CF_ACCOUNT_HASH:  process.env.CF_ACCOUNT_HASH  ?? '',
       CF_IMAGES_TOKEN:  process.env.CF_IMAGES_TOKEN  ?? '',
     }
 
@@ -381,9 +389,15 @@ export class RodzApiStack extends Stack {
       entry: src('quotes/public/approve.ts'), vpc, sharedEnv,
     }).fn
 
+    const quotePublicPhotosFn = new LambdaFn(this, 'QuotePublicPhotos', {
+      entry: src('quotes/public/photos.ts'), vpc, sharedEnv,
+    }).fn
+
     // ── API Gateway + JWT authorizer ────────────────────────────────────────
 
     const { httpApi, authorizer } = new ApiGateway(this, 'Api', { authorizerFn })
+    this.httpApi = httpApi
+    this.authorizer = authorizer
 
     // ── Routes ──────────────────────────────────────────────────────────────
 
@@ -917,6 +931,12 @@ export class RodzApiStack extends Stack {
       path: '/q/{token}/approve',
       methods: [HttpMethod.POST],
       integration: new HttpLambdaIntegration('QuotePublicApproveInt', quotePublicApproveFn),
+    })
+
+    httpApi.addRoutes({
+      path: '/q/{token}/photos',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('QuotePublicPhotosInt', quotePublicPhotosFn),
     })
   }
 }

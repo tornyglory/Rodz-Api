@@ -39,7 +39,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   await ready
   const db = getPool()
   const ctx = getAuthContext(event)
-  const { store } = event.queryStringParameters ?? {}
+  const { store, date } = event.queryStringParameters ?? {}
 
   try {
     const where: string[] = ['h.is_active = 1']
@@ -97,13 +97,14 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
           COUNT(*)                            AS total_jobs
         FROM service_jobs j
         JOIN bookings b ON b.id = j.booking_id
-        WHERE b.booking_date = CURDATE()
+        WHERE b.booking_date = ?
         GROUP BY j.hoist_id
       ) jstat ON jstat.hoist_id = h.id
       WHERE ${where.join(' AND ')}
       ORDER BY h.store_id, h.id`
 
-    const [rows] = await db.query<any[]>(query, params)
+    const queryDate = date ?? new Date().toISOString().slice(0, 10)
+    const [rows] = await db.query<any[]>(query, [queryDate, ...params])
     return ok({ hoists: rows.map(buildHoist) })
   } catch (err) {
     return serverError(err)

@@ -39,14 +39,14 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 |-------|--------|
 | [Core](#core) | `stores`, `staff`, `customers`, `vehicles`, `vehicle_owners` |
 | [Bookings](#bookings) | `bookings`, `booking_services` |
-| [Jobs](#jobs) | `service_jobs`, `service_job_items`, `service_job_parts`, `service_job_staff` |
+| [Jobs](#jobs) | `service_jobs`, `service_job_items`, `service_job_parts`, `service_job_staff`, `job_card_items` |
 | [Financials](#financials) | `invoices`, `payments`, `quotes`, `quote_items`, `purchase_orders`, `purchase_order_items` |
 | [Catalog](#catalog) | `service_types`, `catalog_items`, `parts`, `suppliers`, `part_names` |
 | [Inspections](#inspections) | `job_inspections`, `job_inspection_results`, `inspection_checklist_items`, `job_documents` |
 | [Customers — extended](#customers--extended) | `customer_tags`, `customer_communications`, `loyalty_transactions` |
 | [Vehicles — extended](#vehicles--extended) | `vehicle_service_history` |
 | [Reminders & AI](#reminders--ai) | `reminders`, `ai_milestone_rules`, `ai_recommendations` |
-| [Notifications](#notifications) | `notifications`, `notification_templates` |
+| [Notifications](#notifications) | `notifications`, `notification_templates`, `customer_pickup_notifications` |
 | [Loan vehicles](#loan-vehicles) | `loan_vehicles`, `loan_vehicle_bookings` |
 | [Operations](#operations) | `hoists`, `business_hours`, `staff_roster`, `daily_kpi_snapshots` |
 | [Auth](#auth) | `staff_auth`, `staff_sessions`, `customer_auth`, `customer_sessions`, `customer_oauth_providers` |
@@ -172,6 +172,7 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | `spare_tyre_size` | varchar(20) | YES | — |
 | `odometer_unit` | enum | NO | `km` |
 | `odometer_current` | int unsigned | YES | — |
+| `odometer_recorded_at` | datetime | YES | — |
 | `odometer_at_purchase` | int unsigned | YES | — |
 | `service_interval_km` | int unsigned | YES | `10000` |
 | `service_interval_months` | tinyint | YES | `6` |
@@ -374,6 +375,30 @@ Staff assigned to a job with time tracking.
 | `created_at` | datetime | NO |
 
 **`role_on_job` enum:** `lead_mechanic`, `service_tech`, `tyre_tech`, `apprentice`, `inspector`
+
+---
+
+### `job_card_items`
+
+Per-job checklist seeded from approved quote items. Technicians tick items off as work is completed.
+
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `id` | int unsigned | NO | — |
+| `job_id` | int unsigned | NO | — |
+| `quote_item_id` | int unsigned | YES | — |
+| `description` | varchar(500) | NO | — |
+| `qty` | int unsigned | NO | `1` |
+| `sort_order` | int unsigned | NO | `0` |
+| `completed` | tinyint(1) | NO | `0` |
+| `completed_at` | datetime | YES | — |
+| `completed_by_staff_id` | int unsigned | YES | — |
+| `notes` | varchar(1000) | YES | — |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+Unique index: `uidx_job_quote_item (job_id, quote_item_id)` — prevents duplicate seeding under concurrent requests.
+
+Card is auto-seeded on first `GET /jobs/{id}/card` when the job's quote is in `approved`, `converted`, `invoiced`, or `paid` status. Items with `quote_items.is_accepted = 0` are excluded.
 
 ---
 
@@ -835,11 +860,54 @@ Stores service records (both from Rodz jobs and imported history).
 
 ---
 
-### `ai_milestone_rules` / `ai_recommendations`
+### `ai_milestone_rules`
 
-Rules engine for proactive service recommendations. `ai_recommendations` are generated instances linked to a vehicle and customer.
+Static rules used to trigger AI-generated recommendations (e.g. "60,000 km service", "timing belt"). Not currently used by the recommendation engine (which uses Gemini directly), but kept for future rule-based triggers.
 
-Key `ai_recommendations` columns: `vehicle_id`, `customer_id`, `rule_id`, `status`, `urgency`, `triggered_at_odometer`, `triggered_at_date`, `estimated_due_date`, `completed_by_job_id`
+| Column | Type | Null |
+|--------|------|------|
+| `id` | int unsigned | NO |
+| `name` | varchar(100) | NO |
+| `trigger_km` | int unsigned | YES |
+| `trigger_months` | int unsigned | YES |
+| `is_active` | tinyint(1) | NO |
+
+---
+
+### `ai_recommendations`
+
+Generated maintenance recommendations per vehicle, produced by the Gemini-powered recommendation engine. Rebuilt from scratch on each engine run (active records deleted and re-inserted).
+
+| Column | Type | Null |
+|--------|------|------|
+| `id` | bigint unsigned | NO |
+| `vehicle_id` | bigint unsigned | NO |
+| `customer_id` | bigint unsigned | NO |
+| `rule_id` | int unsigned | YES |
+| `title` | varchar(60) | NO |
+| `recommendation_title` | varchar(60) | NO |
+| `recommendation_body` | varchar(500) | NO |
+| `urgency` | enum | NO |
+| `status` | enum | NO |
+| `triggered_at_odometer` | int unsigned | YES |
+| `triggered_at_date` | date | YES |
+| `estimated_due_odometer` | int unsigned | YES |
+| `estimated_due_date` | date | YES |
+| `estimated_cost_min` | decimal(8,2) | YES |
+| `estimated_cost_max` | decimal(8,2) | YES |
+| `sent_at` | datetime | YES |
+| `acknowledged_at` | datetime | YES |
+| `dismissed_at` | datetime | YES |
+| `completed_at` | datetime | YES |
+| `completed_by_job_id` | bigint unsigned | YES |
+| `created_at` | datetime | NO |
+| `updated_at` | datetime | NO |
+
+**`urgency` enum:** `advisory`, `recommended`, `important`, `urgent`
+
+**`status` enum:** `active`, `sent`, `acknowledged`, `dismissed`, `completed`
+
+The reminder dispatcher queries `status = 'active'` records where `estimated_due_odometer` is within 2,000 km of the vehicle's predicted current odometer (using `odometer_current + days_since_recorded × 41 km/day`).
 
 **`status` enum:** `active`, `sent`, `acknowledged`, `dismissed`, `completed`, `expired`
 
@@ -869,6 +937,8 @@ All outbound messages to customers.
 
 **`channel` enum:** `email`, `sms`, `push`, `in_app`
 
+**`notification_type` enum:** `service` (AI maintenance reminders), `booking_confirmed`, `booking_reminder`, `work_commenced`, `work_complete`, `quote_sent`, `pickup_ready`
+
 **`status` enum:** `queued`, `sent`, `delivered`, `opened`, `clicked`, `failed`, `bounced`, `unsubscribed`
 
 ---
@@ -887,6 +957,20 @@ Reusable message templates for each notification type.
 | `is_active` | tinyint(1) | NO |
 
 **`channel` enum:** `email`, `sms`, `push`, `in_app`
+
+---
+
+### `customer_pickup_notifications`
+
+Deduplication log for vehicle-ready emails. One row per job per channel — prevents re-sending on every card completion tick.
+
+| Column | Type | Null |
+|--------|------|------|
+| `id` | int unsigned | NO |
+| `job_id` | int unsigned | NO |
+| `channel` | varchar(20) | NO |
+| `recipient` | varchar(255) | NO |
+| `sent_at` | datetime | NO |
 
 ---
 

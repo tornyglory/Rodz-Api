@@ -18,6 +18,7 @@ export const JOB_SELECT = `
   SELECT
     j.id, j.job_number, j.booking_id, j.store_id, j.hoist_id, j.customer_id, j.vehicle_id,
     j.status, j.slot, j.scheduled_time, j.sort_order, j.customer_notes, j.odometer_in,
+    j.started_at, j.completed_at,
     COALESCE(j.quote_id, bq.id) AS quote_id,
     COALESCE(jq.status, bq.status) AS quote_status,
     b.booking_date AS job_date, b.booking_ref,
@@ -30,6 +31,7 @@ export const JOB_SELECT = `
     sjs.staff_id                               AS assigned_staff_id,
     CONCAT(st_tech.first_name, ' ', LEFT(st_tech.last_name, 1), '.') AS tech_label,
     COALESCE(
+      j.duration_mins,
       (SELECT SUM(svc.labour_hours_estimate * 60)
        FROM booking_services bs_d
        JOIN service_types svc ON svc.id = bs_d.service_type_id
@@ -85,6 +87,8 @@ export function buildJob(row: any, services: any[]) {
     quoteId:         row.quote_id ?? null,
     quoteStatus:     row.quote_status ?? null,
     odometerIn:      row.odometer_in ?? null,
+    startedAt:       row.started_at ? new Date(row.started_at).toISOString() : null,
+    completedAt:     row.completed_at ? new Date(row.completed_at).toISOString() : null,
   }
 }
 

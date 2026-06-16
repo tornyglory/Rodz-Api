@@ -65,6 +65,30 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [quote.id],
     )
 
+    // ── Create job card items from approved quote line items ───────────────
+    const [[linkedJob]] = await db.query<any[]>(
+      'SELECT id FROM service_jobs WHERE quote_id = ? LIMIT 1',
+      [quote.id],
+    )
+    if (linkedJob) {
+      const [[cardExists]] = await db.query<any[]>(
+        'SELECT id FROM job_card_items WHERE job_id = ? LIMIT 1',
+        [linkedJob.id],
+      )
+      if (!cardExists) {
+        const [lineItems] = await db.query<any[]>(
+          'SELECT id, description, quantity, sort_order FROM quote_items WHERE quote_id = ? ORDER BY sort_order, id',
+          [quote.id],
+        )
+        for (const li of lineItems) {
+          await db.query(
+            'INSERT INTO job_card_items (job_id, quote_item_id, description, qty, sort_order, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+            [linkedJob.id, li.id, li.description, li.quantity, li.sort_order],
+          )
+        }
+      }
+    }
+
     const [[row]] = await db.query<any[]>(
       `${QUOTE_SELECT} WHERE q.id = ? LIMIT 1`,
       [quote.id],

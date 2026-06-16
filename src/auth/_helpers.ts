@@ -64,6 +64,8 @@ export async function resolveHomeStoreName(db: mysql.Pool, storeId: number): Pro
   return rows[0]?.name ?? ''
 }
 
+const CF_ACCOUNT_HASH = process.env.CF_ACCOUNT_HASH ?? ''
+
 export function buildUserObject(
   staff: any,
   homeStoreName: string,
@@ -78,6 +80,9 @@ export function buildUserObject(
     store:       homeStoreName,
     storeId:     staff.store_id as number,
     avatar:      (staff.first_name[0] + staff.last_name[0]).toUpperCase(),
+    avatarUrl:   staff.avatar_image_id
+                   ? `https://imagedelivery.net/${CF_ACCOUNT_HASH}/${staff.avatar_image_id}/thumbnail`
+                   : null,
     permissions,
     stores,
   }

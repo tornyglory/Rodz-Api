@@ -14,7 +14,14 @@ export async function buildCustomerList(db: mysql.Pool, rows: any[]) {
   const [[tagRows], [vehicleRows], [statsRows]] = await Promise.all([
     db.query<any[]>('SELECT customer_id, tag FROM customer_tags WHERE customer_id IN (?)', [ids]),
     db.query<any[]>(
-      `SELECT vo.customer_id, v.id, v.rego, v.year, v.make, v.model
+      `SELECT vo.customer_id, v.id, v.rego, v.year, v.make, v.model,
+              (
+                SELECT NULLIF(GREATEST(
+                  COALESCE(MAX(sj.odometer_in), 0),
+                  COALESCE(MAX(sj.odometer_out), 0)
+                ), 0)
+                FROM service_jobs sj WHERE sj.vehicle_id = v.id
+              ) AS odometer
        FROM vehicle_owners vo
        JOIN vehicles v ON v.id = vo.vehicle_id
        WHERE vo.customer_id IN (?) AND vo.is_current = 1 AND v.is_active = 1
@@ -24,11 +31,13 @@ export async function buildCustomerList(db: mysql.Pool, rows: any[]) {
     db.query<any[]>(
       `SELECT
          sj.customer_id,
-         COUNT(DISTINCT sj.id)            AS totalVisits,
-         COALESCE(SUM(sji.line_total), 0) AS totalSpend,
-         MAX(sj.completed_at)             AS lastVisit
+         COUNT(DISTINCT sj.id)                                          AS totalVisits,
+         COALESCE(SUM(COALESCE(q.total, bq.total, 0)), 0)              AS totalSpend,
+         MAX(COALESCE(sj.completed_at, sj.updated_at))                 AS lastVisit
        FROM service_jobs sj
-       LEFT JOIN service_job_items sji ON sji.service_job_id = sj.id
+       LEFT JOIN quotes q  ON q.id  = sj.quote_id
+       LEFT JOIN bookings b ON b.id = sj.booking_id
+       LEFT JOIN quotes bq ON bq.booking_id = b.id
        WHERE sj.customer_id IN (?) AND sj.status IN ('completed', 'invoiced')
        GROUP BY sj.customer_id`,
       [ids],
@@ -44,7 +53,7 @@ export async function buildCustomerList(db: mysql.Pool, rows: any[]) {
   const vehiclesMap = new Map<number, any[]>()
   for (const r of vehicleRows) {
     if (!vehiclesMap.has(r.customer_id)) vehiclesMap.set(r.customer_id, [])
-    vehiclesMap.get(r.customer_id)!.push({ id: r.id, rego: r.rego, year: r.year, make: r.make, model: r.model })
+    vehiclesMap.get(r.customer_id)!.push({ id: r.id, rego: r.rego, year: r.year, make: r.make, model: r.model, odometer: r.odometer != null ? Number(r.odometer) : null })
   }
 
   const statsMap = new Map<number, any>()
@@ -53,16 +62,17 @@ export async function buildCustomerList(db: mysql.Pool, rows: any[]) {
   return rows.map((row: any) => {
     const stats = statsMap.get(row.id)
     return {
-      id:          row.id,
-      name:        `${row.first_name} ${row.last_name}`.trim(),
-      email:       row.email,
-      phone:       row.mobile,
-      store:       row.store_name,
-      tags:        tagsMap.get(row.id) ?? [],
-      totalVisits: stats ? Number(stats.totalVisits) : 0,
-      totalSpend:  stats ? Number(Number(stats.totalSpend).toFixed(2)) : 0,
-      lastVisit:   stats?.lastVisit ? formatDate(stats.lastVisit) : null,
-      notes:       row.internal_notes ?? null,
+      id:           row.id,
+      name:         `${row.first_name} ${row.last_name}`.trim(),
+      email:        row.email,
+      phone:        row.mobile,
+      store:        row.store_name,
+      tags:         tagsMap.get(row.id) ?? [],
+      totalVisits:  stats ? Number(stats.totalVisits) : 0,
+      totalSpend:   stats ? Number(Number(stats.totalSpend).toFixed(2)) : 0,
+      lastVisit:    stats?.lastVisit ? formatDate(stats.lastVisit) : null,
+      memberSince:  row.created_at ? formatDate(row.created_at) : null,
+      notes:        row.internal_notes ?? null,
       dob:         row.date_of_birth ? (row.date_of_birth instanceof Date ? row.date_of_birth.toISOString().slice(0, 10) : String(row.date_of_birth).slice(0, 10)) : null,
       address: {
         line1:    row.address_line1 ?? null,
@@ -81,7 +91,14 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
   const [tags, vehicles, stats, jobs] = await Promise.all([
     db.query<any[]>('SELECT tag FROM customer_tags WHERE customer_id = ?', [row.id]),
     db.query<any[]>(
-      `SELECT v.id, v.rego, v.year, v.make, v.model
+      `SELECT v.id, v.rego, v.year, v.make, v.model,
+              (
+                SELECT NULLIF(GREATEST(
+                  COALESCE(MAX(sj.odometer_in), 0),
+                  COALESCE(MAX(sj.odometer_out), 0)
+                ), 0)
+                FROM service_jobs sj WHERE sj.vehicle_id = v.id
+              ) AS odometer
        FROM vehicle_owners vo
        JOIN vehicles v ON v.id = vo.vehicle_id
        WHERE vo.customer_id = ? AND vo.is_current = 1 AND v.is_active = 1
@@ -90,11 +107,13 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
     ),
     db.query<any[]>(
       `SELECT
-         COUNT(DISTINCT sj.id)            AS totalVisits,
-         COALESCE(SUM(sji.line_total), 0) AS totalSpend,
-         MAX(sj.completed_at)             AS lastVisit
+         COUNT(DISTINCT sj.id)                                 AS totalVisits,
+         COALESCE(SUM(COALESCE(q.total, bq.total, 0)), 0)     AS totalSpend,
+         MAX(COALESCE(sj.completed_at, sj.updated_at))        AS lastVisit
        FROM service_jobs sj
-       LEFT JOIN service_job_items sji ON sji.service_job_id = sj.id
+       LEFT JOIN quotes q  ON q.id  = sj.quote_id
+       LEFT JOIN bookings b ON b.id = sj.booking_id
+       LEFT JOIN quotes bq ON bq.booking_id = b.id
        WHERE sj.customer_id = ? AND sj.status IN ('completed', 'invoiced')`,
       [row.id],
     ),
@@ -143,6 +162,7 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
     totalVisits: Number(statsRow.totalVisits),
     totalSpend:  Number(Number(statsRow.totalSpend).toFixed(2)),
     lastVisit:   statsRow.lastVisit ? formatDate(statsRow.lastVisit) : null,
+    memberSince: row.created_at ? formatDate(row.created_at) : null,
     notes:       row.internal_notes ?? null,
     dob:         row.date_of_birth ? (row.date_of_birth instanceof Date ? row.date_of_birth.toISOString().slice(0, 10) : String(row.date_of_birth).slice(0, 10)) : null,
     address: {
@@ -152,7 +172,7 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
       state:    row.state ?? null,
       postcode: row.postcode ?? null,
     },
-    vehicles:    vehicleRows.map((v: any) => ({ id: v.id, rego: v.rego, year: v.year, make: v.make, model: v.model })),
+    vehicles:    vehicleRows.map((v: any) => ({ id: v.id, rego: v.rego, year: v.year, make: v.make, model: v.model, odometer: v.odometer != null ? Number(v.odometer) : null })),
     jobHistory:  jobRows.map((j: any) => ({
       id:      j.id,
       date:    j.completed_at ? formatDate(j.completed_at) : null,

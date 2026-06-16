@@ -146,15 +146,20 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
     const {
       firstName, lastName, email, mobile,
-      rego, regoState, vehicle, serviceNeeded,
+      rego, regoState, vehicle, serviceTypeIds, notes,
       preferredDate, slot, storeId, referralSource,
     } = body
 
     // ── Validate required fields ───────────────────────────────────────────
     if (!firstName || !lastName || !email || !mobile || !rego || !regoState ||
-        !vehicle || !serviceNeeded || !preferredDate || !slot || !storeId) {
+        !vehicle || !preferredDate || !slot || !storeId) {
       return err422('VALIDATION_ERROR', 'Required field missing.')
     }
+
+    if (!Array.isArray(serviceTypeIds) || serviceTypeIds.length === 0) {
+      return err422('VALIDATION_ERROR', 'serviceTypeIds must be a non-empty array.')
+    }
+    const serviceIdList = serviceTypeIds.map(Number)
 
     const regoStateStr = String(regoState).toUpperCase()
     if (!VALID_STATES.has(regoStateStr)) {
@@ -169,6 +174,15 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
     if (referralSource != null && !VALID_REFERAL.has(String(referralSource))) {
       return err422('VALIDATION_ERROR', 'Invalid referralSource value.')
+    }
+
+    // ── Validate service type IDs ──────────────────────────────────────────
+    const [validServices] = await db.query<any[]>(
+      `SELECT id, name FROM service_types WHERE id IN (${serviceIdList.map(() => '?').join(',')}) AND is_active = 1 AND is_bookable = 1`,
+      serviceIdList,
+    )
+    if (validServices.length !== serviceIdList.length) {
+      return err422('VALIDATION_ERROR', 'One or more selected services are not available for booking.')
     }
 
     // ── Verify store ───────────────────────────────────────────────────────
@@ -266,7 +280,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const bookingRef  = generateBookingRef()
     const bookingTime = slot === 'morning' ? '09:00:00' : '13:00:00'
 
-    await db.query(
+    const [bookingIns] = await db.query<any>(
       `INSERT INTO bookings
          (store_id, booking_ref, customer_id, vehicle_id, booking_date, booking_time,
           slot, drop_off_type, booking_source, customer_notes, created_at, updated_at)
@@ -279,9 +293,18 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         bookingDate,
         bookingTime,
         slot,
-        String(serviceNeeded).trim(),
+        notes ? String(notes).trim() : null,
       ],
     )
+
+    // ── Link service types to booking ──────────────────────────────────────
+    const bookingId = bookingIns.insertId
+    for (const serviceTypeId of serviceIdList) {
+      await db.query(
+        `INSERT INTO booking_services (booking_id, service_type_id, created_at) VALUES (?, ?, NOW())`,
+        [bookingId, serviceTypeId],
+      )
+    }
 
     // ── Send confirmation email (non-fatal) ────────────────────────────────
     const vehicleLabel = `${parsed.year} ${parsed.make} ${parsed.model}`
@@ -294,7 +317,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       vehicle:       vehicleLabel,
       rego:          regoStr,
       store:         store.name,
-      services:      [],
+      services:      validServices,
       dropOffTime:   null,
     })
 

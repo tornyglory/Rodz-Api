@@ -1,3 +1,5 @@
+import { imageUrls } from '../../shared/cloudflare'
+
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
 function toApiRole(dbRole: string): string {
@@ -19,8 +21,8 @@ function formatJoined(date: Date | string | null): string {
 }
 
 export const STAFF_SELECT = `
-  SELECT s.id, s.store_id, s.first_name, s.last_name, s.email, s.role, s.is_active, s.hired_at,
-         st.name AS store_name
+  SELECT s.id, s.store_id, s.first_name, s.last_name, s.email, s.mobile, s.role, s.is_active, s.hired_at,
+         s.avatar_image_id, st.name AS store_name
   FROM staff s
   LEFT JOIN stores st ON st.id = s.store_id`
 
@@ -34,6 +36,8 @@ export function buildApiUser(row: any) {
     lastName:    row.last_name as string,
     displayName: `${String(row.first_name)[0]}. ${row.last_name}`.trim(),
     email:       row.email as string,
+    mobile:      row.mobile ?? null as string | null,
+    avatarUrl:   row.avatar_image_id ? imageUrls(row.avatar_image_id).thumbnail : null,
     role,
     store:       isAdmin ? null : (row.store_name ?? null) as string | null,
     storeId:     isAdmin ? null : (row.store_id ?? null) as number | null,

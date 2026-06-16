@@ -96,6 +96,43 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       await db.query<any>(`UPDATE quotes SET ${set} WHERE id = ?`, values)
     }
 
+    // ── Create job card on approval ────────────────────────────────────────
+    if (status === 'approved') {
+      const [[linkedJob]] = await db.query<any[]>(
+        `SELECT j.id, j.status FROM service_jobs j
+         WHERE j.quote_id = ?
+            OR j.booking_id = (SELECT booking_id FROM quotes WHERE id = ?)
+         LIMIT 1`,
+        [id, id],
+      )
+      if (linkedJob) {
+        const [[alreadyExists]] = await db.query<any[]>(
+          'SELECT id FROM job_card_items WHERE job_id = ? LIMIT 1',
+          [linkedJob.id],
+        )
+        if (alreadyExists) {
+          return quoteError(409, 'CARD_EXISTS', 'A job card already exists for this job.')
+        }
+        const [quoteLineItems] = await db.query<any[]>(
+          'SELECT id, description, quantity, sort_order FROM quote_items WHERE quote_id = ? ORDER BY sort_order, id',
+          [id],
+        )
+        for (const li of quoteLineItems) {
+          await db.query(
+            `INSERT INTO job_card_items (job_id, quote_item_id, description, qty, sort_order, created_at)
+             VALUES (?, ?, ?, ?, ?, NOW())`,
+            [linkedJob.id, li.id, li.description, li.quantity, li.sort_order],
+          )
+        }
+        if (linkedJob.status === 'awaiting_approval') {
+          await db.query(
+            `UPDATE service_jobs SET status = 'open', updated_at = NOW() WHERE id = ?`,
+            [linkedJob.id],
+          )
+        }
+      }
+    }
+
     const [[row]] = await db.query<any[]>(`${QUOTE_SELECT} WHERE q.id = ? LIMIT 1`, [id])
     const quoteItems = await getQuoteItems(db, Number(id))
     return ok({ quote: buildQuote(row, quoteItems) })

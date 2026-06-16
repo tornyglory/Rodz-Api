@@ -65,7 +65,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     } else if (!search) {
       // Default: today + upcoming, plus any in-flight jobs from past dates.
       // Skipped when searching so users can find historical jobs.
-      where.push('(b.booking_date >= CURDATE() OR j.status NOT IN (\'completed\',\'invoiced\',\'cancelled\'))')
+      where.push('(b.booking_date >= CURDATE() OR j.status NOT IN (\'invoiced\',\'cancelled\'))')
     }
 
     if (status && VALID_STATUSES.includes(status)) {

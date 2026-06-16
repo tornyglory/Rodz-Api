@@ -26,7 +26,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     // Fetch fresh staff record — do not trust cached JWT claims for user-facing fields
     const [staffRows] = await db.query<any[]>(
-      'SELECT id, first_name, last_name, email, role, store_id, is_active FROM staff WHERE id = ? LIMIT 1',
+      'SELECT id, first_name, last_name, email, role, store_id, is_active, avatar_image_id FROM staff WHERE id = ? LIMIT 1',
       [staffId],
     )
     const staff = staffRows[0]
