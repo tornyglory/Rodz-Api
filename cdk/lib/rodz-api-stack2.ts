@@ -197,6 +197,30 @@ export class RodzApiStack2 extends Stack {
       authorizer,
     })
 
+    // ── Settings — Bank details ─────────────────────────────────────────────
+
+    const bankDetailsGetFn = new LambdaFn(this, 'BankDetailsGet', {
+      entry: src('settings/bank-details/get.ts'), vpc, sharedEnv,
+    }).fn
+
+    const bankDetailsUpdateFn = new LambdaFn(this, 'BankDetailsUpdate', {
+      entry: src('settings/bank-details/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'BankDetailsGetRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('BankDetailsGetInt', bankDetailsGetFn),
+      routeKey: HttpRouteKey.with('/settings/bank-details', HttpMethod.GET),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'BankDetailsUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('BankDetailsUpdateInt', bankDetailsUpdateFn),
+      routeKey: HttpRouteKey.with('/settings/bank-details', HttpMethod.PATCH),
+      authorizer,
+    })
+
     // ── Vehicle chats ───────────────────────────────────────────────────────
 
     const vehicleChatCreateFn = new LambdaFn(this, 'VehicleChatCreate', {

@@ -53,7 +53,7 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | [Auth](#auth) | `staff_auth`, `staff_sessions`, `customer_auth`, `customer_sessions`, `customer_oauth_providers` |
 | [Permissions](#permissions) | `permissions`, `role_permissions`, `staff_permission_overrides`, `staff_store_access` |
 | [Integrations](#integrations) | `xero_connections`, `xero_sync_log` |
-| [Settings](#settings) | `email_settings`, `staff_email_settings` |
+| [Settings](#settings) | `email_settings`, `staff_email_settings`, `business_settings` |
 | [Audit](#audit) | `audit_log` |
 | [Reviews](#reviews) | `reviews` |
 | [Warranty](#warranty) | `warranty_claims` |
@@ -1182,6 +1182,26 @@ Single-row table (id = 1). Stores JSON blob of global email config.
 ### `staff_email_settings`
 
 Single-row table (id = 1). Email templates for staff-facing notifications: booking received, confirmed, work commenced, work complete, quote.
+
+---
+
+### `business_settings`
+
+Single-row table (id = 1 always). Global business configuration — bank transfer details for invoices.
+
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `id` | int | NO | `1` |
+| `bank_account_name` | varchar(100) | NO | `''` |
+| `bank_bsb` | varchar(7) | NO | `''` |
+| `bank_account_number` | varchar(20) | NO | `''` |
+| `bank_reference` | varchar(50) | NO | `''` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_by` | bigint unsigned | YES | — |
+
+Seed once at migration time: `INSERT INTO business_settings (id) VALUES (1) ON DUPLICATE KEY UPDATE id = id;`
+
+If `bank_account_name` is empty, the bank transfer section is omitted from generated invoices.
 
 ---
 
