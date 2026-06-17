@@ -33,6 +33,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const [rows] = await db.query<any[]>(
       `SELECT
          vc.id,
+         vc.started_by_staff_id AS staff_id,
          vc.created_at,
          st.first_name,
          st.last_name,
@@ -52,6 +53,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const chats = rows.map((r: any) => ({
       id:           r.id,
       createdAt:    new Date(r.created_at).toISOString(),
+      staffId:      r.staff_id,
       mechanic:     `${r.first_name} ${r.last_name}`,
       messageCount: r.message_count,
       preview:      r.first_message ?? null,

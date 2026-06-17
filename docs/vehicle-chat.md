@@ -79,7 +79,8 @@ Authorization: Bearer <accessToken>
     {
       "id": 7,
       "createdAt": "2026-06-17T04:23:00.000Z",
-      "mechanic": "Jake S.",
+      "staffId": 14,
+      "mechanic": "Jake Smith",
       "messageCount": 6,
       "preview": "There's a knocking sound from the engine at idle..."
     }
@@ -87,6 +88,7 @@ Authorization: Bearer <accessToken>
 }
 ```
 
+- `staffId` is the `staff.id` of the mechanic who started the chat — use for avatar colour assignment (`id % 5`)
 - `preview` is the first user message text (null if the first message was image-only)
 - `mechanic` is the full name of the staff member who started the chat
 
@@ -117,6 +119,7 @@ Authorization: Bearer <accessToken>
       "content": "There's a knocking sound from the engine at idle",
       "image": null,
       "sentBy": "Jake Smith",
+      "staffId": 14,
       "createdAt": "2026-06-17T04:23:00.000Z"
     },
     {
@@ -125,6 +128,7 @@ Authorization: Bearer <accessToken>
       "content": "Given this is a 2019 Corolla with the 2ZR-FAE Valvematic engine, knocking at idle most often points to...",
       "image": null,
       "sentBy": null,
+      "staffId": null,
       "createdAt": "2026-06-17T04:23:05.000Z"
     },
     {
@@ -146,6 +150,7 @@ Authorization: Bearer <accessToken>
 
 - `role`: `"user"` = mechanic, `"model"` = Gemini assistant
 - `sentBy`: null for assistant messages
+- `staffId`: the `staff.id` of the sender — null on model messages; use `id % 5` for avatar colour assignment
 - `image`: null if no image on this message
 - Messages are always returned oldest-first within the page
 - `hasMore`: true means there are older messages not yet fetched
