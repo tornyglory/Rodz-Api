@@ -34,8 +34,10 @@ export class RodzApiStack2 extends Stack {
       CF_ACCOUNT_ID:   process.env.CF_ACCOUNT_ID   ?? '',
       CF_ACCOUNT_HASH: process.env.CF_ACCOUNT_HASH ?? '',
       CF_IMAGES_TOKEN: process.env.CF_IMAGES_TOKEN ?? '',
-      GEMINI_API_KEY:   process.env.GEMINI_API_KEY   ?? '',
-      BOOKING_API_KEY:  process.env.BOOKING_API_KEY  ?? '',
+      GEMINI_API_KEY:        process.env.GEMINI_API_KEY        ?? '',
+      BOOKING_API_KEY:       process.env.BOOKING_API_KEY       ?? '',
+      ZELLER_API_KEY:        process.env.ZELLER_API_KEY        ?? '',
+      ZELLER_WEBHOOK_SECRET: process.env.ZELLER_WEBHOOK_SECRET ?? '',
     }
 
     const src = (p: string) => path.join(__dirname, '../../src', p)
@@ -195,6 +197,117 @@ export class RodzApiStack2 extends Stack {
       integration: new HttpLambdaIntegration('JobNotifyPickupInt', jobNotifyPickupFn),
       routeKey: HttpRouteKey.with('/jobs/{id}/notify-pickup', HttpMethod.POST),
       authorizer,
+    })
+
+    // ── Invoices ────────────────────────────────────────────────────────────
+
+    const invoiceListFn = new LambdaFn(this, 'InvoiceList', {
+      entry: src('invoices/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const invoiceGetFn = new LambdaFn(this, 'InvoiceGet', {
+      entry: src('invoices/get.ts'), vpc, sharedEnv,
+    }).fn
+
+    const invoiceCreateFn = new LambdaFn(this, 'InvoiceCreate', {
+      entry: src('invoices/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const invoiceCreateFromJobFn = new LambdaFn(this, 'InvoiceCreateFromJob', {
+      entry: src('invoices/create-from-job.ts'), vpc, sharedEnv,
+    }).fn
+
+    const invoiceUpdateFn = new LambdaFn(this, 'InvoiceUpdate', {
+      entry: src('invoices/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const invoiceDeleteFn = new LambdaFn(this, 'InvoiceDelete', {
+      entry: src('invoices/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    const invoiceSendFn = new LambdaFn(this, 'InvoiceSend', {
+      entry: src('invoices/send.ts'), vpc, sharedEnv, needsSes: true,
+      timeout: Duration.seconds(30),
+    }).fn
+
+    const invoiceMarkPaidFn = new LambdaFn(this, 'InvoiceMarkPaid', {
+      entry: src('invoices/mark-paid.ts'), vpc, sharedEnv,
+    }).fn
+
+    const invoicePublicGetFn = new LambdaFn(this, 'InvoicePublicGet', {
+      entry: src('invoices/public-get.ts'), vpc, sharedEnv,
+    }).fn
+
+    const invoiceWebhookZellerFn = new LambdaFn(this, 'InvoiceWebhookZeller', {
+      entry: src('invoices/webhook-zeller.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'InvoiceListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('InvoiceListInt', invoiceListFn),
+      routeKey: HttpRouteKey.with('/invoices', HttpMethod.GET),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'InvoiceGetRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('InvoiceGetInt', invoiceGetFn),
+      routeKey: HttpRouteKey.with('/invoices/{id}', HttpMethod.GET),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'InvoiceCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('InvoiceCreateInt', invoiceCreateFn),
+      routeKey: HttpRouteKey.with('/invoices', HttpMethod.POST),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'InvoiceCreateFromJobRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('InvoiceCreateFromJobInt', invoiceCreateFromJobFn),
+      routeKey: HttpRouteKey.with('/jobs/{id}/invoice', HttpMethod.POST),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'InvoiceUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('InvoiceUpdateInt', invoiceUpdateFn),
+      routeKey: HttpRouteKey.with('/invoices/{id}', HttpMethod.PATCH),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'InvoiceDeleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('InvoiceDeleteInt', invoiceDeleteFn),
+      routeKey: HttpRouteKey.with('/invoices/{id}', HttpMethod.DELETE),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'InvoiceSendRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('InvoiceSendInt', invoiceSendFn),
+      routeKey: HttpRouteKey.with('/invoices/{id}/send', HttpMethod.POST),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'InvoiceMarkPaidRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('InvoiceMarkPaidInt', invoiceMarkPaidFn),
+      routeKey: HttpRouteKey.with('/invoices/{id}/mark-paid', HttpMethod.POST),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'InvoicePublicGetRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('InvoicePublicGetInt', invoicePublicGetFn),
+      routeKey: HttpRouteKey.with('/i/{token}', HttpMethod.GET),
+    })
+
+    new HttpRoute(this, 'InvoiceWebhookZellerRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('InvoiceWebhookZellerInt', invoiceWebhookZellerFn),
+      routeKey: HttpRouteKey.with('/webhooks/zeller', HttpMethod.POST),
     })
 
     // ── Settings — Bank details ─────────────────────────────────────────────

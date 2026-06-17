@@ -1,0 +1,91 @@
+import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
+import crypto from 'crypto'
+import { bootstrap } from '../shared/bootstrap'
+import { getPool } from '../shared/db'
+import { getAuthContext } from '../shared/auth'
+import { ok, notFound, forbidden, serverError } from '../shared/errors'
+import { invoiceError, INVOICE_SELECT_BY_ID, buildInvoice, getInvoiceItems, getAllowedStoreIds } from './_helpers'
+import { createZellerPayment } from '../shared/zeller'
+import { sendInvoiceEmail } from '../shared/emailTemplates'
+
+const ready = bootstrap()
+
+export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
+  await ready
+  const db  = getPool()
+  const ctx = getAuthContext(event)
+  const id  = event.pathParameters?.id
+
+  try {
+    const [[row]] = await db.query<any[]>(
+      `SELECT i.*, c.email AS cust_email, c.first_name AS cust_first, c.last_name AS cust_last,
+              vl.label AS vehicle_label
+       FROM invoices i
+       JOIN customers c ON c.id = i.customer_id
+       LEFT JOIN (
+         SELECT rego, CONCAT(year, ' ', make, ' ', model) AS label
+         FROM vehicles WHERE is_active = 1 GROUP BY rego
+       ) vl ON vl.rego = i.vehicle_rego
+       WHERE i.id = ? LIMIT 1`,
+      [id],
+    )
+    if (!row) return notFound('Invoice')
+
+    if (ctx.role !== 'super_admin') {
+      const allowedIds = await getAllowedStoreIds(db, ctx.staffId)
+      if (!allowedIds.includes(row.store_id)) return notFound('Invoice')
+    }
+    if (ctx.role === 'technician' && String(row.staff_id) !== String(ctx.staffId))
+      return forbidden()
+
+    if (row.status !== 'draft')
+      return invoiceError(409, 'ALREADY_SENT', 'Invoice has already been sent.')
+
+    const token = crypto.randomBytes(32).toString('hex')
+
+    // Zeller payment — best-effort, non-fatal on failure
+    let zellerPaymentId:  string | null = null
+    let zellerPaymentUrl: string | null = null
+    try {
+      const frontendUrl = process.env.FRONTEND_URL ?? ''
+      const redirectUrl = `${frontendUrl}/invoice/${token}?paid=true`
+      const amountCents = Math.round(Number(row.total) * 100)
+      const zeller = await createZellerPayment({
+        amountCents,
+        reference:   row.invoice_number,
+        redirectUrl,
+      })
+      if (zeller) {
+        zellerPaymentId  = zeller.id
+        zellerPaymentUrl = zeller.paymentUrl
+      }
+    } catch (zellerErr) {
+      console.error('Zeller payment creation failed (non-fatal):', zellerErr)
+    }
+
+    await db.query(
+      `UPDATE invoices
+       SET status = 'sent', token = ?, sent_at = NOW(),
+           zeller_payment_id = ?, zeller_payment_url = ?
+       WHERE id = ?`,
+      [token, zellerPaymentId, zellerPaymentUrl, id],
+    )
+
+    // Send invoice email — non-fatal
+    const frontendUrl = process.env.FRONTEND_URL ?? ''
+    await sendInvoiceEmail(db, {
+      customerEmail: row.cust_email,
+      customerName:  `${row.cust_first} ${row.cust_last}`,
+      invoiceNumber: row.invoice_number,
+      vehicle:       row.vehicle_label ?? row.vehicle_rego,
+      total:         `$${Number(row.total).toFixed(2)}`,
+      invoiceLink:   `${frontendUrl}/invoice/${token}`,
+    })
+
+    const [[updated]] = await db.query<any[]>(INVOICE_SELECT_BY_ID, [id])
+    const itemsMap = await getInvoiceItems(db, [row.id])
+    return ok({ invoice: buildInvoice(updated, itemsMap.get(row.id) ?? []) })
+  } catch (err) {
+    return serverError(err)
+  }
+}

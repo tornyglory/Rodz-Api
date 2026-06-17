@@ -248,3 +248,23 @@ export async function sendMaintenanceReminderEmail(db: mysql.Pool, opts: {
     // Non-fatal
   }
 }
+
+
+export async function sendInvoiceEmail(db: mysql.Pool, params: {
+  customerEmail: string
+  customerName:  string
+  invoiceNumber: string
+  vehicle:       string
+  total:         string
+  invoiceLink:   string
+}): Promise<void> {
+  if (!params.customerEmail) return
+  await dispatch(db, 'invoiceTemplate', params.customerEmail, {
+    customerName:  params.customerName,
+    firstName:     params.customerName.split(' ')[0],
+    invoiceNumber: params.invoiceNumber,
+    vehicle:       params.vehicle,
+    total:         params.total,
+    invoiceLink:   params.invoiceLink,
+  })
+}
