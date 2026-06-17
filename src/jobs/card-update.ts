@@ -1,4 +1,5 @@
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
+import mysql from 'mysql2/promise'
 import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
@@ -9,7 +10,7 @@ import { sendPickupReadyEmail } from '../shared/emailTemplates'
 
 const ready = bootstrap()
 
-async function sendPickupNotification(db: any, jobId: number): Promise<void> {
+async function sendPickupNotification(db: mysql.Pool, jobId: number): Promise<void> {
   // Only send once per job — skip if already logged
   const [[sent]] = await db.query<any[]>(
     'SELECT id FROM customer_pickup_notifications WHERE job_id = ? LIMIT 1',
@@ -94,7 +95,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     // ── Check overall completion ───────────────────────────────────────────
     const items      = await getJobCard(db, Number(jobId))
-    const allDone    = items.length > 0 && items.every((i) => i.completed)
+    const allDone    = items.length > 0 && items.every((i: any) => i.completed)
     const wasComplete = job.status === 'completed'
 
     if (allDone && !wasComplete) {

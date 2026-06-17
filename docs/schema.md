@@ -46,6 +46,7 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | [Customers — extended](#customers--extended) | `customer_tags`, `customer_communications`, `loyalty_transactions` |
 | [Vehicles — extended](#vehicles--extended) | `vehicle_service_history` |
 | [Reminders & AI](#reminders--ai) | `reminders`, `vehicle_model_profiles`, `ai_milestone_rules`, `ai_recommendations` |
+| [Vehicle chats](#vehicle-chats) | `vehicle_chats`, `vehicle_chat_messages` |
 | [Notifications](#notifications) | `notifications`, `notification_templates`, `customer_pickup_notifications` |
 | [Loan vehicles](#loan-vehicles) | `loan_vehicles`, `loan_vehicle_bookings` |
 | [Operations](#operations) | `hoists`, `business_hours`, `staff_roster`, `daily_kpi_snapshots` |
@@ -941,6 +942,44 @@ The reminder dispatcher queries `status = 'active'` records where `estimated_due
 **`status` enum:** `active`, `sent`, `acknowledged`, `dismissed`, `completed`, `expired`
 
 **`urgency` enum:** `advisory`, `recommended`, `important`, `urgent`
+
+---
+
+## Vehicle chats
+
+### `vehicle_chats`
+
+One row per conversation. A conversation is always tied to a vehicle and was started by a staff member.
+
+| Column | Type | Null |
+|--------|------|------|
+| `id` | bigint unsigned | NO |
+| `vehicle_id` | bigint unsigned | NO |
+| `started_by_staff_id` | bigint unsigned | NO |
+| `created_at` | datetime | NO |
+
+Index: `idx_vehicle_chats_vehicle_id (vehicle_id)`
+
+---
+
+### `vehicle_chat_messages`
+
+Individual messages within a vehicle chat. Role is `user` (mechanic) or `model` (Gemini assistant). Images are stored as Cloudflare image IDs.
+
+| Column | Type | Null |
+|--------|------|------|
+| `id` | bigint unsigned | NO |
+| `chat_id` | bigint unsigned | NO |
+| `role` | enum(`user`, `model`) | NO |
+| `content` | text | YES |
+| `image_id` | varchar(255) | YES |
+| `staff_id` | bigint unsigned | YES |
+| `created_at` | datetime | NO |
+
+- `content` is null for image-only messages
+- `image_id` is a Cloudflare Images ID — use `imageUrls(imageId)` to get thumbnail/public URLs
+- `staff_id` is null on `model` (assistant) messages
+- Index: `idx_vehicle_chat_messages_chat_id (chat_id)`
 
 ---
 

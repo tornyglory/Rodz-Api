@@ -1,4 +1,5 @@
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
+import mysql from 'mysql2/promise'
 import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
@@ -8,7 +9,7 @@ import { imageUrls } from '../shared/cloudflare'
 
 const ready = bootstrap()
 
-export async function getJobCard(db: any, jobId: number) {
+export async function getJobCard(db: mysql.Pool, jobId: number) {
   const [items] = await db.query<any[]>(
     `SELECT jci.id, jci.description, jci.qty, jci.sort_order,
             jci.completed, jci.completed_at, jci.notes,

@@ -197,6 +197,53 @@ export class RodzApiStack2 extends Stack {
       authorizer,
     })
 
+    // ── Vehicle chats ───────────────────────────────────────────────────────
+
+    const vehicleChatCreateFn = new LambdaFn(this, 'VehicleChatCreate', {
+      entry: src('customers/vehicles/chats/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const vehicleChatListFn = new LambdaFn(this, 'VehicleChatList', {
+      entry: src('customers/vehicles/chats/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const vehicleChatMessagesListFn = new LambdaFn(this, 'VehicleChatMessagesList', {
+      entry: src('customers/vehicles/chats/messages-list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const vehicleChatMessagesSendFn = new LambdaFn(this, 'VehicleChatMessagesSend', {
+      entry: src('customers/vehicles/chats/messages-send.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(60),
+    }).fn
+
+    new HttpRoute(this, 'VehicleChatCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleChatCreateInt', vehicleChatCreateFn),
+      routeKey: HttpRouteKey.with('/customers/{customerId}/vehicles/{vehicleId}/chats', HttpMethod.POST),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'VehicleChatListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleChatListInt', vehicleChatListFn),
+      routeKey: HttpRouteKey.with('/customers/{customerId}/vehicles/{vehicleId}/chats', HttpMethod.GET),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'VehicleChatMessagesListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleChatMessagesListInt', vehicleChatMessagesListFn),
+      routeKey: HttpRouteKey.with('/customers/{customerId}/vehicles/{vehicleId}/chats/{chatId}/messages', HttpMethod.GET),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'VehicleChatMessagesSendRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleChatMessagesSendInt', vehicleChatMessagesSendFn),
+      routeKey: HttpRouteKey.with('/customers/{customerId}/vehicles/{vehicleId}/chats/{chatId}/messages', HttpMethod.POST),
+      authorizer,
+    })
+
     // ── Reports ─────────────────────────────────────────────────────────────
 
     const reportPartsFn = new LambdaFn(this, 'ReportParts', {
