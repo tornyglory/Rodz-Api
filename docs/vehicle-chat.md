@@ -150,6 +150,11 @@ Authorization: Bearer <accessToken>
         "public":    "https://imagedelivery.net/.../public"
       },
       "sentBy": "Jake Smith",
+      "staffId": 14,
+      "avatar": {
+        "thumbnail": "https://imagedelivery.net/.../thumbnail",
+        "public":    "https://imagedelivery.net/.../public"
+      },
       "createdAt": "2026-06-17T04:24:10.000Z"
     }
   ],
