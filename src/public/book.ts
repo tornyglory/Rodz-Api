@@ -23,6 +23,20 @@ async function invokeRecommendationEngine(vehicleId: number, customerId: number)
   }
 }
 
+async function invokeVehicleProfileEngine(vehicleId: number): Promise<void> {
+  const arn = process.env.VEHICLE_PROFILE_FN_ARN
+  if (!arn) return
+  try {
+    await lambdaClient.send(new InvokeCommand({
+      FunctionName:   arn,
+      InvocationType: 'Event',
+      Payload:        Buffer.from(JSON.stringify({ vehicleId })),
+    }))
+  } catch (err) {
+    console.error('Failed to invoke VehicleProfileEngine:', err)
+  }
+}
+
 const ready = bootstrap()
 
 const VALID_STATES  = new Set(['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'])
@@ -271,9 +285,10 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       isNewOwnerLink = true
     }
 
-    // ── Fire recommendation engine for new vehicle-customer links ──────────
+    // ── Fire AI engines for new vehicle-customer links ─────────────────────
     if (isNewOwnerLink) {
       void invokeRecommendationEngine(existingVehicle.id, customer.id)
+      void invokeVehicleProfileEngine(existingVehicle.id)
     }
 
     // ── Create booking ─────────────────────────────────────────────────────

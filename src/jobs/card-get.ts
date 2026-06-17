@@ -4,6 +4,7 @@ import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { ok, notFound, forbidden, serverError } from '../shared/errors'
 import { jobError, getAllowedStoreIds } from './_helpers'
+import { imageUrls } from '../shared/cloudflare'
 
 const ready = bootstrap()
 
@@ -18,7 +19,26 @@ export async function getJobCard(db: any, jobId: number) {
      ORDER BY jci.sort_order, jci.id`,
     [jobId],
   )
-  return items
+
+  if (items.length === 0) return items
+
+  const itemIds = items.map((i: any) => i.id)
+  const placeholders = itemIds.map(() => '?').join(',')
+  const [photoRows] = await db.query<any[]>(
+    `SELECT id, image_id, job_card_item_id, caption, created_at
+     FROM photos WHERE job_card_item_id IN (${placeholders})
+     ORDER BY job_card_item_id, created_at`,
+    itemIds,
+  )
+
+  const photosByItem = new Map<number, any[]>()
+  for (const p of photoRows) {
+    const list = photosByItem.get(p.job_card_item_id) ?? []
+    list.push(p)
+    photosByItem.set(p.job_card_item_id, list)
+  }
+
+  return items.map((i: any) => ({ ...i, photos: photosByItem.get(i.id) ?? [] }))
 }
 
 export function buildCardResponse(jobId: number, items: any[]) {
@@ -35,6 +55,13 @@ export function buildCardResponse(jobId: number, items: any[]) {
       completedAt: i.completed_at ? new Date(i.completed_at).toISOString() : null,
       completedBy: i.completed_by ?? null,
       notes:       i.notes ?? null,
+      photos:      (i.photos ?? []).map((p: any) => ({
+        id:        p.id,
+        imageId:   p.image_id,
+        caption:   p.caption ?? null,
+        createdAt: new Date(p.created_at).toISOString(),
+        urls:      imageUrls(p.image_id),
+      })),
     })),
   }
 }

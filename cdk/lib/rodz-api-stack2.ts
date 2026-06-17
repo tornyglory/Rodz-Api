@@ -120,6 +120,34 @@ export class RodzApiStack2 extends Stack {
     aiRecommendationFn.grantInvoke(publicBookFn)
     publicBookFn.addEnvironment('AI_RECOMMENDATION_FN_ARN', aiRecommendationFn.functionArn)
 
+    // ── AI — Vehicle Profile Engine ─────────────────────────────────────────
+
+    const vehicleProfileFn = new LambdaFn(this, 'VehicleProfileEngine', {
+      entry: src('ai/vehicle-profile-engine.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(60),
+    }).fn
+
+    // Invoke from public booking + from profile GET (lazy generation)
+    vehicleProfileFn.grantInvoke(publicBookFn)
+    publicBookFn.addEnvironment('VEHICLE_PROFILE_FN_ARN', vehicleProfileFn.functionArn)
+
+    // ── Vehicle Profile read endpoint ───────────────────────────────────────
+
+    const vehicleProfileGetFn = new LambdaFn(this, 'VehicleProfileGet', {
+      entry: src('customers/vehicles/profile.ts'), vpc, sharedEnv,
+    }).fn
+
+    // Allow the profile GET to trigger generation if profile is missing
+    vehicleProfileFn.grantInvoke(vehicleProfileGetFn)
+    vehicleProfileGetFn.addEnvironment('VEHICLE_PROFILE_FN_ARN', vehicleProfileFn.functionArn)
+
+    new HttpRoute(this, 'VehicleProfileGetRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleProfileGetInt', vehicleProfileGetFn),
+      routeKey: HttpRouteKey.with('/customers/{customerId}/vehicles/{vehicleId}/profile', HttpMethod.GET),
+      authorizer,
+    })
+
     // ── AI — Reminder Dispatcher (daily EventBridge) ────────────────────────
 
     const reminderDispatcherFn = new LambdaFn(this, 'ReminderDispatcher', {

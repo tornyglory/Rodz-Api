@@ -45,7 +45,7 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | [Inspections](#inspections) | `job_inspections`, `job_inspection_results`, `inspection_checklist_items`, `job_documents` |
 | [Customers — extended](#customers--extended) | `customer_tags`, `customer_communications`, `loyalty_transactions` |
 | [Vehicles — extended](#vehicles--extended) | `vehicle_service_history` |
-| [Reminders & AI](#reminders--ai) | `reminders`, `ai_milestone_rules`, `ai_recommendations` |
+| [Reminders & AI](#reminders--ai) | `reminders`, `vehicle_model_profiles`, `ai_milestone_rules`, `ai_recommendations` |
 | [Notifications](#notifications) | `notifications`, `notification_templates`, `customer_pickup_notifications` |
 | [Loan vehicles](#loan-vehicles) | `loan_vehicles`, `loan_vehicle_bookings` |
 | [Operations](#operations) | `hoists`, `business_hours`, `staff_roster`, `daily_kpi_snapshots` |
@@ -860,6 +860,35 @@ Stores service records (both from Rodz jobs and imported history).
 
 ---
 
+### `vehicle_model_profiles`
+
+AI-generated reference profiles per make/model/year. Shared across all vehicles of the same type — generated once and reused. Triggered on the first public booking for a vehicle, or lazily on the first `GET /customers/{id}/vehicles/{id}/profile` call.
+
+| Column | Type | Null |
+|--------|------|------|
+| `id` | int unsigned | NO |
+| `make` | varchar(50) | NO |
+| `model` | varchar(80) | NO |
+| `year` | smallint | NO |
+| `overview` | text | NO |
+| `engine_specs` | json | NO |
+| `tyre_specs` | json | NO |
+| `service_notes` | json | NO |
+| `known_issues` | json | NO |
+| `common_repairs` | json | NO |
+| `generated_at` | datetime | NO |
+
+Unique index: `uidx_make_model_year (make, model, year)`
+
+**JSON shapes:**
+- `engine_specs` — `{ oilType, oilCapacityL, coolantType, transmissionFluid, brakeFluid, powerSteeringFluid, sparkPlugType, sparkPlugIntervalKm, timingDrive, timingBeltIntervalKm }`
+- `tyre_specs` — `{ front: { size, pressureCold }, rear: { size, pressureCold }, spare }`
+- `service_notes` — `string[]`
+- `known_issues` — `{ title, description, severity }[]` where severity is `low | medium | high`
+- `common_repairs` — `{ name, intervalKm, typicalCostAud }[]`
+
+---
+
 ### `ai_milestone_rules`
 
 Static rules used to trigger AI-generated recommendations (e.g. "60,000 km service", "timing belt"). Not currently used by the recommendation engine (which uses Gemini directly), but kept for future rule-based triggers.
@@ -1187,6 +1216,7 @@ Tracks all insert/update/delete operations across the system.
 | `vehicle_rego` | varchar(20) | NO | — |
 | `quote_id` | int unsigned | YES | — |
 | `quote_item_id` | int unsigned | YES | — |
+| `job_card_item_id` | int unsigned | YES | — |
 | `uploaded_by` | int unsigned | NO | — |
 | `caption` | varchar(255) | YES | — |
 | `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
@@ -1194,4 +1224,4 @@ Tracks all insert/update/delete operations across the system.
 `image_id` is the Cloudflare Images image ID. Image URLs are derived at read time — never stored:
 `https://imagedelivery.net/{CF_ACCOUNT_ID}/{image_id}/{variant}` where variant is `thumbnail` or `public`.
 
-`quote_id` and `quote_item_id` are both nullable. A photo attached to a specific line item sets both. A photo for a quote but not a line item sets `quote_id` only. A general condition photo sets neither.
+`quote_id` and `quote_item_id` are both nullable. A photo attached to a specific line item sets both. A photo for a quote but not a line item sets `quote_id` only. A general condition photo sets neither. `job_card_item_id` is set when a photo is attached to a job card checklist item — these are returned inline in the `GET /jobs/{id}/card` response.

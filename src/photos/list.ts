@@ -10,17 +10,18 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   await ready
   const db = getPool()
   const rego = event.pathParameters?.rego
-  const { quoteId, quoteItemId } = event.queryStringParameters ?? {}
+  const { quoteId, quoteItemId, jobCardItemId } = event.queryStringParameters ?? {}
 
   try {
     const where: string[] = ['vehicle_rego = ?']
     const params: unknown[] = [rego]
 
-    if (quoteId)     { where.push('quote_id = ?');      params.push(Number(quoteId)) }
-    if (quoteItemId) { where.push('quote_item_id = ?'); params.push(Number(quoteItemId)) }
+    if (quoteId)       { where.push('quote_id = ?');          params.push(Number(quoteId)) }
+    if (quoteItemId)   { where.push('quote_item_id = ?');     params.push(Number(quoteItemId)) }
+    if (jobCardItemId) { where.push('job_card_item_id = ?');  params.push(Number(jobCardItemId)) }
 
     const [rows] = await db.query<any[]>(
-      `SELECT id, image_id, vehicle_rego, quote_id, quote_item_id, uploaded_by, caption, created_at
+      `SELECT id, image_id, vehicle_rego, quote_id, quote_item_id, job_card_item_id, uploaded_by, caption, created_at
        FROM photos
        WHERE ${where.join(' AND ')}
        ORDER BY created_at DESC`,
