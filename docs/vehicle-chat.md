@@ -94,12 +94,17 @@ Authorization: Bearer <accessToken>
 
 ### GET /customers/{customerId}/vehicles/{vehicleId}/chats/{chatId}/messages
 
-Fetch all messages in a conversation.
+Fetch messages in a conversation. Returns the 50 most recent messages by default, oldest-first. Use `before` to page back through older history.
 
 ```
 GET /customers/12/vehicles/34/chats/7/messages
+GET /customers/12/vehicles/34/chats/7/messages?before=42
 Authorization: Bearer <accessToken>
 ```
+
+| Query param | Type | Description |
+|-------------|------|-------------|
+| `before` | number | Return the 50 messages older than this message ID (for "load more" scroll-up) |
 
 **Response `200`**
 
@@ -133,14 +138,24 @@ Authorization: Bearer <accessToken>
       "sentBy": "Jake Smith",
       "createdAt": "2026-06-17T04:24:10.000Z"
     }
-  ]
+  ],
+  "hasMore": true,
+  "oldestMessageId": 1
 }
 ```
 
 - `role`: `"user"` = mechanic, `"model"` = Gemini assistant
 - `sentBy`: null for assistant messages
 - `image`: null if no image on this message
-- Messages are in chronological order (oldest first)
+- Messages are always returned oldest-first within the page
+- `hasMore`: true means there are older messages not yet fetched
+- `oldestMessageId`: pass this as `?before=<id>` on the next call to load older messages
+
+**Pagination flow (scroll-up "load more"):**
+
+1. Open conversation → `GET .../messages` (no params) → renders the 50 most recent messages
+2. User scrolls to the top → call `GET .../messages?before=<oldestMessageId>` → prepend results above the existing messages
+3. Repeat until `hasMore` is `false`
 
 ---
 
