@@ -81,6 +81,10 @@ Authorization: Bearer <accessToken>
       "createdAt": "2026-06-17T04:23:00.000Z",
       "staffId": 14,
       "mechanic": "Jake Smith",
+      "avatar": {
+        "thumbnail": "https://imagedelivery.net/.../thumbnail",
+        "public":    "https://imagedelivery.net/.../public"
+      },
       "messageCount": 6,
       "preview": "There's a knocking sound from the engine at idle..."
     }
@@ -88,7 +92,8 @@ Authorization: Bearer <accessToken>
 }
 ```
 
-- `staffId` is the `staff.id` of the mechanic who started the chat — use for avatar colour assignment (`id % 5`)
+- `staffId` is the `staff.id` of the mechanic who started the chat
+- `avatar` is the staff member's profile photo (thumbnail + public URLs), or null if they haven't uploaded one
 - `preview` is the first user message text (null if the first message was image-only)
 - `mechanic` is the full name of the staff member who started the chat
 
@@ -120,6 +125,10 @@ Authorization: Bearer <accessToken>
       "image": null,
       "sentBy": "Jake Smith",
       "staffId": 14,
+      "avatar": {
+        "thumbnail": "https://imagedelivery.net/.../thumbnail",
+        "public":    "https://imagedelivery.net/.../public"
+      },
       "createdAt": "2026-06-17T04:23:00.000Z"
     },
     {
@@ -129,6 +138,7 @@ Authorization: Bearer <accessToken>
       "image": null,
       "sentBy": null,
       "staffId": null,
+      "avatar": null,
       "createdAt": "2026-06-17T04:23:05.000Z"
     },
     {
@@ -150,7 +160,8 @@ Authorization: Bearer <accessToken>
 
 - `role`: `"user"` = mechanic, `"model"` = Gemini assistant
 - `sentBy`: null for assistant messages
-- `staffId`: the `staff.id` of the sender — null on model messages; use `id % 5` for avatar colour assignment
+- `staffId`: the `staff.id` of the sender — null on model messages
+- `avatar`: the sender's profile photo (thumbnail + public URLs), null if no photo uploaded or for model messages
 - `image`: null if no image on this message
 - Messages are always returned oldest-first within the page
 - `hasMore`: true means there are older messages not yet fetched

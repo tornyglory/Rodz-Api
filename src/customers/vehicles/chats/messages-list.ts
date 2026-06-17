@@ -47,7 +47,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const [rows] = before
       ? await db.query<any[]>(
           `SELECT vcm.id, vcm.role, vcm.content, vcm.image_id, vcm.staff_id, vcm.created_at,
-                  st.first_name, st.last_name
+                  st.first_name, st.last_name, st.avatar_image_id
            FROM vehicle_chat_messages vcm
            LEFT JOIN staff st ON st.id = vcm.staff_id
            WHERE vcm.chat_id = ? AND vcm.id < ?
@@ -57,7 +57,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         )
       : await db.query<any[]>(
           `SELECT vcm.id, vcm.role, vcm.content, vcm.image_id, vcm.staff_id, vcm.created_at,
-                  st.first_name, st.last_name
+                  st.first_name, st.last_name, st.avatar_image_id
            FROM vehicle_chat_messages vcm
            LEFT JOIN staff st ON st.id = vcm.staff_id
            WHERE vcm.chat_id = ?
@@ -79,6 +79,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       image:     r.image_id ? imageUrls(r.image_id) : null,
       sentBy:    r.first_name ? `${r.first_name} ${r.last_name}` : null,
       staffId:   r.staff_id ?? null,
+      avatar:    r.avatar_image_id ? imageUrls(r.avatar_image_id) : null,
       createdAt: new Date(r.created_at).toISOString(),
     }))
 

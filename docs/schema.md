@@ -99,6 +99,7 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | `qualification_level` | enum | YES | — |
 | `pin_code` | char(6) | YES | — |
 | `colour_code` | varchar(7) | YES | — |
+| `avatar_image_id` | varchar(255) | YES | — |
 | `is_active` | tinyint(1) | NO | `1` |
 | `hired_at` | date | YES | — |
 | `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |

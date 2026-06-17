@@ -3,6 +3,7 @@ import { bootstrap } from '../../../shared/bootstrap'
 import { getPool } from '../../../shared/db'
 import { getAuthContext } from '../../../shared/auth'
 import { ok, notFound, serverError } from '../../../shared/errors'
+import { imageUrls } from '../../../shared/cloudflare'
 
 const ready = bootstrap()
 
@@ -37,6 +38,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
          vc.created_at,
          st.first_name,
          st.last_name,
+         st.avatar_image_id,
          (SELECT COUNT(*) FROM vehicle_chat_messages vcm WHERE vcm.chat_id = vc.id) AS message_count,
          (SELECT vcm2.content
           FROM vehicle_chat_messages vcm2
@@ -55,6 +57,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       createdAt:    new Date(r.created_at).toISOString(),
       staffId:      r.staff_id,
       mechanic:     `${r.first_name} ${r.last_name}`,
+      avatar:       r.avatar_image_id ? imageUrls(r.avatar_image_id) : null,
       messageCount: r.message_count,
       preview:      r.first_message ?? null,
     }))
