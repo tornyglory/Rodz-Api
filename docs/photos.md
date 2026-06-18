@@ -6,7 +6,7 @@ All routes require `Authorization: Bearer <accessToken>`.
 
 Photos are stored in Cloudflare Images. The upload never passes through Lambda — the app uploads directly to Cloudflare using a one-time URL issued by the backend. Two API calls are required to save a photo: one to get the upload URL, and one to save the record after the upload completes.
 
-Photos are attached to a vehicle (permanent record in vehicle history) and optionally to a quote item (shown to the customer on the approval page).
+Photos are attached to a vehicle (permanent record in vehicle history) and optionally to a quote item or invoice item.
 
 **Role access:**
 - `super_admin` — full access
@@ -79,6 +79,8 @@ Content-Type: application/json
   "vehicleRego": "ABC123",
   "quoteId": 7,
   "quoteItemId": 3,
+  "invoiceId": 1,
+  "invoiceItemId": 5,
   "caption": "Worn front brake pad — metal on metal"
 }
 ```
@@ -90,7 +92,9 @@ Content-Type: application/json
 | `imageId` | Yes | The `imageId` from `POST /photos/upload-url`. |
 | `vehicleRego` | Yes | The vehicle's registration plate. Always required — photos belong to the vehicle for life. |
 | `quoteId` | No | FK to quotes. Set when the photo is taken in the context of a quote. |
-| `quoteItemId` | No | FK to quote_items. Set when attaching the photo to a specific line item. If set, `quoteId` should also be set. |
+| `quoteItemId` | No | FK to quote_items. Set when attaching the photo to a specific quote line item. If set, `quoteId` should also be set. |
+| `invoiceId` | No | FK to invoices. Set when the photo is taken in the context of an invoice. |
+| `invoiceItemId` | No | FK to invoice_items. Set when attaching the photo to a specific invoice line item. If set, `invoiceId` should also be set. |
 | `caption` | No | Free-text label e.g. `"Worn front brake pad — metal on metal"`. Max 255 characters. |
 
 Before inserting, the backend verifies the image exists on Cloudflare. Returns `422` if the upload did not complete successfully.
@@ -105,6 +109,8 @@ Before inserting, the backend verifies the image exists on Cloudflare. Returns `
     "vehicleRego": "ABC123",
     "quoteId": 7,
     "quoteItemId": 3,
+    "invoiceId": null,
+    "invoiceItemId": null,
     "caption": "Worn front brake pad — metal on metal",
     "uploadedBy": 12,
     "createdAt": "2025-06-05T10:30:00Z",
@@ -147,6 +153,8 @@ Authorization: Bearer <accessToken>
 |-------|------|-------|
 | `quoteId` | number | Filter to photos from a specific quote. |
 | `quoteItemId` | number | Filter to photos from a specific quote line item. |
+| `invoiceId` | number | Filter to photos from a specific invoice. |
+| `invoiceItemId` | number | Filter to photos from a specific invoice line item. |
 
 ### Response `200`
 
@@ -159,6 +167,8 @@ Authorization: Bearer <accessToken>
       "vehicleRego": "ABC123",
       "quoteId": 7,
       "quoteItemId": 3,
+      "invoiceId": null,
+      "invoiceItemId": null,
       "caption": "Worn front brake pad — metal on metal",
       "uploadedBy": 12,
       "createdAt": "2025-06-05T10:30:00Z",
@@ -203,7 +213,9 @@ No request body. **Response `204`** — no content.
 | `imageId` | string | Cloudflare Images image ID |
 | `vehicleRego` | string | Registration plate |
 | `quoteId` | number \| null | FK to quotes. Null if not attached to a quote. |
-| `quoteItemId` | number \| null | FK to quote_items. Null if not attached to a specific line item. |
+| `quoteItemId` | number \| null | FK to quote_items. Null if not attached to a specific quote line item. |
+| `invoiceId` | number \| null | FK to invoices. Null if not attached to an invoice. |
+| `invoiceItemId` | number \| null | FK to invoice_items. Null if not attached to a specific invoice line item. |
 | `caption` | string \| null | Staff-entered caption. Null if not provided. |
 | `uploadedBy` | number | FK to staff — the staff member who uploaded the photo |
 | `createdAt` | string | UTC ISO-8601 datetime |
@@ -252,17 +264,72 @@ GET /vehicles/{rego}/photos?quoteId={quoteId}
 
 Photos are returned flat. Group them by `quoteItemId` on the frontend so they appear beneath the relevant line item. Photos with `quoteItemId: null` are quote-level (not tied to a specific item).
 
-This is a separate fetch — the quotes endpoint does not embed photos in its response.
+This is a separate fetch — the quotes endpoint does not embed photos in its response. (Invoices are different — photos are returned inline on each item automatically.)
 
 ---
 
-### 4. Displaying images
+### 4. Invoice photos
+
+Invoice photos work identically to quote photos, with one key difference: **photos are returned inline on each invoice item** in all invoice responses (`GET /invoices`, `GET /invoices/:id`, etc.) — no separate fetch is needed.
+
+Each item in an invoice response includes a `photos` array:
+
+```json
+{
+  "id": 5,
+  "description": "Tyre",
+  "type": "part",
+  "qty": 4,
+  "unitPrice": 200.00,
+  "photos": [
+    {
+      "id": 12,
+      "imageId": "abc-123",
+      "caption": "Worn tyre — tread below legal limit",
+      "urls": { "thumbnail": "https://...", "public": "https://..." }
+    }
+  ]
+}
+```
+
+**To attach a photo to an invoice item:**
+
+1. Upload using the standard 3-step flow
+2. In `POST /photos`, pass `invoiceId` and `invoiceItemId`:
+
+```json
+{
+  "imageId": "abc-123",
+  "vehicleRego": "ABC123",
+  "invoiceId": 1,
+  "invoiceItemId": 5,
+  "caption": "Optional caption"
+}
+```
+
+The photo will appear on the item in the next invoice fetch automatically.
+
+**To load all photos for an invoice** (e.g. for a full-screen gallery view):
+
+```
+GET /vehicles/{rego}/photos?invoiceId=1
+```
+
+**To load photos for a specific line item:**
+
+```
+GET /vehicles/{rego}/photos?invoiceId=1&invoiceItemId=5
+```
+
+---
+
+### 5. Displaying images
 
 Always use `urls.thumbnail` for list views, grids, and inline quote items. Only load `urls.public` when the user explicitly opens a photo full-screen or downloads it.
 
 ---
 
-### 5. Delete confirmation
+### 6. Delete confirmation
 
 Always confirm before deleting. On confirm:
 

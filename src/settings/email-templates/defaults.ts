@@ -55,4 +55,16 @@ export const DEFAULT_TEMPLATES = {
       'Service: {{services}}\n\n' +
       'Rodz Smart Auto {{store}}',
   },
+  invoiceTemplate: {
+    subject: 'Your invoice {{invoiceNumber}} from Rodz Smart Auto',
+    body:
+      'Hi {{firstName}},\n\n' +
+      'Please find your invoice below.\n\n' +
+      'Invoice: {{invoiceNumber}}\n' +
+      'Vehicle: {{vehicle}}\n' +
+      'Total: {{total}}\n\n' +
+      'View and pay your invoice here:\n{{invoiceLink}}\n\n' +
+      'If you have any questions, feel free to reply to this email.\n\n' +
+      'Rodz Smart Auto',
+  },
 }

@@ -40,7 +40,7 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | [Core](#core) | `stores`, `staff`, `customers`, `vehicles`, `vehicle_owners` |
 | [Bookings](#bookings) | `bookings`, `booking_services` |
 | [Jobs](#jobs) | `service_jobs`, `service_job_items`, `service_job_parts`, `service_job_staff`, `job_card_items` |
-| [Financials](#financials) | `invoices`, `payments`, `quotes`, `quote_items`, `purchase_orders`, `purchase_order_items` |
+| [Financials](#financials) | `invoices`, `invoice_items`, `payments`, `quotes`, `quote_items`, `purchase_orders`, `purchase_order_items` |
 | [Catalog](#catalog) | `service_types`, `catalog_items`, `parts`, `suppliers`, `part_names` |
 | [Inspections](#inspections) | `job_inspections`, `job_inspection_results`, `inspection_checklist_items`, `job_documents` |
 | [Customers — extended](#customers--extended) | `customer_tags`, `customer_communications`, `loyalty_transactions` |
@@ -408,34 +408,62 @@ Card is auto-seeded on first `GET /jobs/{id}/card` when the job's quote is in `a
 
 ### `invoices`
 
-| Column | Type | Null |
-|--------|------|------|
-| `id` | bigint unsigned | NO |
-| `invoice_number` | varchar(15) | NO |
-| `service_job_id` | bigint unsigned | NO |
-| `quote_id` | bigint unsigned | YES |
-| `customer_id` | bigint unsigned | NO |
-| `subtotal` | decimal(10,2) | NO |
-| `gst_amount` | decimal(10,2) | NO |
-| `total` | decimal(10,2) | NO |
-| `amount_paid` | decimal(10,2) | NO |
-| `amount_owing` | decimal(10,2) | YES |
-| `status` | enum | NO |
-| `due_date` | date | YES |
-| `sent_at` | datetime | YES |
-| `paid_at` | datetime | YES |
-| `xero_invoice_id` | varchar(100) | YES |
-| `xero_invoice_number` | varchar(50) | YES |
-| `xero_invoice_url` | varchar(500) | YES |
-| `xero_sync_status` | enum | NO |
-| `xero_synced_at` | datetime | YES |
-| `notes` | text | YES |
-| `created_at` | datetime | NO |
-| `updated_at` | datetime | NO |
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `id` | bigint unsigned | NO | — |
+| `invoice_number` | varchar(20) | NO | — |
+| `store_id` | int unsigned | NO | — |
+| `staff_id` | int unsigned | NO | — |
+| `customer_id` | int unsigned | NO | — |
+| `vehicle_rego` | varchar(20) | NO | — |
+| `job_id` | int unsigned | YES | — |
+| `quote_id` | int unsigned | YES | — |
+| `status` | enum | NO | `draft` |
+| `payment_method` | enum | YES | — |
+| `token` | varchar(64) | YES | — |
+| `notes` | text | YES | — |
+| `subtotal` | decimal(10,2) | NO | `0` |
+| `gst` | decimal(10,2) | NO | `0` |
+| `total` | decimal(10,2) | NO | `0` |
+| `due_date` | date | YES | — |
+| `zeller_payment_id` | varchar(255) | YES | — |
+| `zeller_payment_url` | text | YES | — |
+| `sent_at` | datetime | YES | — |
+| `paid_at` | datetime | YES | — |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP` |
 
-**`status` enum:** `draft`, `sent`, `unpaid`, `partial`, `paid`, `void`, `refunded`
+**`status` enum:** `draft`, `sent`, `paid`
 
-**`xero_sync_status` enum:** `pending`, `synced`, `failed`, `skipped`
+**`payment_method` enum:** `bank_transfer`, `zeller`
+
+- `invoice_number` format: `INV-YYMM-NNN` (e.g. `INV-2506-001`) — monthly sequential, zero-padded to 3 digits
+- `token` — 64-char hex, set on send; used for public customer view URL (`/i/:token`)
+- `zeller_payment_id` / `zeller_payment_url` — set when Zeller payment link is created at send time; creation is best-effort (non-fatal if it fails)
+- FK references: `payments.invoice_id` and `loyalty_transactions.invoice_id` both reference `invoices.id`
+
+---
+
+### `invoice_items`
+
+Line items on an invoice. Deleted and re-inserted on update (draft only).
+
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `id` | bigint unsigned | NO | — |
+| `invoice_id` | bigint unsigned | NO | — |
+| `type` | enum | NO | `other` |
+| `description` | varchar(500) | NO | — |
+| `hours` | decimal(8,2) | YES | — |
+| `qty` | decimal(8,2) | YES | — |
+| `unit_price` | decimal(10,2) | NO | — |
+| `line_total` | decimal(10,2) | NO | — |
+| `sort_order` | int unsigned | NO | `0` |
+
+**`type` enum:** `labour`, `part`, `other`
+
+- `line_total` is stored (not generated) — computed as `hours × unit_price` for labour, `qty × unit_price` for parts/other
+- Cascade-deleted when parent invoice is deleted: `ON DELETE CASCADE`
 
 ---
 
@@ -1277,6 +1305,8 @@ Tracks all insert/update/delete operations across the system.
 | `quote_id` | int unsigned | YES | — |
 | `quote_item_id` | int unsigned | YES | — |
 | `job_card_item_id` | int unsigned | YES | — |
+| `invoice_id` | int unsigned | YES | — |
+| `invoice_item_id` | int unsigned | YES | — |
 | `uploaded_by` | int unsigned | NO | — |
 | `caption` | varchar(255) | YES | — |
 | `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
@@ -1284,4 +1314,4 @@ Tracks all insert/update/delete operations across the system.
 `image_id` is the Cloudflare Images image ID. Image URLs are derived at read time — never stored:
 `https://imagedelivery.net/{CF_ACCOUNT_ID}/{image_id}/{variant}` where variant is `thumbnail` or `public`.
 
-`quote_id` and `quote_item_id` are both nullable. A photo attached to a specific line item sets both. A photo for a quote but not a line item sets `quote_id` only. A general condition photo sets neither. `job_card_item_id` is set when a photo is attached to a job card checklist item — these are returned inline in the `GET /jobs/{id}/card` response.
+`quote_id` and `quote_item_id` are both nullable. A photo attached to a specific quote line item sets both. A photo for a quote but not a line item sets `quote_id` only. A general condition photo sets neither. `job_card_item_id` is set when a photo is attached to a job card checklist item. `invoice_id` and `invoice_item_id` follow the same pattern for invoices — photos are returned inline on each invoice item in all invoice responses.

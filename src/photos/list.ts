@@ -10,7 +10,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   await ready
   const db = getPool()
   const rego = event.pathParameters?.rego
-  const { quoteId, quoteItemId, jobCardItemId } = event.queryStringParameters ?? {}
+  const { quoteId, quoteItemId, jobCardItemId, invoiceId, invoiceItemId } = event.queryStringParameters ?? {}
 
   try {
     const where: string[] = ['vehicle_rego = ?']
@@ -19,9 +19,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (quoteId)       { where.push('quote_id = ?');          params.push(Number(quoteId)) }
     if (quoteItemId)   { where.push('quote_item_id = ?');     params.push(Number(quoteItemId)) }
     if (jobCardItemId) { where.push('job_card_item_id = ?');  params.push(Number(jobCardItemId)) }
+    if (invoiceId)     { where.push('invoice_id = ?');        params.push(Number(invoiceId)) }
+    if (invoiceItemId) { where.push('invoice_item_id = ?');   params.push(Number(invoiceItemId)) }
 
     const [rows] = await db.query<any[]>(
-      `SELECT id, image_id, vehicle_rego, quote_id, quote_item_id, job_card_item_id, uploaded_by, caption, created_at
+      `SELECT id, image_id, vehicle_rego, quote_id, quote_item_id, job_card_item_id, invoice_id, invoice_item_id, uploaded_by, caption, created_at
        FROM photos
        WHERE ${where.join(' AND ')}
        ORDER BY created_at DESC`,

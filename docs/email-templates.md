@@ -39,6 +39,10 @@ No body. Returns the saved settings, or built-in defaults if nothing has been sa
   "workCompleteTemplate": {
     "subject": "Your {{vehicle}} is ready for pickup",
     "body": "Hi {{firstName}},\n\nGreat news — your {{vehicle}} ({{rego}}) is ready for pickup!\n\nJob: {{jobNumber}}\nService: {{services}}\n\nRodz Auto {{store}}"
+  },
+  "invoiceTemplate": {
+    "subject": "Your invoice {{invoiceNumber}} from Rodz Smart Auto",
+    "body": "Hi {{firstName}},\n\nPlease find your invoice below.\n\nInvoice: {{invoiceNumber}}\nVehicle: {{vehicle}}\nTotal: {{total}}\n\nView and pay your invoice here:\n{{invoiceLink}}\n\nIf you have any questions, feel free to reply to this email.\n\nRodz Smart Auto"
   }
 }
 ```
@@ -53,7 +57,7 @@ Authorization: Bearer <accessToken>
 Content-Type: application/json
 ```
 
-Send the complete settings object — all five templates must be included. This replaces the entire saved config.
+Send the complete settings object — all six templates must be included. This replaces the entire saved config.
 
 **Body** — same shape as the GET response. All `subject` and `body` fields are required. `fromAddress` is required. `replyTo` is optional (send `""` to clear it).
 
@@ -77,6 +81,7 @@ Send the complete settings object — all five templates must be included. This 
 | `bookingConfirmedTemplate` | When a booking is confirmed with a date/hoist |
 | `workCommencedTemplate` | When a technician starts work |
 | `workCompleteTemplate` | When the job is marked done and vehicle is ready |
+| `invoiceTemplate` | When an invoice is sent to a customer (`POST /invoices/:id/send`) |
 
 ---
 
@@ -100,6 +105,9 @@ Variables use `{{variableName}}` syntax in both `subject` and `body`. The backen
 | `{{jobNumber}}` | `workCommencedTemplate`, `workCompleteTemplate` | `J00005` |
 | `{{quoteNumber}}` | `quoteTemplate` | `Q00009` |
 | `{{approvalLink}}` | `quoteTemplate` | `https://workshop.rodz.com.au/q/abc123` |
+| `{{invoiceNumber}}` | `invoiceTemplate` | `INV-2506-001` |
+| `{{total}}` | `invoiceTemplate` | `$495.00` |
+| `{{invoiceLink}}` | `invoiceTemplate` | `https://app.rodz.com.au/invoice/abc123` |
 
 > **Note:** Use `{{services}}` (plural). The variable `{{service}}` does not exist — any unrecognised variable is left as literal text in the sent email.
 
@@ -110,7 +118,7 @@ Variables use `{{variableName}}` syntax in both `subject` and `body`. The backen
 - Load settings on mount with `GET /settings/email-templates`. No empty state to handle — defaults always come back.
 - Show `fromAddress` and `replyTo` as top-level fields above the template list.
 - Each template gets its own section with a `subject` text input and a `body` textarea.
-- The save button should PUT the full object assembled from all five sections plus `fromAddress`/`replyTo`. There is no partial save — always send everything.
+- The save button should PUT the full object assembled from all six sections plus `fromAddress`/`replyTo`. There is no partial save — always send everything.
 - Consider highlighting `{{variable}}` tokens in the body textarea so editors can see which variables are in use.
 - On success, update local state with the response — do not re-fetch.
 
@@ -255,4 +263,33 @@ Job: {{jobNumber}}
 Service: {{services}}
 
 Rodz Smart Auto {{store}}
+```
+
+---
+
+### Invoice sent
+
+> Sent automatically when `POST /invoices/:id/send` is called.
+
+**Subject**
+```
+Your invoice {{invoiceNumber}} from Rodz Smart Auto
+```
+
+**Body**
+```
+Hi {{firstName}},
+
+Please find your invoice below.
+
+Invoice: {{invoiceNumber}}
+Vehicle: {{vehicle}}
+Total: {{total}}
+
+View and pay your invoice here:
+{{invoiceLink}}
+
+If you have any questions, feel free to reply to this email.
+
+Rodz Smart Auto
 ```

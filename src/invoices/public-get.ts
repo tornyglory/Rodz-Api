@@ -2,7 +2,7 @@ import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
 import { notFound, serverError } from '../shared/errors'
-import { INVOICE_SELECT, INVOICE_FROM, buildInvoice, getInvoiceItems } from './_helpers'
+import { INVOICE_SELECT, buildInvoice, getInvoiceItems } from './_helpers'
 
 const ready = bootstrap()
 
@@ -13,7 +13,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const [[row]] = await db.query<any[]>(
-      `${INVOICE_SELECT} ${INVOICE_FROM} WHERE i.token = ? LIMIT 1`,
+      `${INVOICE_SELECT} WHERE i.token = ? LIMIT 1`,
       [token],
     )
     if (!row) return notFound('Invoice')

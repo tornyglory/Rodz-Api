@@ -12,6 +12,7 @@ const REQUIRED_TEMPLATES = [
   'bookingConfirmedTemplate',
   'workCommencedTemplate',
   'workCompleteTemplate',
+  'invoiceTemplate',
 ]
 
 function validateTemplate(name: string, tpl: unknown): string | null {
@@ -49,6 +50,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       bookingConfirmedTemplate:  body.bookingConfirmedTemplate,
       workCommencedTemplate:     body.workCommencedTemplate,
       workCompleteTemplate:      body.workCompleteTemplate,
+      invoiceTemplate:           body.invoiceTemplate,
     }
 
     await db.query(

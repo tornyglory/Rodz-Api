@@ -8,6 +8,8 @@ export function buildPhoto(row: any) {
     quoteId:         row.quote_id          ?? null,
     quoteItemId:     row.quote_item_id     ?? null,
     jobCardItemId:   row.job_card_item_id  ?? null,
+    invoiceId:       row.invoice_id        ?? null,
+    invoiceItemId:   row.invoice_item_id   ?? null,
     caption:         row.caption           ?? null,
     uploadedBy:      row.uploaded_by,
     createdAt:       row.created_at,

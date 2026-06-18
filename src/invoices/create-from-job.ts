@@ -106,10 +106,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       const invoiceId = ins.insertId
 
       for (const item of normItems) {
+        const lineTotal = Math.round(Number(item.qty) * Number(item.unitPrice) * 100) / 100
         await conn.query(
-          `INSERT INTO invoice_items (invoice_id, description, type, hours, qty, unit_price, sort_order)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [invoiceId, item.description, item.type, item.hours, item.qty, item.unitPrice, item.sortOrder],
+          `INSERT INTO invoice_items (invoice_id, description, type, hours, qty, unit_price, line_total, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [invoiceId, item.description, item.type, item.hours, item.qty, item.unitPrice, lineTotal, item.sortOrder],
         )
       }
 

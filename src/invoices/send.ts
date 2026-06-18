@@ -63,12 +63,15 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       console.error('Zeller payment creation failed (non-fatal):', zellerErr)
     }
 
+    const dueDate = row.due_date
+      ?? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+
     await db.query(
       `UPDATE invoices
-       SET status = 'sent', token = ?, sent_at = NOW(),
+       SET status = 'sent', token = ?, sent_at = NOW(), due_date = ?,
            zeller_payment_id = ?, zeller_payment_url = ?
        WHERE id = ?`,
-      [token, zellerPaymentId, zellerPaymentUrl, id],
+      [token, dueDate, zellerPaymentId, zellerPaymentUrl, id],
     )
 
     // Send invoice email — non-fatal

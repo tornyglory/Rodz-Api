@@ -14,7 +14,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const body        = JSON.parse(event.body ?? '{}') as Record<string, any>
-    const { customerId, vehicleRego, storeId, staffId, notes, odometerIn, items = [] } = body
+    const { customerId, vehicleRego, storeId, staffId, notes, odometerIn, dueDate, items = [] } = body
 
     if (!customerId)  return validationError('customerId is required.')
     if (!vehicleRego) return validationError('vehicleRego is required.')
@@ -57,18 +57,19 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const [ins] = await db.query<any>(
       `INSERT INTO invoices
          (invoice_number, store_id, staff_id, customer_id, vehicle_rego,
-          notes, odometer_in, subtotal, gst, total, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+          notes, odometer_in, due_date, subtotal, gst, total, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [invoiceNumber, storeId, staffId, customerId, String(vehicleRego).trim().toUpperCase(),
-       notes ?? null, odometerIn ?? null, subtotal, gst, total],
+       notes ?? null, odometerIn ?? null, dueDate ?? null, subtotal, gst, total],
     )
     const invoiceId = ins.insertId
 
     for (const item of normItems) {
+      const lineTotal = Math.round(Number(item.qty) * Number(item.unitPrice) * 100) / 100
       await db.query(
-        `INSERT INTO invoice_items (invoice_id, description, type, hours, qty, unit_price, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [invoiceId, item.description, item.type, item.hours, item.qty, item.unitPrice, item.sortOrder],
+        `INSERT INTO invoice_items (invoice_id, description, type, hours, qty, unit_price, line_total, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [invoiceId, item.description, item.type, item.hours, item.qty, item.unitPrice, lineTotal, item.sortOrder],
       )
     }
 

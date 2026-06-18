@@ -1,4 +1,5 @@
 import mysql from 'mysql2/promise'
+import { imageUrls } from '../shared/cloudflare'
 
 // ── Shared SELECT ───────────────────────────────────────────────────────────
 
@@ -8,7 +9,7 @@ export const INVOICE_FROM = `
   JOIN staff st    ON st.id = i.staff_id
   JOIN customers c ON c.id = i.customer_id
   LEFT JOIN (
-    SELECT rego, CONCAT(year, ' ', make, ' ', model) AS label
+    SELECT rego, CONCAT(ANY_VALUE(year), ' ', ANY_VALUE(make), ' ', ANY_VALUE(model)) AS label
     FROM vehicles WHERE is_active = 1
     GROUP BY rego
   ) vl ON vl.rego = i.vehicle_rego`
@@ -17,7 +18,7 @@ export const INVOICE_SELECT = `
   SELECT
     i.id, i.invoice_number, i.store_id, i.staff_id, i.customer_id,
     i.job_id, i.quote_id, i.vehicle_rego, i.status, i.notes, i.odometer_in,
-    i.token, i.sent_at, i.paid_at, i.payment_method, i.zeller_payment_url,
+    i.token, i.sent_at, i.paid_at, i.due_date, i.payment_method, i.zeller_payment_url,
     i.subtotal, i.gst, i.total, i.created_at,
     s.name       AS store_name,
     st.first_name AS staff_first,
@@ -33,7 +34,7 @@ export const INVOICE_SELECT_BY_ID = `${INVOICE_SELECT} WHERE i.id = ? LIMIT 1`
 
 // ── Builders ────────────────────────────────────────────────────────────────
 
-export function buildItem(r: any) {
+export function buildItem(r: any, photos: any[] = []) {
   return {
     id:          r.id,
     description: r.description,
@@ -42,6 +43,12 @@ export function buildItem(r: any) {
     qty:         Number(r.qty),
     unitPrice:   Number(r.unit_price),
     sortOrder:   r.sort_order,
+    photos:      photos.map(p => ({
+      id:      p.id,
+      imageId: p.image_id,
+      caption: p.caption ?? null,
+      urls:    imageUrls(p.image_id),
+    })),
   }
 }
 
@@ -71,13 +78,14 @@ export function buildInvoice(row: any, items: any[]) {
     token:            row.token        ?? null,
     sentAt:           toISO(row.sent_at),
     paidAt:           toISO(row.paid_at),
+    dueDate:          row.due_date ? toDate(row.due_date) : null,
     paymentMethod:    row.payment_method      ?? null,
     zellerPaymentUrl: row.zeller_payment_url  ?? null,
     subtotal:         Number(row.subtotal),
     gst:              Number(row.gst),
     total:            Number(row.total),
     createdAt:        toDate(row.created_at),
-    items:            items.map(buildItem),
+    items,
   }
 }
 
@@ -118,10 +126,24 @@ export async function getInvoiceItems(
      FROM invoice_items WHERE invoice_id IN (${ph}) ORDER BY invoice_id, sort_order, id`,
     invoiceIds,
   )
+  if (!rows.length) return new Map()
+
+  const [photoRows] = await db.query<any[]>(
+    `SELECT id, invoice_item_id, image_id, caption FROM photos
+     WHERE invoice_id IN (${ph}) AND invoice_item_id IS NOT NULL ORDER BY created_at ASC`,
+    invoiceIds,
+  )
+
+  const photosByItem = new Map<number, any[]>()
+  for (const p of photoRows) {
+    if (!photosByItem.has(p.invoice_item_id)) photosByItem.set(p.invoice_item_id, [])
+    photosByItem.get(p.invoice_item_id)!.push(p)
+  }
+
   const map = new Map<number, any[]>()
   for (const r of rows) {
     if (!map.has(r.invoice_id)) map.set(r.invoice_id, [])
-    map.get(r.invoice_id)!.push(r)
+    map.get(r.invoice_id)!.push(buildItem(r, photosByItem.get(r.id) ?? []))
   }
   return map
 }
