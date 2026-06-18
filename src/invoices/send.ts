@@ -18,12 +18,15 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const [[row]] = await db.query<any[]>(
-      `SELECT i.*, c.email AS cust_email, c.first_name AS cust_first, c.last_name AS cust_last,
-              vl.label AS vehicle_label
+      `SELECT i.*,
+              c.email      AS cust_email,
+              c.first_name AS cust_first,
+              c.last_name  AS cust_last,
+              vl.label     AS vehicle_label
        FROM invoices i
        JOIN customers c ON c.id = i.customer_id
        LEFT JOIN (
-         SELECT rego, CONCAT(year, ' ', make, ' ', model) AS label
+         SELECT rego, CONCAT(ANY_VALUE(year), ' ', ANY_VALUE(make), ' ', ANY_VALUE(model)) AS label
          FROM vehicles WHERE is_active = 1 GROUP BY rego
        ) vl ON vl.rego = i.vehicle_rego
        WHERE i.id = ? LIMIT 1`,
@@ -38,8 +41,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (ctx.role === 'technician' && String(row.staff_id) !== String(ctx.staffId))
       return forbidden()
 
-    if (row.status !== 'draft')
-      return invoiceError(409, 'ALREADY_SENT', 'Invoice has already been sent.')
+    if (row.status === 'paid')
+      return invoiceError(409, 'ALREADY_PAID', 'Cannot resend a paid invoice.')
 
     const token = crypto.randomBytes(32).toString('hex')
 
@@ -69,9 +72,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     await db.query(
       `UPDATE invoices
        SET status = 'sent', token = ?, sent_at = NOW(), due_date = ?,
-           zeller_payment_id = ?, zeller_payment_url = ?
+           zeller_payment_url = ?
        WHERE id = ?`,
-      [token, dueDate, zellerPaymentId, zellerPaymentUrl, id],
+      [token, dueDate, zellerPaymentUrl, id],
     )
 
     // Send invoice email — non-fatal

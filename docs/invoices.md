@@ -323,7 +323,7 @@ If the invoice was linked to a job/quote, deleting it resets:
 POST /invoices/:id/send
 ```
 
-Transitions status from `draft` → `sent`. Can only be called once — returns `409 ALREADY_SENT` if already sent.
+Transitions status from `draft` → `sent`. Can be called again on a `sent` invoice to resend the email (e.g. customer didn't receive it) — this regenerates the token and Zeller link. Returns `409 ALREADY_PAID` if the invoice is already paid.
 
 On send, the API:
 1. Generates a unique public token (used in the customer-facing URL)
@@ -377,12 +377,45 @@ Manually marks an invoice as paid. Use this for bank transfer payments or Zeller
 GET /i/:token
 ```
 
-Token is the 64-char hex value set when the invoice is sent. This is the URL the customer opens from their email.
+Token is the 64-char hex value set when the invoice is sent. This is the URL the customer opens from their email. No `Authorization` header — completely public.
 
 **Response `200`:**
 ```json
 {
-  "invoice": { /* Invoice */ },
+  "invoice": {
+    "id": 1,
+    "invoiceNumber": "INV-2506-001",
+    "customerName": "Jane Doe",
+    "vehicle": "2018 Toyota Camry",
+    "rego": "ABC123",
+    "store": "Rodz Frankston",
+    "status": "sent",
+    "dueDate": "2025-07-02",
+    "subtotal": 450.00,
+    "gst": 45.00,
+    "total": 495.00,
+    "zellerPaymentUrl": "https://pay.myzeller.com/...",
+    "paidAt": null,
+    "items": [
+      {
+        "id": 1,
+        "description": "Full service",
+        "type": "labour",
+        "hours": 1.5,
+        "qty": 1,
+        "unitPrice": 180.00,
+        "sortOrder": 0,
+        "photos": [
+          {
+            "id": 3,
+            "imageId": "abc-123",
+            "caption": "Before photo",
+            "urls": { "thumbnail": "https://...", "public": "https://..." }
+          }
+        ]
+      }
+    ]
+  },
   "bankDetails": {
     "accountName": "Rodz Automotive Pty Ltd",
     "bsb": "063-000",
@@ -395,6 +428,58 @@ Token is the 64-char hex value set when the invoice is sent. This is the URL the
 `bankDetails.reference` is the business reference prefix (from Settings) with the invoice number appended.
 
 If bank details haven't been configured in Settings, all `bankDetails` fields return as empty strings — omit the bank transfer section in the UI in that case.
+
+Photos are returned inline on each item — no separate fetch needed.
+
+---
+
+## Customer-facing invoice page (`/invoice/:token`)
+
+This is the public page the customer opens from their email. It works the same way as the quote approval page (`/q/:token`) but for viewing and paying an invoice rather than approving items.
+
+### On load
+
+```
+GET /i/:token   (no auth)
+```
+
+### Layout
+
+**Header:**
+- Store name (`invoice.store`)
+- Invoice number (`invoice.invoiceNumber`)
+- Customer name (`invoice.customerName`)
+- Vehicle (`invoice.vehicle`, rego `invoice.rego`)
+- Due date (`invoice.dueDate`) — label as "Payment due"
+
+**Line items:**
+
+For each item in `invoice.items`:
+- Description, quantity/hours, unit price, line total (`qty × unitPrice`)
+- Type badge: `labour` / `part` / `other`
+- Photos beneath the item — render as a thumbnail row using `photo.urls.thumbnail`. Tap to open full-screen using `photo.urls.public`. Show `photo.caption` if set.
+- Skip the photos row if `item.photos` is empty
+
+**Totals:**
+- Subtotal, GST (10%), Total
+
+**Payment section** — hide entirely if `invoice.status === 'paid'`:
+
+1. If `invoice.zellerPaymentUrl` is set → **"Pay Now"** button (prominent, primary CTA) — link to `zellerPaymentUrl` in a new tab
+2. If `bankDetails.accountName` is non-empty → show bank transfer details:
+   - Account name, BSB, account number
+   - Reference: `bankDetails.reference`
+
+**Paid state** — if `invoice.status === 'paid'`:
+- Show a "Payment received — thank you" confirmation banner
+- Hide all payment options
+- Show `invoice.paidAt` formatted as a date
+
+### Important notes
+
+- Always use `<img src={urls.thumbnail}>` for photo display — never `fetch()` the image URL (Cloudflare Images blocks cross-origin fetches from browsers)
+- `zellerPaymentUrl` may be `null` if Zeller was unavailable when the invoice was sent — omit the Pay Now button in that case, show bank transfer only
+- If both `zellerPaymentUrl` is null AND `bankDetails.accountName` is empty, hide the payment section entirely and show a "Contact us to arrange payment" message
 
 ---
 
@@ -434,9 +519,7 @@ Zeller calls this when a payment completes. No auth header — verified via HMAC
 
 ### Customer-facing view (`/invoice/:token`)
 
-- `GET /i/:token` — no auth
-- Show invoice items, totals, business details
-- If `invoice.zellerPaymentUrl` is set → **"Pay Now"** button linking to Zeller
+See **Customer-facing invoice page** section above for the full layout and payment logic.
 - If `bankDetails.accountName` is non-empty → show bank transfer details with `bankDetails.reference`
 - If `invoice.status === 'paid'` → show paid confirmation, hide payment options
 
