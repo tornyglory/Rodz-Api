@@ -323,6 +323,16 @@ export class RodzApiStack2 extends Stack {
       authorizer,
     })
 
+    // ── AI — Service Summary Engine ─────────────────────────────────────────
+
+    const serviceSummaryFn = new LambdaFn(this, 'ServiceSummaryEngine', {
+      entry: src('ai/service-summary-engine.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(60),
+    }).fn
+
+    serviceSummaryFn.grantInvoke(invoiceSendFn)
+    invoiceSendFn.addEnvironment('SERVICE_SUMMARY_FN_ARN', serviceSummaryFn.functionArn)
+
     // ── Settings — Bank details ─────────────────────────────────────────────
 
     const bankDetailsGetFn = new LambdaFn(this, 'BankDetailsGet', {

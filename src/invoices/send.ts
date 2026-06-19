@@ -1,5 +1,6 @@
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import crypto from 'crypto'
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
@@ -9,6 +10,7 @@ import { createZellerPayment } from '../shared/zeller'
 import { sendInvoiceEmail } from '../shared/emailTemplates'
 
 const ready = bootstrap()
+const lambdaClient = new LambdaClient({ region: process.env.REGION ?? 'ap-southeast-2' })
 
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
@@ -89,6 +91,21 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     })
 
     await upsertServiceLog(db, Number(id))
+
+    // Async AI summary generation — fire and forget
+    const summaryArn = process.env.SERVICE_SUMMARY_FN_ARN
+    if (summaryArn) {
+      try {
+        await lambdaClient.send(new InvokeCommand({
+          FunctionName:   summaryArn,
+          InvocationType: 'Event',
+          Payload:        Buffer.from(JSON.stringify({ invoiceId: Number(id) })),
+        }))
+      } catch (summaryErr) {
+        console.error('Failed to invoke ServiceSummaryEngine (non-fatal):', summaryErr)
+      }
+    }
+
     const [[updated]] = await db.query<any[]>(INVOICE_SELECT_BY_ID, [id])
     const itemsMap = await getInvoiceItems(db, [row.id])
     return ok({ invoice: buildInvoice(updated, itemsMap.get(row.id) ?? []) })
