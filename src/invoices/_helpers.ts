@@ -156,6 +156,34 @@ export async function getAllowedStoreIds(db: mysql.Pool, staffId: string): Promi
   return rows.map((r) => r.store_id)
 }
 
+export async function upsertServiceLog(db: mysql.Pool, invoiceId: number): Promise<void> {
+  await db.query(`
+    INSERT INTO vehicle_service_log
+      (invoice_id, vehicle_rego, invoice_number, service_date, odometer, store, tech, total, status)
+    SELECT
+      i.id,
+      i.vehicle_rego,
+      i.invoice_number,
+      DATE(i.created_at),
+      i.odometer_in,
+      s.name,
+      CONCAT(LEFT(st.first_name, 1), '. ', st.last_name),
+      i.total,
+      i.status
+    FROM invoices i
+    JOIN stores s  ON s.id  = i.store_id
+    JOIN staff  st ON st.id = i.staff_id
+    WHERE i.id = ?
+    ON DUPLICATE KEY UPDATE
+      odometer   = VALUES(odometer),
+      total      = VALUES(total),
+      status     = VALUES(status),
+      store      = VALUES(store),
+      tech       = VALUES(tech),
+      updated_at = NOW()
+  `, [invoiceId])
+}
+
 export function invoiceError(status: number, code: string, message: string) {
   return {
     statusCode: status,

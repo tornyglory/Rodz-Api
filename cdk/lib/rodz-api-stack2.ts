@@ -310,6 +310,19 @@ export class RodzApiStack2 extends Stack {
       routeKey: HttpRouteKey.with('/webhooks/zeller', HttpMethod.POST),
     })
 
+    // ── Vehicle service history ─────────────────────────────────────────────
+
+    const vehicleServiceHistoryFn = new LambdaFn(this, 'VehicleServiceHistory', {
+      entry: src('vehicles/service-history.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'VehicleServiceHistoryRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleServiceHistoryInt', vehicleServiceHistoryFn),
+      routeKey: HttpRouteKey.with('/vehicles/{rego}/service-history', HttpMethod.GET),
+      authorizer,
+    })
+
     // ── Settings — Bank details ─────────────────────────────────────────────
 
     const bankDetailsGetFn = new LambdaFn(this, 'BankDetailsGet', {

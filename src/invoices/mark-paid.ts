@@ -3,7 +3,7 @@ import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { ok, notFound, forbidden, validationError, serverError } from '../shared/errors'
-import { invoiceError, INVOICE_SELECT_BY_ID, buildInvoice, getInvoiceItems, getAllowedStoreIds } from './_helpers'
+import { invoiceError, INVOICE_SELECT_BY_ID, buildInvoice, getInvoiceItems, getAllowedStoreIds, upsertServiceLog } from './_helpers'
 
 const ready = bootstrap()
 
@@ -41,6 +41,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [paymentMethod, id],
     )
 
+    await upsertServiceLog(db, Number(id))
     const [[updated]] = await db.query<any[]>(INVOICE_SELECT_BY_ID, [id])
     const itemsMap = await getInvoiceItems(db, [row.id])
     return ok({ invoice: buildInvoice(updated, itemsMap.get(row.id) ?? []) })

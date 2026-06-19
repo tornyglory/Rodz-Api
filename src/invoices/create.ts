@@ -3,7 +3,7 @@ import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { created, forbidden, validationError, serverError } from '../shared/errors'
-import { invoiceError, INVOICE_SELECT_BY_ID, buildInvoice, getInvoiceItems, generateInvoiceNumber, computeTotals, getAllowedStoreIds } from './_helpers'
+import { invoiceError, INVOICE_SELECT_BY_ID, buildInvoice, getInvoiceItems, generateInvoiceNumber, computeTotals, getAllowedStoreIds, upsertServiceLog } from './_helpers'
 
 const ready = bootstrap()
 
@@ -73,6 +73,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       )
     }
 
+    await upsertServiceLog(db, invoiceId)
     const [[row]] = await db.query<any[]>(INVOICE_SELECT_BY_ID, [invoiceId])
     const itemsMap = await getInvoiceItems(db, [invoiceId])
     return created({ invoice: buildInvoice(row, itemsMap.get(invoiceId) ?? []) })
