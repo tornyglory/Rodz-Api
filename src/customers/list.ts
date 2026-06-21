@@ -50,25 +50,88 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const whereClause = `WHERE ${where.join(' AND ')}`
 
-    const [[{ total }]] = await db.query<any[]>(
-      `SELECT COUNT(*) AS total FROM customers c JOIN stores st ON st.id = c.store_id ${whereClause}`,
-      params,
-    )
+    // Store-scoped filter for aggregate stats (ignores search/tag)
+    const storeWhere: string[] = ['c.is_active = 1']
+    const storeParams: unknown[] = []
+    if (ctx.role === 'store_manager' || ctx.role === 'technician') {
+      storeWhere.push('c.store_id = ?')
+      storeParams.push(ctx.storeId)
+    } else if (store) {
+      storeWhere.push('st.name LIKE ?')
+      storeParams.push(`%${store}%`)
+    }
+    const storeWhereClause = `WHERE ${storeWhere.join(' AND ')}`
 
-    const [rows] = await db.query<any[]>(
-      `SELECT c.id, c.first_name, c.last_name, c.email, c.mobile, c.internal_notes,
-              c.date_of_birth, c.created_at, c.address_line1, c.address_line2, c.suburb, c.state, c.postcode,
-              st.name AS store_name
-       FROM customers c
-       JOIN stores st ON st.id = c.store_id
-       ${whereClause}
-       ORDER BY c.last_name, c.first_name
-       LIMIT ? OFFSET ?`,
-      [...params, limit, offset],
-    )
+    const revenueParams: unknown[] = []
+    const revenueStoreFilter =
+      ctx.role === 'store_manager' || ctx.role === 'technician'
+        ? (revenueParams.push(ctx.storeId), 'AND c.store_id = ?')
+        : store
+          ? (revenueParams.push(`%${store}%`), 'AND st.name LIKE ?')
+          : ''
+
+    const [
+      [[{ total }]],
+      [rows],
+      [[{ vipCustomers }]],
+      [[{ newThisMonth }]],
+      [[{ lifetimeRevenue }]],
+    ] = await Promise.all([
+      db.query<any[]>(
+        `SELECT COUNT(*) AS total FROM customers c JOIN stores st ON st.id = c.store_id ${whereClause}`,
+        params,
+      ),
+      db.query<any[]>(
+        `SELECT c.id, c.first_name, c.last_name, c.email, c.mobile, c.internal_notes,
+                c.date_of_birth, c.created_at, c.address_line1, c.address_line2, c.suburb, c.state, c.postcode,
+                st.name AS store_name
+         FROM customers c
+         JOIN stores st ON st.id = c.store_id
+         ${whereClause}
+         ORDER BY c.last_name, c.first_name
+         LIMIT ? OFFSET ?`,
+        [...params, limit, offset],
+      ),
+      db.query<any[]>(
+        `SELECT COUNT(*) AS vipCustomers
+         FROM customers c
+         JOIN stores st ON st.id = c.store_id
+         ${storeWhereClause}
+         AND EXISTS (SELECT 1 FROM customer_tags ct WHERE ct.customer_id = c.id AND ct.tag = 'VIP')`,
+        storeParams,
+      ),
+      db.query<any[]>(
+        `SELECT COUNT(*) AS newThisMonth
+         FROM customers c
+         JOIN stores st ON st.id = c.store_id
+         ${storeWhereClause}
+         AND YEAR(c.created_at) = YEAR(NOW()) AND MONTH(c.created_at) = MONTH(NOW())`,
+        storeParams,
+      ),
+      db.query<any[]>(
+        `SELECT COALESCE(SUM(i.total), 0) AS lifetimeRevenue
+         FROM invoices i
+         JOIN customers c ON c.id = i.customer_id
+         JOIN stores st ON st.id = c.store_id
+         WHERE i.status IN ('sent', 'paid')
+         ${revenueStoreFilter}`,
+        revenueParams,
+      ),
+    ])
 
     const customers = await buildCustomerList(db, rows)
-    return ok({ customers, total: Number(total), limit, offset })
+    return ok({
+      customers,
+      total:          Number(total),
+      limit,
+      offset,
+      stats: {
+        totalCustomers: Number(total),
+        vipCustomers:   Number(vipCustomers),
+        newThisMonth:   Number(newThisMonth),
+        lifetimeRevenue: Number(Number(lifetimeRevenue).toFixed(2)),
+      },
+    })
   } catch (err) {
     return serverError(err)
   }
