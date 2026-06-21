@@ -310,6 +310,79 @@ No body. **Response 204** — no content.
 
 ---
 
+## DELETE /customers/{id}/purge
+
+Permanently and irreversibly deletes a customer and every record associated with them across the entire database. This is a hard delete — there is no undo.
+
+**Super admin only.** Returns `403` for any other role.
+
+```
+DELETE /customers/1/purge
+Authorization: Bearer <accessToken>
+```
+
+No request body.
+
+### What gets deleted
+
+Everything is removed in a single database transaction. The customer row is the very last thing deleted — if anything earlier fails, the whole operation rolls back and nothing is touched.
+
+| Data | Detail |
+|------|--------|
+| Customer record | The customer row itself |
+| Auth | Sessions, OAuth providers, customer auth credentials |
+| Metadata | Tags, communications log, loyalty transactions, notifications |
+| AI data | Recommendations, reminders |
+| Reviews & warranty | Reviews, warranty claims |
+| Loan vehicles | Loan vehicle booking records |
+| Invoices | All invoices + line items + payments + service log entries |
+| Quotes | All quotes + line items |
+| Jobs | All service jobs + items, parts, staff, job card, inspection results, job documents |
+| Bookings | All bookings + booking services |
+| Vehicle (exclusive) | If this customer is the sole ever owner: vehicle record, service history, chats, chat images |
+| Photos | All Cloudflare images attached to invoices, quotes, or the vehicle |
+
+> **Shared vehicles:** If a vehicle has been owned by multiple customers, it is not deleted — only this customer's ownership record is removed. Chats on shared vehicles are also not deleted (they have no customer link).
+
+> **Purchase orders** are not deleted — they belong to the workshop, not the customer. The link between a PO line item and a job is NULLed.
+
+### Response `200`
+
+```json
+{
+  "deleted": true,
+  "customerId": 1,
+  "imagesDeleted": 4,
+  "imagesFailed": 0
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `deleted` | boolean | Always `true` on success |
+| `customerId` | number | The ID that was purged |
+| `imagesDeleted` | number | Count of Cloudflare images successfully deleted |
+| `imagesFailed` | number | Count of Cloudflare deletions that failed — DB data is still gone, images may need manual cleanup in Cloudflare dashboard |
+
+> Cloudflare image cleanup happens **after** the database transaction commits. If the DB fails, no images are touched. If the DB succeeds but Cloudflare fails, `imagesFailed` will be non-zero — the records are gone but the images may still exist in Cloudflare.
+
+### Errors
+
+| Status | Code | When |
+|--------|------|------|
+| `403` | `FORBIDDEN` | Not super admin |
+| `404` | `NOT_FOUND` | Customer does not exist |
+| `500` | — | DB error — nothing was deleted (transaction rolled back) |
+
+### UI guidance
+
+- Gate this behind a confirmation dialog: **"This will permanently delete [Name] and all their data. This cannot be undone."**
+- Only show the button to `super_admin` users
+- On success, redirect away from the customer page and show a toast: "Customer permanently deleted"
+- If `imagesFailed > 0`, show a warning: "Customer deleted but [n] photo(s) may remain in storage — contact support"
+
+---
+
 ## POST /customers/{id}/vehicles
 
 Add a vehicle to an existing customer.
