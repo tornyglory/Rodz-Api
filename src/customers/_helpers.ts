@@ -11,7 +11,7 @@ export async function buildCustomerList(db: mysql.Pool, rows: any[]) {
 
   const ids = rows.map((r: any) => r.id)
 
-  const [[tagRows], [vehicleRows], [statsRows]] = await Promise.all([
+  const [[tagRows], [vehicleRows], [statsRows], [spendRows]] = await Promise.all([
     db.query<any[]>('SELECT customer_id, tag FROM customer_tags WHERE customer_id IN (?)', [ids]),
     db.query<any[]>(
       `SELECT vo.customer_id, v.id, v.rego, v.year, v.make, v.model,
@@ -31,15 +31,18 @@ export async function buildCustomerList(db: mysql.Pool, rows: any[]) {
     db.query<any[]>(
       `SELECT
          sj.customer_id,
-         COUNT(DISTINCT sj.id)                                          AS totalVisits,
-         COALESCE(SUM(COALESCE(q.total, bq.total, 0)), 0)              AS totalSpend,
-         MAX(COALESCE(sj.completed_at, sj.updated_at))                 AS lastVisit
+         COUNT(DISTINCT sj.id)                          AS totalVisits,
+         MAX(COALESCE(sj.completed_at, sj.updated_at)) AS lastVisit
        FROM service_jobs sj
-       LEFT JOIN quotes q  ON q.id  = sj.quote_id
-       LEFT JOIN bookings b ON b.id = sj.booking_id
-       LEFT JOIN quotes bq ON bq.booking_id = b.id
        WHERE sj.customer_id IN (?) AND sj.status IN ('completed', 'invoiced')
        GROUP BY sj.customer_id`,
+      [ids],
+    ),
+    db.query<any[]>(
+      `SELECT customer_id, COALESCE(SUM(total), 0) AS totalSpend
+       FROM invoices
+       WHERE customer_id IN (?) AND status IN ('sent', 'paid')
+       GROUP BY customer_id`,
       [ids],
     ),
   ])
@@ -59,6 +62,9 @@ export async function buildCustomerList(db: mysql.Pool, rows: any[]) {
   const statsMap = new Map<number, any>()
   for (const r of statsRows) statsMap.set(r.customer_id, r)
 
+  const spendMap = new Map<number, number>()
+  for (const r of spendRows) spendMap.set(r.customer_id, Number(Number(r.totalSpend).toFixed(2)))
+
   return rows.map((row: any) => {
     const stats = statsMap.get(row.id)
     return {
@@ -69,7 +75,7 @@ export async function buildCustomerList(db: mysql.Pool, rows: any[]) {
       store:        row.store_name,
       tags:         tagsMap.get(row.id) ?? [],
       totalVisits:  stats ? Number(stats.totalVisits) : 0,
-      totalSpend:   stats ? Number(Number(stats.totalSpend).toFixed(2)) : 0,
+      totalSpend:   spendMap.get(row.id) ?? 0,
       lastVisit:    stats?.lastVisit ? formatDate(stats.lastVisit) : null,
       memberSince:  row.created_at ? formatDate(row.created_at) : null,
       notes:        row.internal_notes ?? null,
@@ -88,7 +94,7 @@ export async function buildCustomerList(db: mysql.Pool, rows: any[]) {
 }
 
 export async function buildCustomerFull(db: mysql.Pool, row: any) {
-  const [tags, vehicles, stats, jobs] = await Promise.all([
+  const [tags, vehicles, stats, spend, jobs] = await Promise.all([
     db.query<any[]>('SELECT tag FROM customer_tags WHERE customer_id = ?', [row.id]),
     db.query<any[]>(
       `SELECT v.id, v.rego, v.year, v.make, v.model,
@@ -107,14 +113,16 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
     ),
     db.query<any[]>(
       `SELECT
-         COUNT(DISTINCT sj.id)                                 AS totalVisits,
-         COALESCE(SUM(COALESCE(q.total, bq.total, 0)), 0)     AS totalSpend,
-         MAX(COALESCE(sj.completed_at, sj.updated_at))        AS lastVisit
+         COUNT(DISTINCT sj.id)                          AS totalVisits,
+         MAX(COALESCE(sj.completed_at, sj.updated_at)) AS lastVisit
        FROM service_jobs sj
-       LEFT JOIN quotes q  ON q.id  = sj.quote_id
-       LEFT JOIN bookings b ON b.id = sj.booking_id
-       LEFT JOIN quotes bq ON bq.booking_id = b.id
        WHERE sj.customer_id = ? AND sj.status IN ('completed', 'invoiced')`,
+      [row.id],
+    ),
+    db.query<any[]>(
+      `SELECT COALESCE(SUM(total), 0) AS totalSpend
+       FROM invoices
+       WHERE customer_id = ? AND status IN ('sent', 'paid')`,
       [row.id],
     ),
     db.query<any[]>(
@@ -150,7 +158,7 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
     ),
   ])
 
-  const [[tagRows], [vehicleRows], [[statsRow]], [jobRows]] = [tags, vehicles, stats, jobs]
+  const [[tagRows], [vehicleRows], [[statsRow]], [[spendRow]], [jobRows]] = [tags, vehicles, stats, spend, jobs]
 
   return {
     id:          row.id,
@@ -160,7 +168,7 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
     store:       row.store_name,
     tags:        tagRows.map((t: any) => t.tag),
     totalVisits: Number(statsRow.totalVisits),
-    totalSpend:  Number(Number(statsRow.totalSpend).toFixed(2)),
+    totalSpend:  Number(Number(spendRow?.totalSpend ?? 0).toFixed(2)),
     lastVisit:   statsRow.lastVisit ? formatDate(statsRow.lastVisit) : null,
     memberSince: row.created_at ? formatDate(row.created_at) : null,
     notes:       row.internal_notes ?? null,
