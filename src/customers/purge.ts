@@ -213,11 +213,22 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     // ── 3. Cloudflare cleanup — only runs after a successful DB commit ────────
+    let imagesDeleted = 0
+    let imagesFailed  = 0
     if (allImageIds.length) {
-      await Promise.allSettled(allImageIds.map(imgId => deleteCloudflareImage(imgId)))
+      const results = await Promise.allSettled(allImageIds.map(imgId => deleteCloudflareImage(imgId)))
+      for (const r of results) {
+        if (r.status === 'fulfilled') imagesDeleted++
+        else { imagesFailed++; console.error('CF delete failed:', r.reason) }
+      }
     }
 
-    return ok({ deleted: true, customerId: Number(id) })
+    return ok({
+      deleted:       true,
+      customerId:    Number(id),
+      imagesDeleted,
+      imagesFailed,
+    })
   } catch (err) {
     return serverError(err)
   }
