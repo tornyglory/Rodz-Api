@@ -45,6 +45,12 @@ Total pages = `Math.ceil(total / limit)`. Has next page = `offset + customers.le
 
 ```json
 {
+  "stats": {
+    "totalCustomers": 84,
+    "vipCustomers": 6,
+    "newThisMonth": 12,
+    "lifetimeRevenue": 48320.50
+  },
   "customers": [
     {
       "id": 1,
@@ -76,6 +82,15 @@ Total pages = `Math.ceil(total / limit)`. Has next page = `offset + customers.le
   "offset": 0
 }
 ```
+
+> **`stats` block** — aggregate figures for the selected store (or all stores for super_admin). These always reflect the full customer base and are **not** affected by `search` or `tag` filters. Use them to power the summary cards at the top of the page.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `stats.totalCustomers` | number | Active customers in scope |
+| `stats.vipCustomers` | number | Customers tagged VIP |
+| `stats.newThisMonth` | number | Customers created in the current calendar month |
+| `stats.lifetimeRevenue` | number | Sum of all sent + paid invoice totals in scope |
 
 > `jobHistory` is always `[]` on the list endpoint. Use `GET /customers/{id}` for the full history.  
 > `lastVisit` is `null` if the customer has no completed jobs.  
