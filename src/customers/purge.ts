@@ -87,12 +87,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const allImageIds = imageIdSets.flat().filter(Boolean)
 
-    // ── 2. Delete from Cloudflare (best-effort, non-fatal) ──────────────────────
-    if (allImageIds.length) {
-      await Promise.allSettled(allImageIds.map(imgId => deleteCloudflareImage(imgId)))
-    }
-
-    // ── 3. DB purge in a single transaction ─────────────────────────────────────
+    // ── 2. DB purge in a single transaction ─────────────────────────────────────
+    // Cloudflare cleanup runs AFTER commit so a rollback never orphans deleted images.
     const conn = await (db as mysql.Pool).getConnection()
     await conn.beginTransaction()
     try {
@@ -214,6 +210,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       throw err
     } finally {
       conn.release()
+    }
+
+    // ── 3. Cloudflare cleanup — only runs after a successful DB commit ────────
+    if (allImageIds.length) {
+      await Promise.allSettled(allImageIds.map(imgId => deleteCloudflareImage(imgId)))
     }
 
     return ok({ deleted: true, customerId: Number(id) })
