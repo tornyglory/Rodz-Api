@@ -323,6 +323,20 @@ export class RodzApiStack2 extends Stack {
       authorizer,
     })
 
+    // ── Customer purge (hard delete all data) ──────────────────────────────
+
+    const customerPurgeFn = new LambdaFn(this, 'CustomerPurge', {
+      entry: src('customers/purge.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(30),
+    }).fn
+
+    new HttpRoute(this, 'CustomerPurgeRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerPurgeInt', customerPurgeFn),
+      routeKey: HttpRouteKey.with('/customers/{id}/purge', HttpMethod.DELETE),
+      authorizer,
+    })
+
     // ── AI — Service Summary Engine ─────────────────────────────────────────
 
     const serviceSummaryFn = new LambdaFn(this, 'ServiceSummaryEngine', {
