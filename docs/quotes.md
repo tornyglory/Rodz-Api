@@ -364,6 +364,12 @@ Authorization: Bearer <accessToken>
 
 ```json
 {
+  "stats": {
+    "totalQuotes": 84,
+    "pendingApproval": 12,
+    "approvedThisMonth": 8,
+    "totalValue": 24680.00
+  },
   "quotes": [
     {
       "id": 31,
@@ -393,7 +399,15 @@ Authorization: Bearer <accessToken>
 ```
 
 Total pages = `Math.ceil(total / limit)`. Has next page = `offset + quotes.length < total`.
-```
+
+> **`stats` block** — store-scoped aggregate figures. Not affected by `search` or `status` filters — always reflects the full quote base for the selected store. Use these to drive the summary cards at the top of the page.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `stats.totalQuotes` | number | All quotes in scope |
+| `stats.pendingApproval` | number | Quotes with status `sent` or `viewed` — awaiting customer response |
+| `stats.approvedThisMonth` | number | Quotes moved to `approved`, `converted`, `invoiced`, or `paid` this calendar month |
+| `stats.totalValue` | number | Sum of totals for all active quotes (excludes `draft`, `expired`, `rejected`) |
 
 ---
 
