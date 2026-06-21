@@ -18,19 +18,31 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     // TODO: restore 'po.deleted_at IS NULL' once the deleted_at migration has been run on the DB
-    const conditions: string[] = []
-    const params: any[] = []
+
+    // Store-scoped filter — reused for stats (ignores status/search/jobId)
+    const storeConditions: string[] = []
+    const storeParams: any[] = []
 
     if (ctx.role !== 'super_admin') {
       const allowedIds = await getAllowedStoreIds(db, ctx.staffId)
       const ids = storeId ? [Number(storeId)].filter((id) => allowedIds.includes(id)) : allowedIds
-      if (ids.length === 0) return ok({ purchaseOrders: [], total: 0, limit, offset })
-      conditions.push(`po.store_id IN (${ids.map(() => '?').join(',')})`)
-      params.push(...ids)
+      if (ids.length === 0) return ok({
+        purchaseOrders: [], total: 0, limit, offset,
+        stats: { totalPOs: 0, awaitingDelivery: 0, receivedThisMonth: 0, totalSpend: 0 },
+      })
+      storeConditions.push(`po.store_id IN (${ids.map(() => '?').join(',')})`)
+      storeParams.push(...ids)
     } else if (storeId) {
-      conditions.push('po.store_id = ?')
-      params.push(Number(storeId))
+      storeConditions.push('po.store_id = ?')
+      storeParams.push(Number(storeId))
     }
+
+    const storeWhere = storeConditions.length ? ` WHERE ${storeConditions.join(' AND ')}` : ''
+    const storeAnd  = storeConditions.length ? ` AND` : ` WHERE`
+
+    // Full filter for the paginated list
+    const conditions = [...storeConditions]
+    const params     = [...storeParams]
 
     if (status) {
       conditions.push('po.status = ?')
@@ -52,24 +64,47 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : ''
 
-    const [[{ total }]] = await db.query<any[]>(
-      `SELECT COUNT(*) AS total FROM purchase_orders po${where}`,
-      params,
-    )
-
-    const [rows] = await db.query<any[]>(
-      `${PO_SELECT}${where} ORDER BY po.created_at DESC LIMIT ? OFFSET ?`,
-      [...params, limit, offset],
-    )
+    const [
+      [[{ total }]],
+      [rows],
+      [[{ totalPOs }]],
+      [[{ awaitingDelivery }]],
+      [[{ receivedThisMonth }]],
+      [[{ totalSpend }]],
+    ] = await Promise.all([
+      db.query<any[]>(`SELECT COUNT(*) AS total FROM purchase_orders po${where}`, params),
+      db.query<any[]>(`${PO_SELECT}${where} ORDER BY po.created_at DESC LIMIT ? OFFSET ?`, [...params, limit, offset]),
+      db.query<any[]>(`SELECT COUNT(*) AS totalPOs FROM purchase_orders po${storeWhere}`, storeParams),
+      db.query<any[]>(
+        `SELECT COUNT(*) AS awaitingDelivery FROM purchase_orders po${storeWhere}${storeAnd} po.status IN ('ordered', 'partial')`,
+        storeParams,
+      ),
+      db.query<any[]>(
+        `SELECT COUNT(*) AS receivedThisMonth FROM purchase_orders po${storeWhere}${storeAnd}
+         po.status = 'received' AND YEAR(po.received_at) = YEAR(NOW()) AND MONTH(po.received_at) = MONTH(NOW())`,
+        storeParams,
+      ),
+      db.query<any[]>(
+        `SELECT COALESCE(SUM(po.total), 0) AS totalSpend FROM purchase_orders po${storeWhere}${storeAnd}
+         po.status IN ('ordered', 'partial', 'received')`,
+        storeParams,
+      ),
+    ])
 
     const poIds = rows.map((r: any) => r.id)
     const itemsMap = await getPOItemsBatch(db, poIds)
 
     return ok({
       purchaseOrders: rows.map((row: any) => buildPO(row, itemsMap.get(row.id) ?? [])),
-      total: Number(total),
+      total:  Number(total),
       limit,
       offset,
+      stats: {
+        totalPOs:          Number(totalPOs),
+        awaitingDelivery:  Number(awaitingDelivery),
+        receivedThisMonth: Number(receivedThisMonth),
+        totalSpend:        Number(Number(totalSpend).toFixed(2)),
+      },
     })
   } catch (err) {
     return serverError(err)
