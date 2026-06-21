@@ -75,6 +75,12 @@ Authorization: Bearer <accessToken>
 
 ```json
 {
+  "stats": {
+    "totalPOs": 38,
+    "awaitingDelivery": 5,
+    "receivedThisMonth": 12,
+    "totalSpend": 8640.00
+  },
   "purchaseOrders": [
     {
       "id": 1,
@@ -115,6 +121,15 @@ Authorization: Bearer <accessToken>
 Items are always included in the list response — no second fetch needed.
 
 Total pages = `Math.ceil(total / limit)`. Has next page = `offset + purchaseOrders.length < total`.
+
+> **`stats` block** — store-scoped aggregate figures, unaffected by `status`, `search`, or `jobId` filters.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `stats.totalPOs` | number | All purchase orders in scope |
+| `stats.awaitingDelivery` | number | POs with status `ordered` or `partial` — parts on the way |
+| `stats.receivedThisMonth` | number | POs moved to `received` this calendar month |
+| `stats.totalSpend` | number | Sum of totals for `ordered`, `partial`, and `received` POs — money committed or landed |
 
 ---
 
