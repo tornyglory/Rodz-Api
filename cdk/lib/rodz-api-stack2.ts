@@ -333,6 +333,16 @@ export class RodzApiStack2 extends Stack {
       routeKey: HttpRouteKey.with('/logbook/{token}', HttpMethod.GET),
     })
 
+    const logbookProfileFn = new LambdaFn(this, 'LogbookProfile', {
+      entry: src('vehicles/logbook-profile.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'LogbookProfileRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('LogbookProfileInt', logbookProfileFn),
+      routeKey: HttpRouteKey.with('/logbook/{token}/profile', HttpMethod.GET),
+    })
+
     // ── Vehicle service history ─────────────────────────────────────────────
 
     const vehicleServiceHistoryFn = new LambdaFn(this, 'VehicleServiceHistory', {
