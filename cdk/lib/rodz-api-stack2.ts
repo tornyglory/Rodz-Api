@@ -42,6 +42,19 @@ export class RodzApiStack2 extends Stack {
 
     const src = (p: string) => path.join(__dirname, '../../src', p)
 
+    // ── Dashboard ───────────────────────────────────────────────────────────
+
+    const dashboardFn = new LambdaFn(this, 'Dashboard', {
+      entry: src('dashboard/summary.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'DashboardRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('DashboardInt', dashboardFn),
+      routeKey: HttpRouteKey.with('/dashboard', HttpMethod.GET),
+      authorizer,
+    })
+
     // ── Vehicle get ─────────────────────────────────────────────────────────
 
     const vehicleGetFn = new LambdaFn(this, 'VehicleGet', {
