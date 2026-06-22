@@ -310,6 +310,29 @@ export class RodzApiStack2 extends Stack {
       routeKey: HttpRouteKey.with('/webhooks/zeller', HttpMethod.POST),
     })
 
+    // ── Vehicle digital logbook ─────────────────────────────────────────────
+
+    const logbookTokenFn = new LambdaFn(this, 'LogbookToken', {
+      entry: src('vehicles/logbook-token.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'LogbookTokenRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('LogbookTokenInt', logbookTokenFn),
+      routeKey: HttpRouteKey.with('/vehicles/{rego}/logbook-token', HttpMethod.POST),
+      authorizer,
+    })
+
+    const logbookPublicFn = new LambdaFn(this, 'LogbookPublic', {
+      entry: src('vehicles/logbook-public.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'LogbookPublicRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('LogbookPublicInt', logbookPublicFn),
+      routeKey: HttpRouteKey.with('/logbook/{token}', HttpMethod.GET),
+    })
+
     // ── Vehicle service history ─────────────────────────────────────────────
 
     const vehicleServiceHistoryFn = new LambdaFn(this, 'VehicleServiceHistory', {
