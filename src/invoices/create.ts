@@ -14,7 +14,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const body        = JSON.parse(event.body ?? '{}') as Record<string, any>
-    const { customerId, vehicleRego, storeId, staffId, notes, odometerIn, dueDate, items = [] } = body
+    const { customerId, vehicleRego, storeId, staffId, notes, odometerIn, dueDate, quoteId, items = [] } = body
 
     if (!customerId)  return validationError('customerId is required.')
     if (!vehicleRego) return validationError('vehicleRego is required.')
@@ -45,32 +45,39 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const invoiceNumber = await generateInvoiceNumber(db)
     const normItems = items.map((item: any, i: number) => ({
-      description: String(item.description).trim(),
-      type:        item.type,
-      hours:       item.hours ? Number(item.hours) : null,
-      qty:         item.qty != null ? Number(item.qty) : 1,
-      unitPrice:   Number(item.unitPrice),
-      sortOrder:   item.sortOrder ?? i,
+      description:  String(item.description).trim(),
+      type:         item.type,
+      hours:        item.hours ? Number(item.hours) : null,
+      qty:          item.qty != null ? Number(item.qty) : 1,
+      unitPrice:    Number(item.unitPrice),
+      sortOrder:    item.sortOrder ?? i,
+      quoteItemId:  item.quoteItemId ? Number(item.quoteItemId) : null,
     }))
     const { subtotal, gst, total } = computeTotals(normItems)
 
     const [ins] = await db.query<any>(
       `INSERT INTO invoices
          (invoice_number, store_id, staff_id, customer_id, vehicle_rego,
-          notes, odometer_in, due_date, subtotal, gst, total, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+          quote_id, notes, odometer_in, due_date, subtotal, gst, total, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [invoiceNumber, storeId, staffId, customerId, String(vehicleRego).trim().toUpperCase(),
-       notes ?? null, odometerIn ?? null, dueDate ?? null, subtotal, gst, total],
+       quoteId ?? null, notes ?? null, odometerIn ?? null, dueDate ?? null, subtotal, gst, total],
     )
     const invoiceId = ins.insertId
 
     for (const item of normItems) {
       const lineTotal = Math.round(Number(item.qty) * Number(item.unitPrice) * 100) / 100
-      await db.query(
+      const [itemIns] = await db.query<any>(
         `INSERT INTO invoice_items (invoice_id, description, type, hours, qty, unit_price, line_total, sort_order)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [invoiceId, item.description, item.type, item.hours, item.qty, item.unitPrice, lineTotal, item.sortOrder],
       )
+      if (item.quoteItemId) {
+        await db.query(
+          `UPDATE photos SET invoice_id = ?, invoice_item_id = ? WHERE quote_item_id = ?`,
+          [invoiceId, itemIns.insertId, item.quoteItemId],
+        )
+      }
     }
 
     await upsertServiceLog(db, invoiceId)
