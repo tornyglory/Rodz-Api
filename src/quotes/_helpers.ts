@@ -28,6 +28,7 @@ export function buildQuote(row: any, items: any[]) {
     id:            row.id,
     quoteNumber:   row.quote_number,
     bookingId:     row.booking_id ?? null,
+    customerId:    Number(row.customer_id),
     customerName:  row.customer_name,
     customerEmail: row.customer_email ?? null,
     customerPhone: row.customer_phone ?? null,
