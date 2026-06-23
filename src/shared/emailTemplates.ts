@@ -51,6 +51,7 @@ export async function sendBookingReceivedEmail(db: mysql.Pool, booking: any): Pr
     vehicle:      booking.vehicle    ?? '',
     rego:         booking.rego       ?? '',
     store:        booking.store      ?? '',
+    service:      (booking.services ?? []).map((s: any) => s.name).join(', '),
     services:     (booking.services ?? []).map((s: any) => s.name).join(', '),
     dropOffTime:  booking.dropOffTime ?? '',
   })
@@ -67,6 +68,7 @@ export async function sendBookingConfirmedEmail(db: mysql.Pool, booking: any): P
     vehicle:      booking.vehicle    ?? '',
     rego:         booking.rego       ?? '',
     store:        booking.store      ?? '',
+    service:      (booking.services ?? []).map((s: any) => s.name).join(', '),
     services:     (booking.services ?? []).map((s: any) => s.name).join(', '),
     dropOffTime:  booking.dropOffTime ?? '',
     techName:     booking.assignedTech ?? 'TBA',
