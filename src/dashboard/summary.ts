@@ -6,12 +6,13 @@ import { ok, serverError } from '../shared/errors'
 
 const ready = bootstrap()
 
-async function getAllowedStoreIds(db: any, staffId: string): Promise<number[]> {
-  const [rows] = await db.query<any[]>(
-    'SELECT store_id FROM staff_store_access WHERE staff_id = ? AND revoked_at IS NULL',
-    [staffId],
-  )
-  return rows.map((r: any) => Number(r.store_id))
+function melbDateToday(): string {
+  const parts = new Intl.DateTimeFormat('en-AU', {
+    timeZone: 'Australia/Melbourne',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date())
+  const v = (t: string) => parts.find(p => p.type === t)?.value ?? ''
+  return `${v('year')}-${v('month')}-${v('day')}`
 }
 
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
@@ -20,35 +21,32 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   const ctx = getAuthContext(event)
   const qs  = event.queryStringParameters ?? {}
 
-  // Optional date param — defaults to today. Format: YYYY-MM-DD
-  const date     = qs.date ?? new Date().toISOString().slice(0, 10)
-  const prevDate = new Date(date)
+  // Optional date param — defaults to Melbourne today. Format: YYYY-MM-DD
+  const date     = qs.date ?? melbDateToday()
+  const prevDate = new Date(date + 'T00:00:00')
   prevDate.setDate(prevDate.getDate() - 1)
   const yesterday = prevDate.toISOString().slice(0, 10)
 
   try {
     // ── Store scope ──────────────────────────────────────────────────────────
-    let storeIds: number[] = []
-    let storeFilter        = ''
+    let storeFilter     = ''
+    let sjStoreFilter   = ''   // qualified for multi-join completedJobs query
     let storeParams: any[] = []
 
     if (ctx.role === 'super_admin') {
       if (qs.storeId) {
-        storeIds     = [Number(qs.storeId)]
-        storeFilter  = 'AND store_id = ?'
-        storeParams  = [Number(qs.storeId)]
+        storeFilter   = 'AND store_id = ?'
+        sjStoreFilter = 'AND sj.store_id = ?'
+        storeParams   = [Number(qs.storeId)]
       }
-      // No filter = all stores
+      // No storeId = all stores
     } else {
-      const allowed = await getAllowedStoreIds(db, ctx.staffId)
-      storeIds      = qs.storeId
-        ? [Number(qs.storeId)].filter(id => allowed.includes(id))
-        : allowed
-      if (storeIds.length === 0) {
-        return ok(emptyResponse(date))
-      }
-      storeFilter = `AND store_id IN (${storeIds.map(() => '?').join(',')})`
-      storeParams = storeIds
+      // Non-super_admin: always scope to their own store
+      const myStoreId = ctx.storeId
+      if (!myStoreId) return ok(emptyResponse(date))
+      storeFilter   = 'AND store_id = ?'
+      sjStoreFilter = 'AND sj.store_id = ?'
+      storeParams   = [myStoreId]
     }
 
     const [
@@ -147,7 +145,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
          LEFT JOIN service_types     svt ON svt.id = bs.service_type_id
          LEFT JOIN service_job_staff sjs ON sjs.service_job_id = sj.id AND sjs.role_on_job = 'lead_mechanic'
          LEFT JOIN staff             st  ON st.id  = sjs.staff_id
-         WHERE DATE(sj.completed_at) = ? AND sj.status = 'completed' ${storeFilter}
+         WHERE DATE(sj.completed_at) = ? AND sj.status = 'completed' ${sjStoreFilter}
          GROUP BY sj.id, s.name, c.first_name, c.last_name, v.rego, v.year, v.make, v.model, st.first_name, st.last_name, sj.completed_at
          ORDER BY sj.completed_at DESC`,
         [date, ...storeParams],
