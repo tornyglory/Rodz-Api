@@ -1,12 +1,12 @@
 import mysql from 'mysql2/promise'
+import { pushNotification } from './wsPush'
 
 type NotificationType = 'booking_received' | 'quote_approved' | 'job_completed' | 'invoice_paid'
 
 interface NotifyOpts {
-  type:      NotificationType
-  title:     string
-  body:      string
-  storeId?:  number | null
+  type:       NotificationType
+  title:      string
+  body:       string
   bookingId?: number | null
   quoteId?:   number | null
   jobId?:     number | null
@@ -33,12 +33,28 @@ export async function notifyStore(db: mysql.Pool, storeId: number, opts: NotifyO
       opts.invoiceId ?? null,
     ])
 
-    await db.query(
+    const [result] = await db.query<any>(
       `INSERT INTO staff_notifications
          (staff_id, store_id, type, title, body, booking_id, quote_id, job_id, invoice_id)
        VALUES ?`,
       [values],
     )
+
+    // Push to connected WebSocket clients — fire-and-forget, non-fatal
+    const notification = {
+      id:        result.insertId,
+      type:      opts.type,
+      title:     opts.title,
+      body:      opts.body,
+      readAt:    null,
+      createdAt: new Date().toISOString(),
+      storeId,
+      jobId:     opts.jobId     ?? null,
+      bookingId: opts.bookingId ?? null,
+      quoteId:   opts.quoteId   ?? null,
+      invoiceId: opts.invoiceId ?? null,
+    }
+    pushNotification(db, storeId, notification).catch(() => {})
   } catch {
     // Notification failure is non-fatal
   }
