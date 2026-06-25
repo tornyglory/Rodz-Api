@@ -323,7 +323,8 @@ GET /logbook/{token}/profile  → AI vehicle profile (404 = hide tab)
 - **Tabs** — "Service History" | "Vehicle Profile" (hide Profile tab on 404)
 
 **Service History tab:**
-- One card per visit — date, odometer, store, tech
+- One card per visit — date, store, tech
+- `odometer` — show as e.g. **68,900 km** if present; omit the field if `null`
 - `aiSummary` displayed prominently (if present)
 - Line items collapsible
 - Photos in a grid using `urls.thumbnail`; open full-size (`urls.public`) in a lightbox

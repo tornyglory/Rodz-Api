@@ -24,9 +24,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
               c.email      AS cust_email,
               c.first_name AS cust_first,
               c.last_name  AS cust_last,
-              vl.label     AS vehicle_label
+              vl.label     AS vehicle_label,
+              s.name       AS store_name
        FROM invoices i
        JOIN customers c ON c.id = i.customer_id
+       JOIN stores s    ON s.id = i.store_id
        LEFT JOIN (
          SELECT rego, CONCAT(ANY_VALUE(year), ' ', ANY_VALUE(make), ' ', ANY_VALUE(model)) AS label
          FROM vehicles WHERE is_active = 1 GROUP BY rego
@@ -79,6 +81,13 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [token, dueDate, zellerPaymentUrl, id],
     )
 
+    // Fetch line item descriptions for {{services}} substitution
+    const [itemRows] = await db.query<any[]>(
+      'SELECT description FROM invoice_items WHERE invoice_id = ? ORDER BY sort_order, id',
+      [id],
+    )
+    const services = itemRows.map((r: any) => r.description).join(', ')
+
     // Send invoice email — non-fatal
     const frontendUrl = process.env.FRONTEND_URL ?? ''
     await sendInvoiceEmail(db, {
@@ -86,6 +95,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       customerName:  `${row.cust_first} ${row.cust_last}`,
       invoiceNumber: row.invoice_number,
       vehicle:       row.vehicle_label ?? row.vehicle_rego,
+      rego:          row.vehicle_rego  ?? '',
+      store:         (row.store_name  ?? '').replace(/^Rodz /, ''),
+      services,
       total:         `$${Number(row.total).toFixed(2)}`,
       invoiceLink:   `${frontendUrl}/invoice/${token}`,
     })

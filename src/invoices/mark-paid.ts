@@ -4,6 +4,7 @@ import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { ok, notFound, forbidden, validationError, serverError } from '../shared/errors'
 import { invoiceError, INVOICE_SELECT_BY_ID, buildInvoice, getInvoiceItems, getAllowedStoreIds, upsertServiceLog } from './_helpers'
+import { notifyStore } from '../shared/staffNotifications'
 
 const ready = bootstrap()
 
@@ -44,7 +45,16 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     await upsertServiceLog(db, Number(id))
     const [[updated]] = await db.query<any[]>(INVOICE_SELECT_BY_ID, [id])
     const itemsMap = await getInvoiceItems(db, [row.id])
-    return ok({ invoice: buildInvoice(updated, itemsMap.get(row.id) ?? []) })
+    const invoice = buildInvoice(updated, itemsMap.get(row.id) ?? [])
+
+    await notifyStore(db, row.store_id, {
+      type:      'invoice_paid',
+      title:     'Invoice Paid',
+      body:      `Invoice ${invoice.invoiceNumber} paid — $${Number(invoice.total).toFixed(2)}`,
+      invoiceId: Number(id),
+    })
+
+    return ok({ invoice })
   } catch (err) {
     return serverError(err)
   }

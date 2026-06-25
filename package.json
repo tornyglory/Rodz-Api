@@ -23,6 +23,7 @@
   "dependencies": {
     "@aws-sdk/client-lambda": "^3.1068.0",
     "@aws-sdk/client-ses": "^3.1059.0",
+    "@aws-sdk/client-sqs": "^3.1075.0",
     "@google/generative-ai": "^0.24.1",
     "aws-cdk-lib": "2.160.0",
     "bcryptjs": "^3.0.3",

@@ -4,22 +4,26 @@ import { Construct } from 'constructs'
 import * as ec2 from 'aws-cdk-lib/aws-ec2'
 import * as events from 'aws-cdk-lib/aws-events'
 import * as targets from 'aws-cdk-lib/aws-events-targets'
+import * as sqs from 'aws-cdk-lib/aws-sqs'
+import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs'
+import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources'
 import { HttpApi, HttpRoute, HttpRouteKey, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2'
 import { HttpLambdaAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers'
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations'
 import { LambdaFn } from './constructs/lambda-fn'
 
 interface RodzApiStack2Props extends StackProps {
-  httpApi: HttpApi
-  authorizer: HttpLambdaAuthorizer
-  vpc: ec2.IVpc
+  httpApi:      HttpApi
+  authorizer:   HttpLambdaAuthorizer
+  vpc:          ec2.IVpc
+  jobUpdateFn:  NodejsFunction
 }
 
 export class RodzApiStack2 extends Stack {
   constructor(scope: Construct, id: string, props: RodzApiStack2Props) {
     super(scope, id, props)
 
-    const { httpApi, authorizer, vpc } = props
+    const { httpApi, authorizer, vpc, jobUpdateFn } = props
 
     const sharedEnv: Record<string, string> = {
       NODE_ENV:        'production',
@@ -356,6 +360,34 @@ export class RodzApiStack2 extends Stack {
       routeKey: HttpRouteKey.with('/logbook/{token}/profile', HttpMethod.GET),
     })
 
+    // ── Vehicle send logbook ────────────────────────────────────────────────
+
+    const vehicleSendLogbookFn = new LambdaFn(this, 'VehicleSendLogbook', {
+      entry: src('vehicles/send-logbook.ts'), vpc, sharedEnv, needsSes: true,
+    }).fn
+
+    new HttpRoute(this, 'VehicleSendLogbookRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleSendLogbookInt', vehicleSendLogbookFn),
+      routeKey: HttpRouteKey.with('/vehicles/{rego}/send-logbook', HttpMethod.POST),
+      authorizer,
+    })
+
+    // ── Logbook notify queue (1-minute delay after job completion) ──────────
+
+    const logbookNotifyQueue = new sqs.Queue(this, 'LogbookNotifyQueue', {
+      deliveryDelay:     Duration.seconds(60),
+      visibilityTimeout: Duration.seconds(60),
+    })
+
+    const logbookNotifyConsumerFn = new LambdaFn(this, 'LogbookNotifyConsumer', {
+      entry: src('vehicles/logbook-notify-consumer.ts'), vpc, sharedEnv, needsSes: true,
+    }).fn
+
+    logbookNotifyConsumerFn.addEventSource(new SqsEventSource(logbookNotifyQueue, { batchSize: 1 }))
+    logbookNotifyQueue.grantSendMessages(jobUpdateFn)
+    jobUpdateFn.addEnvironment('LOGBOOK_NOTIFY_QUEUE_URL', logbookNotifyQueue.queueUrl)
+
     // ── Vehicle service history ─────────────────────────────────────────────
 
     const vehicleServiceHistoryFn = new LambdaFn(this, 'VehicleServiceHistory', {
@@ -464,6 +496,41 @@ export class RodzApiStack2 extends Stack {
       authorizer,
     })
 
+    // ── Staff notifications ─────────────────────────────────────────────────
+
+    const notificationsListFn = new LambdaFn(this, 'NotificationsList', {
+      entry: src('notifications/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const notificationsMarkReadFn = new LambdaFn(this, 'NotificationsMarkRead', {
+      entry: src('notifications/markRead.ts'), vpc, sharedEnv,
+    }).fn
+
+    const notificationsMarkAllReadFn = new LambdaFn(this, 'NotificationsMarkAllRead', {
+      entry: src('notifications/markAllRead.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'NotificationsListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('NotificationsListInt', notificationsListFn),
+      routeKey: HttpRouteKey.with('/notifications', HttpMethod.GET),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'NotificationsMarkReadRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('NotificationsMarkReadInt', notificationsMarkReadFn),
+      routeKey: HttpRouteKey.with('/notifications/{id}/read', HttpMethod.PATCH),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'NotificationsMarkAllReadRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('NotificationsMarkAllReadInt', notificationsMarkAllReadFn),
+      routeKey: HttpRouteKey.with('/notifications/read-all', HttpMethod.PATCH),
+      authorizer,
+    })
+
     // ── Reports ─────────────────────────────────────────────────────────────
 
     const reportPartsFn = new LambdaFn(this, 'ReportParts', {
@@ -485,6 +552,17 @@ export class RodzApiStack2 extends Stack {
       httpApi,
       integration: new HttpLambdaIntegration('ReportServicesInt', reportServicesFn),
       routeKey: HttpRouteKey.with('/reports/services', HttpMethod.GET),
+      authorizer,
+    })
+
+    const reportRevenueFn = new LambdaFn(this, 'ReportRevenue', {
+      entry: src('reports/revenue.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'ReportRevenueRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('ReportRevenueInt', reportRevenueFn),
+      routeKey: HttpRouteKey.with('/reports/revenue', HttpMethod.GET),
       authorizer,
     })
   }

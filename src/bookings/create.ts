@@ -8,6 +8,7 @@ import {
   getBookingServices, setBookingServices, BOOKING_SELECT_BY_ID,
 } from './_helpers'
 import { sendBookingReceivedEmail } from '../shared/emailTemplates'
+import { notifyStore } from '../shared/staffNotifications'
 
 const ready = bootstrap()
 
@@ -101,6 +102,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const servicesMap = await getBookingServices(db, [bookingId])
     const booking = buildBooking(row, servicesMap.get(bookingId) ?? [])
     await sendBookingReceivedEmail(db, booking)
+    await notifyStore(db, storeRow.id, {
+      type:      'booking_received',
+      title:     'New Booking',
+      body:      `${booking.customer} booked for ${booking.date} (${booking.slot === 'morning' ? 'Morning' : 'Afternoon'})`,
+      bookingId: bookingId,
+    })
     return created({ booking })
   } catch (err) {
     return serverError(err)

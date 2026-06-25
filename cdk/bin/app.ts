@@ -18,7 +18,8 @@ const coreStack = new RodzApiStack(app, 'RodzApiStack', { env })
 
 new RodzApiStack2(app, 'RodzApiStack2', {
   env,
-  httpApi:    coreStack.httpApi,
-  authorizer: coreStack.authorizer,
-  vpc:        coreStack.vpc,
+  httpApi:     coreStack.httpApi,
+  authorizer:  coreStack.authorizer,
+  vpc:         coreStack.vpc,
+  jobUpdateFn: coreStack.jobUpdateFn,
 })

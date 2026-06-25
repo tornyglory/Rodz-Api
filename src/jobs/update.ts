@@ -4,7 +4,11 @@ import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { ok, forbidden, validationError, serverError } from '../shared/errors'
 import { buildJob, jobError, getJobServices, getAllowedStoreIds, JOB_SELECT_BY_ID } from './_helpers'
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs'
 import { sendWorkCommencedEmail, sendWorkCompleteEmail } from '../shared/emailTemplates'
+import { notifyStore } from '../shared/staffNotifications'
+
+const sqsClient = new SQSClient({ region: process.env.REGION ?? 'ap-southeast-2' })
 
 const ready = bootstrap()
 
@@ -112,7 +116,27 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     if (status === 'in_progress') await sendWorkCommencedEmail(db, result)
-    if (status === 'completed')   await sendWorkCompleteEmail(db, result)
+    if (status === 'completed') {
+      await sendWorkCompleteEmail(db, result)
+      await notifyStore(db, job.store_id, {
+        type:  'job_completed',
+        title: 'Job Completed',
+        body:  `${result.vehicle ?? result.rego} (${result.rego}) completed${result.tech ? ` by ${result.tech}` : ''}`,
+        jobId: Number(id),
+      })
+      // Send digital logbook email 1 minute after job completion
+      const logbookQueueUrl = process.env.LOGBOOK_NOTIFY_QUEUE_URL
+      if (logbookQueueUrl && result.rego) {
+        try {
+          await sqsClient.send(new SendMessageCommand({
+            QueueUrl:     logbookQueueUrl,
+            MessageBody:  JSON.stringify({ rego: result.rego }),
+          }))
+        } catch (sqsErr) {
+          console.error('Failed to queue logbook notification (non-fatal):', sqsErr)
+        }
+      }
+    }
     return ok({ job: result })
   } catch (err) {
     return serverError(err)

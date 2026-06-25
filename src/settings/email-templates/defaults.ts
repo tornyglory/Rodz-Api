@@ -67,4 +67,13 @@ export const DEFAULT_TEMPLATES = {
       'If you have any questions, feel free to reply to this email.\n\n' +
       'Rodz Smart Auto',
   },
+  logbookTemplate: {
+    subject: 'Your digital logbook — {{vehicle}}',
+    body:
+      'Hi {{firstName}},\n\n' +
+      'Your digital logbook for your {{vehicle}} ({{rego}}) is ready to view.\n\n' +
+      'View your logbook here:\n{{logbookLink}}\n\n' +
+      'This link is unique to your vehicle and can be bookmarked for future reference.\n\n' +
+      'Rodz Smart Auto {{store}}',
+  },
 }

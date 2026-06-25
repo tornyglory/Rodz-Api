@@ -38,7 +38,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const [rows] = await db.query<any[]>(`
       SELECT vsl.id, vsl.invoice_id, vsl.invoice_number, vsl.service_date,
-             vsl.odometer, vsl.store, vsl.tech, vsl.total, vsl.status, vsl.ai_summary,
+             COALESCE(i.odometer_in, vsl.odometer) AS odometer,
+             vsl.store, vsl.tech, vsl.total, vsl.status, vsl.ai_summary,
              i.token AS invoice_token
       FROM vehicle_service_log vsl
       JOIN invoices i ON i.id = vsl.invoice_id

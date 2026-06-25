@@ -7,6 +7,7 @@ import {
   QUOTE_SELECT, buildQuote, quoteError,
   getAllowedStoreIds, setQuoteItems, getQuoteItems,
 } from './_helpers'
+import { notifyStore } from '../shared/staffNotifications'
 
 const ready = bootstrap()
 
@@ -135,7 +136,18 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const [[row]] = await db.query<any[]>(`${QUOTE_SELECT} WHERE q.id = ? LIMIT 1`, [id])
     const quoteItems = await getQuoteItems(db, Number(id))
-    return ok({ quote: buildQuote(row, quoteItems) })
+    const result = buildQuote(row, quoteItems)
+
+    if (status === 'approved') {
+      await notifyStore(db, quote.store_id, {
+        type:    'quote_approved',
+        title:   'Quote Approved',
+        body:    `${result.customerName} approved quote ${result.quoteNumber}`,
+        quoteId: Number(id),
+      })
+    }
+
+    return ok({ quote: result })
   } catch (err) {
     return serverError(err)
   }

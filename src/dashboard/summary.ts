@@ -83,12 +83,14 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       ),
       db.query<any[]>(
         `SELECT COALESCE(SUM(total), 0) AS revenueToday FROM invoices
-         WHERE DATE(sent_at) = ? AND status IN ('sent', 'paid') ${storeFilter}`,
+         WHERE status = 'paid'
+           AND DATE(CONVERT_TZ(paid_at, '+00:00', 'Australia/Melbourne')) = ? ${storeFilter}`,
         [date, ...storeParams],
       ),
       db.query<any[]>(
         `SELECT COALESCE(SUM(total), 0) AS revenueYesterday FROM invoices
-         WHERE DATE(sent_at) = ? AND status IN ('sent', 'paid') ${storeFilter}`,
+         WHERE status = 'paid'
+           AND DATE(CONVERT_TZ(paid_at, '+00:00', 'Australia/Melbourne')) = ? ${storeFilter}`,
         [yesterday, ...storeParams],
       ),
       db.query<any[]>(

@@ -13,7 +13,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const [result] = await db.query<any>(
-      'UPDATE notifications SET read_at = NOW() WHERE staff_id = ? AND read_at IS NULL',
+      'UPDATE staff_notifications SET read_at = NOW() WHERE staff_id = ? AND read_at IS NULL',
       [staffId],
     )
     return ok({ updated: result.affectedRows })

@@ -257,6 +257,9 @@ export async function sendInvoiceEmail(db: mysql.Pool, params: {
   customerName:  string
   invoiceNumber: string
   vehicle:       string
+  rego:          string
+  store:         string
+  services:      string
   total:         string
   invoiceLink:   string
 }): Promise<void> {
@@ -266,6 +269,9 @@ export async function sendInvoiceEmail(db: mysql.Pool, params: {
     firstName:     params.customerName.split(' ')[0],
     invoiceNumber: params.invoiceNumber,
     vehicle:       params.vehicle,
+    rego:          params.rego,
+    store:         params.store,
+    services:      params.services,
     total:         params.total,
     invoiceLink:   params.invoiceLink,
   })

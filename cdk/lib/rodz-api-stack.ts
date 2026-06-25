@@ -13,6 +13,7 @@ export class RodzApiStack extends Stack {
   public readonly httpApi: HttpApi
   public readonly authorizer: HttpLambdaAuthorizer
   public readonly vpc: ec2.IVpc
+  public readonly jobUpdateFn: import('aws-cdk-lib/aws-lambda-nodejs').NodejsFunction
 
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props)
@@ -190,9 +191,10 @@ export class RodzApiStack extends Stack {
       entry: src('jobs/list.ts'), vpc, sharedEnv,
     }).fn
 
-    const jobUpdateFn = new LambdaFn(this, 'JobUpdate', {
+    this.jobUpdateFn = new LambdaFn(this, 'JobUpdate', {
       entry: src('jobs/update.ts'), vpc, sharedEnv, needsSes: true,
     }).fn
+    const jobUpdateFn = this.jobUpdateFn
 
     const jobGetFn = new LambdaFn(this, 'JobGet', {
       entry: src('jobs/get.ts'), vpc, sharedEnv,
