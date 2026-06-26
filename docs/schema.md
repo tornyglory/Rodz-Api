@@ -1315,3 +1315,79 @@ Tracks all insert/update/delete operations across the system.
 `https://imagedelivery.net/{CF_ACCOUNT_ID}/{image_id}/{variant}` where variant is `thumbnail` or `public`.
 
 `quote_id` and `quote_item_id` are both nullable. A photo attached to a specific quote line item sets both. A photo for a quote but not a line item sets `quote_id` only. A general condition photo sets neither. `job_card_item_id` is set when a photo is attached to a job card checklist item. `invoice_id` and `invoice_item_id` follow the same pattern for invoices — photos are returned inline on each invoice item in all invoice responses.
+
+---
+
+## Staff notifications
+
+### `staff_notifications`
+
+In-app notification inbox for staff. Created when key events occur (booking received, quote approved, job completed, invoice paid). Delivered to connected clients via WebSocket push and persisted here for the inbox.
+
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `id` | bigint unsigned | NO | — |
+| `staff_id` | bigint unsigned | NO | — |
+| `store_id` | tinyint unsigned | YES | — |
+| `type` | enum | NO | — |
+| `title` | varchar(255) | NO | — |
+| `body` | varchar(500) | NO | — |
+| `booking_id` | bigint unsigned | YES | — |
+| `quote_id` | bigint unsigned | YES | — |
+| `job_id` | bigint unsigned | YES | — |
+| `invoice_id` | bigint unsigned | YES | — |
+| `read_at` | datetime | YES | — |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+**`type` enum:** `booking_received`, `quote_approved`, `job_completed`, `invoice_paid`
+
+`store_id` is `NULL` for `super_admin` connections (receives all stores). `read_at` is `NULL` until the staff member reads the notification.
+
+---
+
+## WebSocket connections
+
+### `ws_connections`
+
+Active WebSocket connections via API Gateway. Used to fan out real-time pushes to the correct staff. Rows are inserted on connect and deleted on disconnect; expired rows are cleaned up lazily.
+
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `connection_id` | varchar(255) | NO | — |
+| `staff_id` | int unsigned | NO | — |
+| `store_id` | int unsigned | YES | — |
+| `role` | varchar(50) | NO | — |
+| `connected_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `expires_at` | datetime | NO | — |
+
+`store_id` is `NULL` for `super_admin` (receives pushes for all stores). `expires_at` is set to 2 hours after connect — API Gateway closes idle connections after 10 minutes, but the row lingers until next cleanup.
+
+---
+
+## Notes
+
+### `customer_notes`
+
+Free-text staff notes against a customer record. Append-only — no editing after posting.
+
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `id` | bigint unsigned | NO | — |
+| `customer_id` | bigint unsigned | NO | — |
+| `staff_id` | bigint unsigned | NO | — |
+| `content` | text | NO | — |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+---
+
+### `vehicle_notes`
+
+Free-text staff notes against a vehicle record. Append-only — no editing after posting.
+
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `id` | bigint unsigned | NO | — |
+| `vehicle_id` | bigint unsigned | NO | — |
+| `staff_id` | bigint unsigned | NO | — |
+| `content` | text | NO | — |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
