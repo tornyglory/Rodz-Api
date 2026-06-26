@@ -1,6 +1,6 @@
 # Technicians API — Frontend Brief
 
-Two endpoints power the Technicians view. All data comes pre-computed from the server — no client-side aggregation needed.
+Two endpoints power the Technicians view. Stats are pre-computed server-side for all three periods in a single response — switching Week / Month / Year toggles instantly without a re-fetch.
 
 ---
 
@@ -17,13 +17,12 @@ Both require `Authorization: Bearer <token>`.
 
 ## `GET /technicians`
 
-Returns all active staff with stats pre-computed for the current week, month, and year.
-
 ### Query params
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `store` | string | Optional. Filter by store name (super_admin only — partial match). Non-admin users always see their own store. |
+| Param | Type | Notes |
+|-------|------|-------|
+| `store` | string | Optional. Filter by store name (partial match). `super_admin` only — non-admin users always see their own store regardless. |
+| `search` | string | Optional. Case-insensitive substring match on full name. Send as the user types into the search box. |
 
 ### Response
 
@@ -32,34 +31,19 @@ Returns all active staff with stats pre-computed for the current week, month, an
   "technicians": [
     {
       "id": 3,
-      "name": "Howard R.",
+      "name": "H. Rodda",
       "fullName": "Howard Rodda",
       "store": "Somerville",
       "role": "senior_mechanic",
       "initials": "HR",
-      "color": "#3B82F6",
+      "color": "#41D3D5",
       "phone": "0412 345 678",
       "email": "howard@rodz.com.au",
-      "joinedAt": "2022-03-14",
+      "joinedAt": "2019-03-15",
       "stats": {
-        "week": {
-          "jobsCompleted": 4,
-          "hoursBilled": 18.5,
-          "revenue": 2840.00,
-          "efficiency": 58
-        },
-        "month": {
-          "jobsCompleted": 17,
-          "hoursBilled": 76.0,
-          "revenue": 11200.00,
-          "efficiency": 61
-        },
-        "year": {
-          "jobsCompleted": 203,
-          "hoursBilled": 890.5,
-          "revenue": 134500.00,
-          "efficiency": 63
-        }
+        "week":  { "jobsCompleted": 1, "hoursBilled": 6.3, "revenue": 231, "efficiency": 16 },
+        "month": { "jobsCompleted": 2, "hoursBilled": 9.3, "revenue": 1129, "efficiency": 6 },
+        "year":  { "jobsCompleted": 2, "hoursBilled": 9.3, "revenue": 1129, "efficiency": 1 }
       }
     }
   ]
@@ -70,32 +54,35 @@ Returns all active staff with stats pre-computed for the current week, month, an
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `id` | number | staff.id |
-| `name` | string | Abbreviated: `"Howard R."` — use for compact display |
-| `fullName` | string | Full name — use for headings and modals |
-| `store` | string | Store name with "Rodz " prefix stripped |
-| `role` | string | `owner` \| `manager` \| `senior_mechanic` \| `qualified_mechanic` \| `service_tech` \| `tyre_tech` \| `receptionist` \| `apprentice` \| `technician` |
-| `initials` | string | Two uppercase chars — use for avatar fallback |
-| `color` | string \| null | Hex colour for the avatar background. Null if not set — fall back to a default palette |
-| `phone` | string \| null | Mobile number |
-| `email` | string | Staff login email |
-| `joinedAt` | string \| null | ISO date `"YYYY-MM-DD"` — null if not set |
+| `id` | number | |
+| `name` | string | First initial + last name: `"H. Rodda"`. Use for compact display (job cards, chips). |
+| `fullName` | string | Use for headings, modals, search results. |
+| `store` | string | Store name with `"Rodz "` prefix stripped. |
+| `role` | string \| null | `owner` \| `manager` \| `senior_mechanic` \| `qualified_mechanic` \| `service_tech` \| `tyre_tech` \| `receptionist` \| `apprentice` \| `technician`. Frontend formats to Title Case. |
+| `initials` | string | Two uppercase chars — avatar fallback. |
+| `color` | string \| null | Hex for avatar background. Fall back to a palette keyed by `id` if null. |
+| `phone` | string \| null | Mobile number. |
+| `email` | string | |
+| `joinedAt` | string \| null | `"YYYY-MM-DD"`. Display as `"Mar 2019"`. |
 
-### Stats object (same shape for `week`, `month`, `year`)
+### Stats fields (same shape for `week`, `month`, `year`)
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `jobsCompleted` | number | Count of completed/invoiced jobs where this tech was lead mechanic in the period |
-| `hoursBilled` | number | Sum of labour line item hours across those jobs. `0` if no line items yet |
-| `revenue` | number | Sum of invoice totals for those jobs (falls back to quote total, then 0) |
-| `efficiency` | number | `0–100`. Formula: `round((hoursBilled / (workingDays × 8)) × 100)`, clamped to 100. `0` when no hours billed |
+| `jobsCompleted` | number | Count of jobs with `status = 'completed'` in the period. |
+| `hoursBilled` | number | Sum of `duration_mins / 60` for **all non-cancelled** jobs in the period (open, in_progress, completed, etc.). 1 decimal place. Represents scheduled/worked hours. |
+| `revenue` | number | Sum of invoice totals for completed jobs (falls back to quote total, then 0). Whole dollars. |
+| `efficiency` | number | `0–100`. Formula: `round((hoursBilled / (workingDays × 8)) × 100)`, clamped to 100. |
 
-**Period definitions** (all in Melbourne time):
-- `week` — Monday of the current calendar week through today
-- `month` — 1st of the current month through today
-- `year` — 1st of the current year through today
+**Period definitions** (Melbourne time):
 
-Only jobs with `status = completed` or `invoiced` and a `completedAt` date in the period are counted.
+| Period | Date range |
+|--------|-----------|
+| `week` | Monday of current calendar week → today |
+| `month` | 1st of current month → today |
+| `year` | 1 Jan of current year → today |
+
+**Working days** = count of Mon–Fri calendar days in the period up to and including today.
 
 ---
 
@@ -105,8 +92,8 @@ Paginated job history for one technician, filtered by period.
 
 ### Auth
 
-- **Technician** role: can only fetch their own record (`id` must match their own staff ID). Returns 403 otherwise.
-- **Store manager** and **super admin**: can fetch any technician in their accessible stores.
+- **Technician** role: can only fetch their own record. Returns `403` for any other `:id`.
+- **Store manager / super admin**: can fetch any technician in their accessible stores.
 
 ### Query params
 
@@ -120,98 +107,111 @@ Paginated job history for one technician, filtered by period.
 
 ```json
 {
+  "techId": 3,
+  "period": "month",
   "jobs": [
     {
-      "id": 11,
-      "jobNumber": "J00011",
-      "bookingId": 11,
-      "bookingRef": "BK-2606-011",
-      "customerId": 5,
-      "vehicleId": 7,
-      "customer": "Neville Rodda",
-      "customerEmail": "nev@rodz.com.au",
-      "vehicle": "2019 Subaru Forester",
+      "id": 12,
+      "jobNumber": "J00012",
+      "bookingId": 19,
+      "customerId": 3,
+      "vehicleId": 4,
+      "bookingRef": "BK-2606-019",
+      "customer": "Brett Thompson",
+      "customerEmail": "brett@example.com",
+      "vehicle": "2026 Mazda CX-5",
       "rego": "ABC123",
       "service": "Full Service",
-      "services": [
-        { "serviceTypeId": 1, "name": "Full Service", "category": "service", "customerDescription": null }
-      ],
+      "services": [{ "serviceTypeId": 1, "name": "Full Service", "category": "service", "customerDescription": null }],
       "hoist": "Hoist 1",
       "hoistId": 1,
-      "status": "completed",
-      "tech": "Howard R.",
+      "status": "open",
+      "tech": "H. Rodda",
       "assignedStaffId": 3,
       "store": "Somerville",
-      "date": "2026-06-24",
+      "date": "2026-06-26",
       "slot": "morning",
-      "startTime": "09:00",
-      "durationMins": 90,
+      "startTime": "08:00",
+      "durationMins": 150,
       "sortOrder": 1,
       "notes": null,
-      "quoteId": 9,
-      "quoteStatus": "invoiced",
+      "quoteId": 15,
+      "quoteStatus": "approved",
       "odometerIn": null,
-      "startedAt": "2026-06-24T00:02:11.000Z",
-      "completedAt": "2026-06-24T02:41:00.000Z"
+      "startedAt": null,
+      "completedAt": null,
+      "amount": 0
     }
   ],
   "pagination": {
     "page": 1,
     "limit": 20,
-    "total": 17,
+    "total": 4,
     "pages": 1
   },
   "periodTotals": {
-    "jobsCompleted": 17,
-    "hoursBilled": 76.0,
-    "revenue": 11200.00,
-    "efficiency": 61
+    "jobsCompleted": 2,
+    "hoursBilled": 9.3,
+    "revenue": 1129,
+    "efficiency": 6
   }
 }
 ```
 
-`jobs` is identical in shape to `GET /jobs` items. Use the same job card component.
+### Field notes
 
-`periodTotals` is the same stats object as in the roster — totals for the selected period for this tech only.
+**`jobs`** — identical shape to `GET /jobs`, plus:
 
-Jobs are ordered most recent `completedAt` first.
+**`amount`** — invoice total for this job in whole dollars. Falls back to quote total, then `0`. Never `null`.
+
+**`date`** — ISO date `"YYYY-MM-DD"`. Format as `"Thu 26 Jun"`.
+
+**`durationMins`** — integer minutes. Display hours as `durationMins / 60`.
+
+**Jobs shown** — all non-cancelled jobs whose booking date falls in the period (open, in_progress, awaiting_parts, awaiting_approval, completed, invoiced). Cancelled jobs are excluded.
+
+**`periodTotals`** — totals across the **entire period**, not just the current page. The `hoursBilled` and `revenue` values match what the roster (`GET /technicians`) returns for the same tech and period.
+
+**Sort** — `booking_date DESC, id DESC`.
 
 ---
 
 ## Usage patterns
 
-### Technicians roster (staff-facing)
+### Roster (all techs, period toggle)
 
 ```ts
-// On mount
+// On mount — fetch once, all 3 periods included
 const { technicians } = await GET('/technicians')
 
-// Switch period tab — no re-fetch needed, all 3 periods are already in the response
-const stats = tech.stats[selectedPeriod] // 'week' | 'month' | 'year'
+// Period toggle — no re-fetch
+const stats = tech.stats[selectedPeriod]  // 'week' | 'month' | 'year'
+
+// Search as user types
+const { technicians } = await GET(`/technicians?search=${query}`)
 ```
 
 ### Technician profile / job history
 
 ```ts
-// On mount or period change
-const { jobs, pagination, periodTotals } = await GET(
-  `/technicians/${techId}/jobs?period=${period}&page=${page}`
-)
+// Re-fetch on period change or page change
+const { techId, period, jobs, pagination, periodTotals } =
+  await GET(`/technicians/${id}/jobs?period=${period}&page=${page}`)
 ```
 
 ### My Day (technician self-view)
 
 ```ts
-// Technician's own profile page — backend enforces they can only see themselves
-const { jobs, periodTotals } = await GET(`/technicians/${ctx.staffId}/jobs?period=week`)
+// Backend enforces the tech can only see their own record
+const data = await GET(`/technicians/${ctx.staffId}/jobs?period=week`)
 ```
 
 ---
 
 ## Error responses
 
-| Status | When |
-|--------|------|
-| 403 | Technician tries to view another tech's jobs |
-| 403 | Store manager tries to view a tech outside their store |
-| 404 | `:id` does not exist or is inactive |
+| Status | Condition |
+|--------|-----------|
+| `403` | Technician requests another tech's jobs |
+| `403` | Store manager requests a tech outside their store |
+| `404` | `:id` does not exist or is inactive |
