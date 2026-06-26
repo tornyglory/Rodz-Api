@@ -590,6 +590,19 @@ export class RodzApiStack2 extends Stack {
       authorizer,
     })
 
+    // ── Capacity ────────────────────────────────────────────────────────────
+
+    const capacityFn = new LambdaFn(this, 'Capacity', {
+      entry: src('capacity/get.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CapacityRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CapacityInt', capacityFn),
+      routeKey: HttpRouteKey.with('/capacity', HttpMethod.GET),
+      authorizer,
+    })
+
     // ── Customer notes ──────────────────────────────────────────────────────
 
     const customerNotesListFn = new LambdaFn(this, 'CustomerNotesList', {
