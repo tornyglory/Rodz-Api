@@ -94,7 +94,7 @@ export async function buildCustomerList(db: mysql.Pool, rows: any[]) {
 }
 
 export async function buildCustomerFull(db: mysql.Pool, row: any) {
-  const [tags, vehicles, stats, spend, jobs] = await Promise.all([
+  const [tags, vehicles, stats, spend, jobs, notesCountRes] = await Promise.all([
     db.query<any[]>('SELECT tag FROM customer_tags WHERE customer_id = ?', [row.id]),
     db.query<any[]>(
       `SELECT v.id, v.rego, v.year, v.make, v.model,
@@ -104,7 +104,8 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
                   COALESCE(MAX(sj.odometer_out), 0)
                 ), 0)
                 FROM service_jobs sj WHERE sj.vehicle_id = v.id
-              ) AS odometer
+              ) AS odometer,
+              (SELECT COUNT(*) FROM vehicle_notes WHERE vehicle_id = v.id) AS notes_count
        FROM vehicle_owners vo
        JOIN vehicles v ON v.id = vo.vehicle_id
        WHERE vo.customer_id = ? AND vo.is_current = 1 AND v.is_active = 1
@@ -156,9 +157,13 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
        ORDER BY COALESCE(sj.completed_at, sj.created_at) DESC`,
       [row.id],
     ),
+    db.query<any[]>(
+      'SELECT COUNT(*) AS count FROM customer_notes WHERE customer_id = ?',
+      [row.id],
+    ),
   ])
 
-  const [[tagRows], [vehicleRows], [[statsRow]], [[spendRow]], [jobRows]] = [tags, vehicles, stats, spend, jobs]
+  const [[tagRows], [vehicleRows], [[statsRow]], [[spendRow]], [jobRows], [[notesRow]]] = [tags, vehicles, stats, spend, jobs, notesCountRes]
 
   return {
     id:          row.id,
@@ -171,6 +176,7 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
     totalSpend:  Number(Number(spendRow?.totalSpend ?? 0).toFixed(2)),
     lastVisit:   statsRow.lastVisit ? formatDate(statsRow.lastVisit) : null,
     memberSince: row.created_at ? formatDate(row.created_at) : null,
+    notesCount:  Number(notesRow?.count ?? 0),
     notes:       row.internal_notes ?? null,
     dob:         row.date_of_birth ? (row.date_of_birth instanceof Date ? row.date_of_birth.toISOString().slice(0, 10) : String(row.date_of_birth).slice(0, 10)) : null,
     address: {
@@ -180,7 +186,7 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
       state:    row.state ?? null,
       postcode: row.postcode ?? null,
     },
-    vehicles:    vehicleRows.map((v: any) => ({ id: v.id, rego: v.rego, year: v.year, make: v.make, model: v.model, odometer: v.odometer != null ? Number(v.odometer) : null })),
+    vehicles:    vehicleRows.map((v: any) => ({ id: v.id, rego: v.rego, year: v.year, make: v.make, model: v.model, odometer: v.odometer != null ? Number(v.odometer) : null, notesCount: Number(v.notes_count ?? 0) })),
     jobHistory:  jobRows.map((j: any) => ({
       id:      j.id,
       date:    j.completed_at ? formatDate(j.completed_at) : null,

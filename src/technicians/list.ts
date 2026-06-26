@@ -8,6 +8,8 @@ import { getPeriodRange, countWorkingDays, fetchStats } from './_helpers'
 
 const ready = bootstrap()
 
+const CF_ACCOUNT_HASH = process.env.CF_ACCOUNT_HASH ?? ''
+
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
   const db = getPool()
@@ -37,7 +39,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const [staffRows] = await db.query<any[]>(
       `SELECT s.id, s.first_name, s.last_name, s.email, s.mobile,
-              s.role, s.colour_code, s.hired_at,
+              s.role, s.colour_code, s.hired_at, s.avatar_image_id,
               st.name AS store_name
        FROM staff s
        JOIN stores st ON st.id = s.store_id
@@ -73,7 +75,10 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       store:    String(r.store_name ?? '').replace(/^Rodz /, ''),
       role:     r.role ?? null,
       initials: `${String(r.first_name).charAt(0)}${String(r.last_name).charAt(0)}`.toUpperCase(),
-      color:    r.colour_code ?? null,
+      color:     r.colour_code ?? null,
+      avatarUrl: r.avatar_image_id
+        ? `https://imagedelivery.net/${CF_ACCOUNT_HASH}/${r.avatar_image_id}/thumbnail`
+        : null,
       phone:    r.mobile ?? null,
       email:    r.email,
       joinedAt: r.hired_at

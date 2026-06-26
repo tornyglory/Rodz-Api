@@ -37,6 +37,7 @@ Both require `Authorization: Bearer <token>`.
       "role": "senior_mechanic",
       "initials": "HR",
       "color": "#41D3D5",
+      "avatarUrl": "https://imagedelivery.net/{accountHash}/a1b2c3d4.../thumbnail",
       "phone": "0412 345 678",
       "email": "howard@rodz.com.au",
       "joinedAt": "2019-03-15",
@@ -59,8 +60,9 @@ Both require `Authorization: Bearer <token>`.
 | `fullName` | string | Use for headings, modals, search results. |
 | `store` | string | Store name with `"Rodz "` prefix stripped. |
 | `role` | string \| null | `owner` \| `manager` \| `senior_mechanic` \| `qualified_mechanic` \| `service_tech` \| `tyre_tech` \| `receptionist` \| `apprentice` \| `technician`. Frontend formats to Title Case. |
-| `initials` | string | Two uppercase chars — avatar fallback. |
-| `color` | string \| null | Hex for avatar background. Fall back to a palette keyed by `id` if null. |
+| `initials` | string | Two uppercase chars — avatar fallback when `avatarUrl` is null. |
+| `color` | string \| null | Hex for avatar background. Fall back to a palette keyed by `id` if null. Used only when `avatarUrl` is also null. |
+| `avatarUrl` | string \| null | Cloudflare thumbnail URL (`/thumbnail` variant, max 400px). Show as rounded avatar image. Fall back to `initials` + `color` when null. |
 | `phone` | string \| null | Mobile number. |
 | `email` | string | |
 | `joinedAt` | string \| null | `"YYYY-MM-DD"`. Display as `"Mar 2019"`. |

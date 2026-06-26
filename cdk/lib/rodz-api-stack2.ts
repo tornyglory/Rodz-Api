@@ -589,5 +589,75 @@ export class RodzApiStack2 extends Stack {
       routeKey: HttpRouteKey.with('/technicians/{id}/jobs', HttpMethod.GET),
       authorizer,
     })
+
+    // ── Customer notes ──────────────────────────────────────────────────────
+
+    const customerNotesListFn = new LambdaFn(this, 'CustomerNotesList', {
+      entry: src('customers/notes/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerNotesCreateFn = new LambdaFn(this, 'CustomerNotesCreate', {
+      entry: src('customers/notes/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerNotesDeleteFn = new LambdaFn(this, 'CustomerNotesDelete', {
+      entry: src('customers/notes/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerNotesListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerNotesListInt', customerNotesListFn),
+      routeKey: HttpRouteKey.with('/customers/{id}/notes', HttpMethod.GET),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'CustomerNotesCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerNotesCreateInt', customerNotesCreateFn),
+      routeKey: HttpRouteKey.with('/customers/{id}/notes', HttpMethod.POST),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'CustomerNotesDeleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerNotesDeleteInt', customerNotesDeleteFn),
+      routeKey: HttpRouteKey.with('/customers/{id}/notes/{noteId}', HttpMethod.DELETE),
+      authorizer,
+    })
+
+    // ── Vehicle notes ───────────────────────────────────────────────────────
+
+    const vehicleNotesListFn = new LambdaFn(this, 'VehicleNotesList', {
+      entry: src('vehicles/notes/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const vehicleNotesCreateFn = new LambdaFn(this, 'VehicleNotesCreate', {
+      entry: src('vehicles/notes/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const vehicleNotesDeleteFn = new LambdaFn(this, 'VehicleNotesDelete', {
+      entry: src('vehicles/notes/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'VehicleNotesListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleNotesListInt', vehicleNotesListFn),
+      routeKey: HttpRouteKey.with('/vehicles/{id}/notes', HttpMethod.GET),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'VehicleNotesCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleNotesCreateInt', vehicleNotesCreateFn),
+      routeKey: HttpRouteKey.with('/vehicles/{id}/notes', HttpMethod.POST),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'VehicleNotesDeleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleNotesDeleteInt', vehicleNotesDeleteFn),
+      routeKey: HttpRouteKey.with('/vehicles/{id}/notes/{noteId}', HttpMethod.DELETE),
+      authorizer,
+    })
   }
 }
