@@ -4,6 +4,8 @@ import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { ok, forbidden, validationError, serverError } from '../shared/errors'
 import { jobError, getAllowedStoreIds } from './_helpers'
+import { buildHoist, HOIST_SELECT_BY_ID } from '../hoists/_helpers'
+import { pushToStore } from '../shared/wsPush'
 
 const ready = bootstrap()
 
@@ -79,6 +81,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       )
 
       currentMins += Number(job.duration_mins) || 60
+    }
+
+    await pushToStore(db, hoist.store_id, { type: 'jobs_reordered', jobs: results }).catch(() => {})
+    const [[hoistRow]] = await db.query<any[]>(HOIST_SELECT_BY_ID, [hoistId])
+    if (hoistRow) {
+      await pushToStore(db, hoist.store_id, { type: 'hoist_updated', hoist: buildHoist(hoistRow) }).catch(() => {})
     }
 
     return ok({ jobs: results })

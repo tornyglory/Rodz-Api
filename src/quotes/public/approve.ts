@@ -3,6 +3,7 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { validationError, serverError } from '../../shared/errors'
 import { QUOTE_SELECT, buildQuote, quoteError, getQuoteItems } from '../_helpers'
+import { notifyStore } from '../../shared/staffNotifications'
 
 const ready = bootstrap()
 
@@ -94,11 +95,19 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [quote.id],
     )
     const quoteItems = await getQuoteItems(db, quote.id)
+    const builtQuote = buildQuote(row, quoteItems)
+
+    await notifyStore(db, row.store_id, {
+      type:    'quote_approved',
+      title:   'Quote Approved',
+      body:    `${builtQuote.customerName} approved quote ${builtQuote.quoteNumber}`,
+      quoteId: quote.id,
+    })
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quote: buildQuote(row, quoteItems) }),
+      body: JSON.stringify({ quote: builtQuote }),
     }
   } catch (err) {
     return serverError(err)

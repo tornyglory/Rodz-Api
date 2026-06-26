@@ -4,6 +4,7 @@ import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { ok, forbidden, serverError } from '../shared/errors'
 import { buildHoist, hoistError, getAllowedStoreIds, HOIST_SELECT_BY_ID } from './_helpers'
+import { pushToStore } from '../shared/wsPush'
 
 const ready = bootstrap()
 
@@ -73,7 +74,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     const [[updated]] = await db.query<any[]>(HOIST_SELECT_BY_ID, [id])
-    return ok({ hoist: buildHoist(updated) })
+    const hoistResult = buildHoist(updated)
+    await pushToStore(db, hoist.store_id, { type: 'hoist_updated', hoist: hoistResult }).catch(() => {})
+    return ok({ hoist: hoistResult })
   } catch (err) {
     return serverError(err)
   }

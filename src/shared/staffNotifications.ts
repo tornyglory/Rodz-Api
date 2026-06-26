@@ -40,7 +40,6 @@ export async function notifyStore(db: mysql.Pool, storeId: number, opts: NotifyO
       [values],
     )
 
-    // Push to connected WebSocket clients — fire-and-forget, non-fatal
     const notification = {
       id:        result.insertId,
       type:      opts.type,
@@ -54,7 +53,8 @@ export async function notifyStore(db: mysql.Pool, storeId: number, opts: NotifyO
       quoteId:   opts.quoteId   ?? null,
       invoiceId: opts.invoiceId ?? null,
     }
-    pushNotification(db, storeId, notification).catch(() => {})
+    // Await so Lambda doesn't freeze before the push completes; errors are still non-fatal
+    await pushNotification(db, storeId, notification).catch(() => {})
   } catch {
     // Notification failure is non-fatal
   }

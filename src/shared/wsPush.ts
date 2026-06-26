@@ -12,11 +12,10 @@ async function deleteStaleConnection(db: mysql.Pool, connectionId: string) {
   await db.query('DELETE FROM ws_connections WHERE connection_id = ?', [connectionId])
 }
 
-export async function pushNotification(db: mysql.Pool, storeId: number, notification: object): Promise<void> {
+export async function pushToStore(db: mysql.Pool, storeId: number, message: object): Promise<void> {
   if (!process.env.WS_API_URL) return
 
   try {
-    // All connections for this store + all super_admin connections (store_id IS NULL)
     const [rows] = await db.query<any[]>(
       `SELECT connection_id FROM ws_connections
        WHERE (store_id = ? OR store_id IS NULL) AND expires_at > NOW()`,
@@ -25,7 +24,7 @@ export async function pushNotification(db: mysql.Pool, storeId: number, notifica
     if (rows.length === 0) return
 
     const ws   = getWsClient()
-    const data = Buffer.from(JSON.stringify({ type: 'notification', notification }))
+    const data = Buffer.from(JSON.stringify(message))
 
     await Promise.allSettled(
       rows.map(async ({ connection_id }: { connection_id: string }) => {
@@ -41,4 +40,8 @@ export async function pushNotification(db: mysql.Pool, storeId: number, notifica
   } catch {
     // WebSocket push is non-fatal
   }
+}
+
+export async function pushNotification(db: mysql.Pool, storeId: number, notification: object): Promise<void> {
+  await pushToStore(db, storeId, { type: 'notification', notification })
 }

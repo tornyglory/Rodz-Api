@@ -4,9 +4,11 @@ import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { ok, forbidden, validationError, serverError } from '../shared/errors'
 import { buildJob, jobError, getJobServices, getAllowedStoreIds, JOB_SELECT_BY_ID } from './_helpers'
+import { buildHoist, HOIST_SELECT_BY_ID } from '../hoists/_helpers'
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs'
 import { sendWorkCommencedEmail, sendWorkCompleteEmail } from '../shared/emailTemplates'
 import { notifyStore } from '../shared/staffNotifications'
+import { pushToStore } from '../shared/wsPush'
 
 const sqsClient = new SQSClient({ region: process.env.REGION ?? 'ap-southeast-2' })
 
@@ -137,6 +139,20 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         }
       }
     }
+
+    // ── Real-time WS push ──────────────────────────────────────────────────
+    await pushToStore(db, job.store_id, { type: 'job_updated', job: result }).catch(() => {})
+
+    // Push hoist_updated for old hoist; also new hoist if the job was moved
+    const hoistsToRefresh = new Set<number>([job.hoist_id])
+    if (hoistId != null) hoistsToRefresh.add(Number(hoistId))
+    for (const hid of hoistsToRefresh) {
+      const [[hoistRow]] = await db.query<any[]>(HOIST_SELECT_BY_ID, [hid])
+      if (hoistRow) {
+        await pushToStore(db, job.store_id, { type: 'hoist_updated', hoist: buildHoist(hoistRow) }).catch(() => {})
+      }
+    }
+
     return ok({ job: result })
   } catch (err) {
     return serverError(err)

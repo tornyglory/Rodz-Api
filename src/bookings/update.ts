@@ -7,8 +7,10 @@ import {
   buildBooking, bookingError, getAllowedStoreIds,
   getBookingServices, setBookingServices, BOOKING_SELECT_BY_ID,
 } from './_helpers'
-import { generateJobNumber } from '../jobs/_helpers'
+import { generateJobNumber, buildJob, getJobServices, JOB_SELECT_BY_ID } from '../jobs/_helpers'
+import { buildHoist, HOIST_SELECT_BY_ID } from '../hoists/_helpers'
 import { sendBookingConfirmedEmail } from '../shared/emailTemplates'
+import { pushToStore } from '../shared/wsPush'
 
 const ready = bootstrap()
 
@@ -163,6 +165,19 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
                VALUES (?, ?, 'lead_mechanic', NOW())`,
               [jobResult.insertId, techId],
             )
+          }
+
+          // Push new job to connected tabs so it appears on the board without refresh
+          const newJobId = jobResult.insertId
+          const [[newJobRow]] = await db.query<any[]>(JOB_SELECT_BY_ID, [newJobId])
+          if (newJobRow) {
+            const svcMap = await getJobServices(db, [newJobId])
+            const newJob = buildJob(newJobRow, svcMap.get(newJobId) ?? [])
+            await pushToStore(db, booking.store_id, { type: 'job_updated', job: newJob }).catch(() => {})
+            const [[hoistRow]] = await db.query<any[]>(HOIST_SELECT_BY_ID, [hoistIdForJob])
+            if (hoistRow) {
+              await pushToStore(db, booking.store_id, { type: 'hoist_updated', hoist: buildHoist(hoistRow) }).catch(() => {})
+            }
           }
         }
       }

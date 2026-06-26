@@ -9,7 +9,7 @@ Real-time inbox for staff. Notifications are created automatically by the backen
 | Event | `type` value | When it fires |
 |---|---|---|
 | Customer makes a booking | `booking_received` | `POST /bookings` |
-| Customer approves a quote | `quote_approved` | `PATCH /quotes/:id` with `status: "approved"` |
+| Customer approves a quote | `quote_approved` | `POST /q/{token}/approve` (customer email link) or `POST /quotes/{id}/approve` (staff manual) |
 | A job is marked completed | `job_completed` | `PATCH /jobs/:id` with `status: "completed"` |
 | An invoice is marked paid | `invoice_paid` | `POST /invoices/:id/mark-paid` |
 
@@ -113,12 +113,16 @@ Marks all unread notifications as read for the logged-in staff member. No reques
 
 ### Unread badge
 
-Use `unreadCount` from `GET /notifications` to drive the badge on the bell icon in the nav. Poll every 30–60 seconds or on each page focus. Don't poll faster than 30 seconds.
+Use `unreadCount` from `GET /notifications` to drive the badge on the bell icon in the nav. The count is kept in sync in real time via WebSocket — do not poll on a timer.
+
+Fetch `GET /notifications` once on app load to get the initial count. After that, increment by 1 each time a WS push arrives, and reset to 0 when the drawer is opened (after `PATCH /notifications/read-all`).
 
 ```
 GET /notifications → unreadCount: 3  →  show badge "3"
 unreadCount: 0                        →  hide badge
 ```
+
+> For WebSocket setup, reconnect logic, and toast display, see `websocket-notifications.md`.
 
 ### Notification panel / drawer
 
