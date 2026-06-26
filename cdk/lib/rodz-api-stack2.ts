@@ -565,5 +565,29 @@ export class RodzApiStack2 extends Stack {
       routeKey: HttpRouteKey.with('/reports/revenue', HttpMethod.GET),
       authorizer,
     })
+
+    // ── Technicians ─────────────────────────────────────────────────────────
+
+    const technicianListFn = new LambdaFn(this, 'TechnicianList', {
+      entry: src('technicians/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const technicianJobsFn = new LambdaFn(this, 'TechnicianJobs', {
+      entry: src('technicians/get.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'TechnicianListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('TechnicianListInt', technicianListFn),
+      routeKey: HttpRouteKey.with('/technicians', HttpMethod.GET),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'TechnicianJobsRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('TechnicianJobsInt', technicianJobsFn),
+      routeKey: HttpRouteKey.with('/technicians/{id}/jobs', HttpMethod.GET),
+      authorizer,
+    })
   }
 }
