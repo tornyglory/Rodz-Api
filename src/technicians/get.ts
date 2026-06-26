@@ -8,6 +8,8 @@ import { getPeriodRange, countWorkingDays, fetchStats } from './_helpers'
 
 const ready = bootstrap()
 
+// All non-cancelled jobs for this tech in period. Includes in_progress, open, etc.
+// amount = invoice total → quote total → 0
 const TECH_JOBS_SELECT = `
   SELECT
     j.id, j.job_number, j.booking_id, j.store_id, j.hoist_id, j.customer_id, j.vehicle_id,
@@ -31,7 +33,8 @@ const TECH_JOBS_SELECT = `
        JOIN service_types svc ON svc.id = bs_d.service_type_id
        WHERE bs_d.booking_id = j.booking_id),
       60
-    ) AS duration_mins
+    ) AS duration_mins,
+    COALESCE(inv.total, jq.total, bq.total, 0) AS amount
   FROM service_jobs j
   JOIN bookings b    ON b.id  = j.booking_id
   JOIN customers c   ON c.id  = j.customer_id
@@ -43,6 +46,7 @@ const TECH_JOBS_SELECT = `
        AND sjs.role_on_job = 'lead_mechanic'
        AND sjs.staff_id = ?
   LEFT JOIN staff st_tech ON st_tech.id = sjs.staff_id
+  LEFT JOIN invoices inv ON inv.job_id = j.id
   LEFT JOIN quotes bq ON bq.booking_id = j.booking_id AND bq.id = (
     SELECT MAX(q2.id) FROM quotes q2 WHERE q2.booking_id = j.booking_id
   )
@@ -56,8 +60,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   const qs = event.queryStringParameters ?? {}
 
   const period = (qs.period ?? 'week') as 'week' | 'month' | 'year'
-  const page  = Math.max(1, parseInt(qs.page  ?? '1',  10) || 1)
-  const limit = Math.min(100, Math.max(1, parseInt(qs.limit ?? '20', 10) || 20))
+  const page   = Math.max(1, parseInt(qs.page  ?? '1',  10) || 1)
+  const limit  = Math.min(100, Math.max(1, parseInt(qs.limit ?? '20', 10) || 20))
   const offset = (page - 1) * limit
 
   try {
@@ -82,7 +86,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const { start, end } = getPeriodRange(period)
     const wDays = countWorkingDays(start, end)
 
-    // ── Count query ────────────────────────────────────────────────────────
+    // ── Count: all non-cancelled jobs in period ────────────────────────────
     const [[{ total }]] = await db.query<any[]>(
       `SELECT COUNT(*) AS total
        FROM service_jobs j
@@ -91,33 +95,36 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
             ON sjs.service_job_id = j.id
             AND sjs.role_on_job = 'lead_mechanic'
             AND sjs.staff_id = ?
-       WHERE j.status IN ('completed', 'invoiced')
-         AND j.completed_at IS NOT NULL
-         AND DATE(j.completed_at) BETWEEN ? AND ?`,
+       WHERE b.booking_date BETWEEN ? AND ?
+         AND j.status != 'cancelled'`,
       [id, start, end],
     )
 
     // ── Jobs page ──────────────────────────────────────────────────────────
     const [jobRows] = await db.query<any[]>(
       `${TECH_JOBS_SELECT}
-       WHERE j.status IN ('completed', 'invoiced')
-         AND j.completed_at IS NOT NULL
-         AND DATE(j.completed_at) BETWEEN ? AND ?
-       ORDER BY j.completed_at DESC
+       WHERE b.booking_date BETWEEN ? AND ?
+         AND j.status != 'cancelled'
+       ORDER BY b.booking_date DESC, j.id DESC
        LIMIT ? OFFSET ?`,
       [id, start, end, limit, offset],
     )
 
     const jobIds = jobRows.map((r: any) => r.id as number)
     const svcMap = await getJobServices(db, jobIds)
-    const jobs   = jobRows.map((r: any) => buildJob(r, svcMap.get(r.id) ?? []))
+    const jobs   = jobRows.map((r: any) => ({
+      ...buildJob(r, svcMap.get(r.id) ?? []),
+      amount: Math.round(Number(r.amount)) || 0,
+    }))
 
-    // ── Period totals ──────────────────────────────────────────────────────
-    const statsMap  = await fetchStats(db, [Number(id)], start, end, wDays)
-    const zero      = { jobsCompleted: 0, hoursBilled: 0, revenue: 0, efficiency: 0 }
+    // ── Period totals (all 3 periods share same fetchStats logic) ──────────
+    const statsMap     = await fetchStats(db, [Number(id)], start, end, wDays)
+    const zero         = { jobsCompleted: 0, hoursBilled: 0, revenue: 0, efficiency: 0 }
     const periodTotals = statsMap.get(Number(id)) ?? zero
 
     return ok({
+      techId: Number(id),
+      period,
       jobs,
       pagination: {
         page,

@@ -12,7 +12,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   await ready
   const db = getPool()
   const ctx = getAuthContext(event)
-  const { store } = event.queryStringParameters ?? {}
+  const { store, search } = event.queryStringParameters ?? {}
 
   try {
     const conditions: string[] = ['s.is_active = 1']
@@ -28,6 +28,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       if (allowedIds.length === 0) return ok({ technicians: [] })
       conditions.push(`s.store_id IN (${allowedIds.map(() => '?').join(',')})`)
       params.push(...allowedIds)
+    }
+
+    if (search) {
+      conditions.push("CONCAT(s.first_name, ' ', s.last_name) LIKE ?")
+      params.push(`%${search}%`)
     }
 
     const [staffRows] = await db.query<any[]>(
@@ -63,7 +68,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const technicians = staffRows.map((r: any) => ({
       id:       Number(r.id),
-      name:     `${r.first_name} ${String(r.last_name).charAt(0)}.`,
+      name:     `${String(r.first_name).charAt(0)}. ${r.last_name}`,
       fullName: `${r.first_name} ${r.last_name}`,
       store:    String(r.store_name ?? '').replace(/^Rodz /, ''),
       role:     r.role ?? null,
