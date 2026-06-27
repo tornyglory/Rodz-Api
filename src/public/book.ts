@@ -316,7 +316,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const bookingId = bookingIns.insertId
     for (const serviceTypeId of serviceIdList) {
       await db.query(
-        `INSERT INTO booking_services (booking_id, service_type_id, created_at) VALUES (?, ?, NOW())`,
+        `INSERT INTO booking_services (booking_id, service_type_id, sort_order) VALUES (?, ?, 0)`,
         [bookingId, serviceTypeId],
       )
     }
