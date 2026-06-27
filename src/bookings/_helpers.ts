@@ -4,7 +4,7 @@ const BOOKING_SELECT = `
   SELECT
     b.id, b.booking_ref, b.customer_id, b.vehicle_id, b.hoist_id, b.assigned_staff_id,
     b.booking_date, b.booking_time, b.slot, b.drop_off_type, b.status,
-    b.customer_notes, b.staff_notes, b.created_at,
+    b.customer_notes, b.staff_notes, b.courtesy_car_requested, b.created_at,
     CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
     c.email                                AS customer_email,
     s.name                                 AS store_name,
@@ -59,6 +59,7 @@ export function buildBooking(row: any, services: any[] = []) {
     dropOffTime:     toTime(row.booking_time),
     notes:           row.customer_notes ?? null,
     staffNotes:      row.staff_notes ?? null,
+    courtesyCar:     Boolean(row.courtesy_car_requested),
     services:        services.map((s) => ({
       serviceTypeId:       s.service_type_id,
       name:                s.name,
