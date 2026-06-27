@@ -113,15 +113,19 @@ Return JSON only, no markdown:
   "spareTyreSize": string or null,
   "serviceIntervalKm": integer (manufacturer recommended km between services) or null,
   "serviceIntervalMonths": integer (manufacturer recommended months between services) or null,
-  "parseError": false
+  "parseError": false,
+  "parseErrorReason": null
 }
 
-Set "parseError": true only if you cannot determine make OR model from the description (a missing or ambiguous year is not grounds for parseError).`
+Set "parseError": true only if you cannot determine make OR model from the description (a missing or ambiguous year is not grounds for parseError).
+When parseError is true, set "parseErrorReason" to a short, plain-English sentence explaining exactly what is missing or unclear — e.g. "We couldn't identify the make or model from your description." or "Your description doesn't include enough detail to identify the vehicle."`
 
   try {
     const result = await model.generateContent(prompt)
     const parsed = JSON.parse(stripFences(result.response.text()))
-    if (!parsed.make || !parsed.model || !parsed.year) return null
+    if (!parsed.make || !parsed.model || !parsed.year) {
+      return { error: parsed.parseErrorReason ?? 'We couldn\'t identify the vehicle from your description. Please include the year, make and model — e.g. "2019 Toyota Camry hybrid".' } as any
+    }
     return {
       make:                  String(parsed.make),
       model:                 String(parsed.model),
@@ -206,8 +210,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     // ── Parse vehicle with Gemini ──────────────────────────────────────────
     const parsed = await parseVehicle(String(vehicle))
-    if (!parsed) {
-      return err422('VEHICLE_PARSE_FAILED', 'Could not identify vehicle from description. Please include the year, make and model — e.g. "2019 Toyota Camry hybrid".')
+    if (!parsed || (parsed as any).error) {
+      const reason = (parsed as any)?.error ?? 'Could not identify vehicle from your description. Please include the year, make and model — e.g. "2019 Toyota Camry hybrid".'
+      return err422('VEHICLE_PARSE_FAILED', reason)
     }
 
     // ── Find or create customer ────────────────────────────────────────────
