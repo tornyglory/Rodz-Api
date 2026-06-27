@@ -4,7 +4,7 @@ import { getPool } from '../../shared/db'
 import { getAuthContext } from '../../shared/auth'
 import { ok, forbidden, serverError } from '../../shared/errors'
 import { verifyImage, deleteCloudflareImage } from '../../shared/cloudflare'
-import { buildApiUser, toDbRole, userError, ADMIN_ROLES, VALID_ROLES, STAFF_SELECT } from './_helpers'
+import { buildApiUser, toDbRole, userError, ADMIN_ROLES, VALID_ROLES, VALID_EMPLOYMENT_TYPES, VALID_SALARY_TYPES, STAFF_SELECT } from './_helpers'
 
 const ready = bootstrap()
 
@@ -32,12 +32,41 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
-    const { firstName, lastName, email, mobile, avatarImageId, role, storeId, status } = body
+    const {
+      firstName, lastName, email, mobile, avatarImageId, role, storeId, status,
+      employmentType, salaryType, salaryAmount, superRate, weeklyHours, annualLeaveDays, employmentStartDate,
+    } = body
 
     if (firstName === undefined && lastName === undefined && email === undefined &&
         mobile === undefined && avatarImageId === undefined &&
-        role === undefined && storeId === undefined && status === undefined) {
+        role === undefined && storeId === undefined && status === undefined &&
+        employmentType === undefined && salaryType === undefined && salaryAmount === undefined &&
+        superRate === undefined && weeklyHours === undefined && annualLeaveDays === undefined &&
+        employmentStartDate === undefined) {
       return userError(422, 'VALIDATION_ERROR', 'No valid fields to update.')
+    }
+
+    if (employmentType != null && !VALID_EMPLOYMENT_TYPES.has(String(employmentType))) {
+      return userError(422, 'VALIDATION_ERROR', 'Invalid employmentType.')
+    }
+    if (salaryType != null && !VALID_SALARY_TYPES.has(String(salaryType))) {
+      return userError(422, 'VALIDATION_ERROR', 'Invalid salaryType.')
+    }
+    if (salaryAmount != null && (isNaN(Number(salaryAmount)) || Number(salaryAmount) < 0)) {
+      return userError(422, 'VALIDATION_ERROR', 'salaryAmount must be >= 0.')
+    }
+    if (superRate != null && (isNaN(Number(superRate)) || Number(superRate) < 0 || Number(superRate) > 30)) {
+      return userError(422, 'VALIDATION_ERROR', 'superRate must be between 0 and 30.')
+    }
+    if (weeklyHours != null && (isNaN(Number(weeklyHours)) || Number(weeklyHours) < 1 || Number(weeklyHours) > 60)) {
+      return userError(422, 'VALIDATION_ERROR', 'weeklyHours must be between 1 and 60.')
+    }
+    if (annualLeaveDays != null && (isNaN(Number(annualLeaveDays)) || Number(annualLeaveDays) < 0 || Number(annualLeaveDays) > 60)) {
+      return userError(422, 'VALIDATION_ERROR', 'annualLeaveDays must be between 0 and 60.')
+    }
+    if (employmentStartDate != null && employmentStartDate !== '' &&
+        !/^\d{4}-\d{2}-\d{2}$/.test(String(employmentStartDate))) {
+      return userError(422, 'VALIDATION_ERROR', 'employmentStartDate must be YYYY-MM-DD.')
     }
 
     if (role != null) {
@@ -68,6 +97,14 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
     if (role   != null) updates.push(['role',      toDbRole(String(role))])
     if (status != null) updates.push(['is_active', status === 'active' ? 1 : 0])
+
+    if (employmentType      != null) updates.push(['employment_type',       String(employmentType)])
+    if (salaryType          != null) updates.push(['salary_type',           String(salaryType)])
+    if (salaryAmount        != null) updates.push(['salary_amount',         Number(salaryAmount)])
+    if (superRate           != null) updates.push(['super_rate',            Number(superRate)])
+    if (weeklyHours         != null) updates.push(['weekly_hours',          Number(weeklyHours)])
+    if (annualLeaveDays     != null) updates.push(['annual_leave_days',     Number(annualLeaveDays)])
+    if (employmentStartDate !== undefined) updates.push(['employment_start_date', employmentStartDate || null])
 
     let newStoreId: number | null = null
     if (storeId != null) {

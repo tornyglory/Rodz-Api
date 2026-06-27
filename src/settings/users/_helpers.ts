@@ -20,9 +20,28 @@ function formatJoined(date: Date | string | null): string {
   return `${MONTHS[d.getMonth()]} ${d.getFullYear()}`
 }
 
+function toDateStr(val: Date | string | null | undefined): string | null {
+  if (!val) return null
+  return val instanceof Date ? val.toISOString().slice(0, 10) : String(val).slice(0, 10)
+}
+
+function computeMonthlyCost(r: any): number {
+  const amount = Number(r.salary_amount ?? 0)
+  const superRate = Number(r.super_rate ?? 11.5)
+  const superMult = 1 + superRate / 100
+  if (amount === 0) return 0
+  if (r.salary_type === 'hourly') {
+    const weeklyHours = Number(r.weekly_hours ?? 38)
+    return Number(((amount * weeklyHours * 52 / 12) * superMult).toFixed(2))
+  }
+  return Number(((amount / 12) * superMult).toFixed(2))
+}
+
 export const STAFF_SELECT = `
   SELECT s.id, s.store_id, s.first_name, s.last_name, s.email, s.mobile, s.role, s.is_active, s.hired_at,
-         s.avatar_image_id, st.name AS store_name
+         s.avatar_image_id, st.name AS store_name,
+         s.employment_type, s.salary_type, s.salary_amount, s.super_rate,
+         s.weekly_hours, s.annual_leave_days, s.employment_start_date
   FROM staff s
   LEFT JOIN stores st ON st.id = s.store_id`
 
@@ -43,6 +62,15 @@ export function buildApiUser(row: any) {
     storeId:     isAdmin ? null : (row.store_id ?? null) as number | null,
     status:      row.is_active ? 'active' : 'inactive',
     joined:      formatJoined(row.hired_at),
+    // Employment
+    employmentType:      (row.employment_type ?? 'full_time') as string,
+    salaryType:          (row.salary_type ?? 'annual') as string,
+    salaryAmount:        Number(row.salary_amount ?? 0),
+    superRate:           Number(row.super_rate ?? 11.5),
+    weeklyHours:         Number(row.weekly_hours ?? 38),
+    annualLeaveDays:     Number(row.annual_leave_days ?? 20),
+    employmentStartDate: toDateStr(row.employment_start_date),
+    monthlyCost:         computeMonthlyCost(row),
   }
 }
 
@@ -61,3 +89,6 @@ export const VALID_ROLES = [
   'senior_mechanic', 'qualified_mechanic', 'service_tech',
   'tyre_tech', 'receptionist', 'apprentice', 'technician',
 ]
+
+export const VALID_EMPLOYMENT_TYPES = new Set(['full_time','part_time','casual','contractor'])
+export const VALID_SALARY_TYPES     = new Set(['annual','hourly'])

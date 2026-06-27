@@ -4,7 +4,7 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { getAuthContext } from '../../shared/auth'
 import { created, forbidden, serverError } from '../../shared/errors'
-import { buildApiUser, toDbRole, userError, ADMIN_ROLES, VALID_ROLES, STAFF_SELECT } from './_helpers'
+import { buildApiUser, toDbRole, userError, ADMIN_ROLES, VALID_ROLES, VALID_EMPLOYMENT_TYPES, VALID_SALARY_TYPES, STAFF_SELECT } from './_helpers'
 
 const ready = bootstrap()
 
@@ -16,13 +16,37 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   if (ctx.role === 'technician') return forbidden()
 
   try {
-    const { firstName, lastName, email, mobile, password, role, storeId, status } = JSON.parse(event.body ?? '{}')
+    const {
+      firstName, lastName, email, mobile, password, role, storeId, status,
+      employmentType, salaryType, salaryAmount, superRate, weeklyHours, annualLeaveDays, employmentStartDate,
+    } = JSON.parse(event.body ?? '{}')
 
     if (!firstName?.trim() || !lastName?.trim() || !email?.trim() || !role || !password?.trim()) {
       return userError(422, 'VALIDATION_ERROR', 'firstName, lastName, email, role, and password are required.')
     }
     if (!VALID_ROLES.includes(role)) {
       return userError(422, 'VALIDATION_ERROR', 'Invalid role value.')
+    }
+    if (employmentType != null && !VALID_EMPLOYMENT_TYPES.has(employmentType)) {
+      return userError(422, 'VALIDATION_ERROR', 'Invalid employmentType.')
+    }
+    if (salaryType != null && !VALID_SALARY_TYPES.has(salaryType)) {
+      return userError(422, 'VALIDATION_ERROR', 'Invalid salaryType.')
+    }
+    if (salaryAmount != null && (isNaN(Number(salaryAmount)) || Number(salaryAmount) < 0)) {
+      return userError(422, 'VALIDATION_ERROR', 'salaryAmount must be >= 0.')
+    }
+    if (superRate != null && (isNaN(Number(superRate)) || Number(superRate) < 0 || Number(superRate) > 30)) {
+      return userError(422, 'VALIDATION_ERROR', 'superRate must be between 0 and 30.')
+    }
+    if (weeklyHours != null && (isNaN(Number(weeklyHours)) || Number(weeklyHours) < 1 || Number(weeklyHours) > 60)) {
+      return userError(422, 'VALIDATION_ERROR', 'weeklyHours must be between 1 and 60.')
+    }
+    if (annualLeaveDays != null && (isNaN(Number(annualLeaveDays)) || Number(annualLeaveDays) < 0 || Number(annualLeaveDays) > 60)) {
+      return userError(422, 'VALIDATION_ERROR', 'annualLeaveDays must be between 0 and 60.')
+    }
+    if (employmentStartDate != null && !/^\d{4}-\d{2}-\d{2}$/.test(employmentStartDate)) {
+      return userError(422, 'VALIDATION_ERROR', 'employmentStartDate must be YYYY-MM-DD.')
     }
 
     // store_manager cannot create admin roles or staff outside their own store
@@ -52,9 +76,20 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const hash     = await bcrypt.hash(password, 12)
 
     const [result] = await db.query<any>(
-      `INSERT INTO staff (store_id, first_name, last_name, email, mobile, role, is_active, hired_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE())`,
-      [targetStoreId, firstName.trim(), lastName.trim(), email.trim().toLowerCase(), mobile?.trim() ?? null, dbRole, isActive],
+      `INSERT INTO staff (store_id, first_name, last_name, email, mobile, role, is_active, hired_at,
+                          employment_type, salary_type, salary_amount, super_rate, weekly_hours, annual_leave_days, employment_start_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE(), ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        targetStoreId, firstName.trim(), lastName.trim(), email.trim().toLowerCase(),
+        mobile?.trim() ?? null, dbRole, isActive,
+        employmentType ?? 'full_time',
+        salaryType     ?? 'annual',
+        salaryAmount   != null ? Number(salaryAmount) : 0,
+        superRate      != null ? Number(superRate)    : 11.5,
+        weeklyHours    != null ? Number(weeklyHours)  : 38,
+        annualLeaveDays != null ? Number(annualLeaveDays) : 20,
+        employmentStartDate ?? null,
+      ],
     )
 
     await db.query(
