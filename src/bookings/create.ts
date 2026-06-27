@@ -23,7 +23,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const body = JSON.parse(event.body ?? '{}') as Record<string, any>
-    const { customerId, vehicleId, date, slot, type, store, notes, dropOffTime, services } = body
+    const { customerId, vehicleId, date, slot, type, store, notes, dropOffTime, services, courtesyCar } = body
 
     if (!customerId)                                       return validationError('customerId is required.')
     if (!vehicleId)                                        return validationError('vehicleId is required.')
@@ -88,9 +88,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const [result] = await db.query<any>(
       `INSERT INTO bookings
          (store_id, booking_ref, customer_id, vehicle_id, booking_date, booking_time,
-          slot, drop_off_type, customer_notes, status, booking_source)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'rodz_app')`,
-      [storeRow.id, generateBookingRef(), customerId, vehicleId, date, bookingTime, slot, type, notes ?? null],
+          slot, drop_off_type, customer_notes, courtesy_car_requested, status, booking_source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'rodz_app')`,
+      [storeRow.id, generateBookingRef(), customerId, vehicleId, date, bookingTime, slot, type, notes ?? null, courtesyCar ? 1 : 0],
     )
 
     const bookingId = result.insertId

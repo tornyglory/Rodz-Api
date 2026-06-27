@@ -39,14 +39,15 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
-    const { status, assignedHoistId, assignedStaffId, dropOffTime, services } = body
+    const { status, assignedHoistId, assignedStaffId, dropOffTime, services, courtesyCar } = body
 
     if (
       status === undefined &&
       assignedHoistId === undefined &&
       assignedStaffId === undefined &&
       dropOffTime === undefined &&
-      services === undefined
+      services === undefined &&
+      courtesyCar === undefined
     ) {
       return validationError('No valid fields to update.')
     }
@@ -93,6 +94,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     if (assignedHoistId !== undefined) updates.push(['hoist_id', assignedHoistId])
     if (assignedStaffId !== undefined) updates.push(['assigned_staff_id', assignedStaffId])
+    if (courtesyCar !== undefined)     updates.push(['courtesy_car_requested', courtesyCar ? 1 : 0])
 
     if (dropOffTime !== undefined) {
       updates.push(['booking_time', dropOffTime ? `${dropOffTime}:00` : '00:00:00'])
