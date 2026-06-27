@@ -243,6 +243,7 @@ Links vehicles to customers. A vehicle can have multiple owners over time; `is_c
 | `confirmed_by_staff_id` | bigint unsigned | YES | — |
 | `reminder_sent_24h` | tinyint(1) | NO | `0` |
 | `reminder_sent_1h` | tinyint(1) | NO | `0` |
+| `courtesy_car_requested` | tinyint(1) | NO | `0` |
 | `cancellation_reason` | varchar(255) | YES | — |
 | `cancelled_at` | datetime | YES | — |
 | `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |

@@ -161,7 +161,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const {
       firstName, lastName, email, mobile,
       rego, regoState, vehicle, serviceTypeIds, notes,
-      preferredDate, slot, storeId, referralSource,
+      preferredDate, slot, storeId, referralSource, courtesyCar,
     } = body
 
     // ── Validate required fields ───────────────────────────────────────────
@@ -298,8 +298,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const [bookingIns] = await db.query<any>(
       `INSERT INTO bookings
          (store_id, booking_ref, customer_id, vehicle_id, booking_date, booking_time,
-          slot, drop_off_type, booking_source, customer_notes, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'drop_off', 'website', ?, NOW(), NOW())`,
+          slot, drop_off_type, booking_source, customer_notes, courtesy_car_requested, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'drop_off', 'website', ?, ?, NOW(), NOW())`,
       [
         store.id,
         bookingRef,
@@ -309,6 +309,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         bookingTime,
         slot,
         notes ? String(notes).trim() : null,
+        courtesyCar ? 1 : 0,
       ],
     )
 
