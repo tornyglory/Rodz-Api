@@ -88,8 +88,9 @@ async function parseVehicle(description: string): Promise<ParsedVehicle | null> 
 
 Your job is to:
 1. Identify the vehicle from the description
-2. Use your knowledge of that specific make/model/year to fill in as many fields as possible — do not limit yourself to what the customer wrote. If you know the standard specs for this vehicle, use them.
-3. Only leave a field null if you genuinely cannot determine it.
+2. Always use the year the customer states — do not reject or second-guess it. Customers may own modified, imported, or kit-built vehicles that differ from standard production years.
+3. Use your knowledge of that specific make/model to fill in as many fields as possible. If you know the standard specs, use them.
+4. Only leave a field null if you genuinely cannot determine it.
 
 Description: "${description.replace(/"/g, "'")}"
 
@@ -115,12 +116,12 @@ Return JSON only, no markdown:
   "parseError": false
 }
 
-Set "parseError": true if you cannot confidently determine make, model, AND year.`
+Set "parseError": true only if you cannot determine make OR model from the description (a missing or ambiguous year is not grounds for parseError).`
 
   try {
     const result = await model.generateContent(prompt)
     const parsed = JSON.parse(stripFences(result.response.text()))
-    if (parsed.parseError || !parsed.make || !parsed.model || !parsed.year) return null
+    if (!parsed.make || !parsed.model || !parsed.year) return null
     return {
       make:                  String(parsed.make),
       model:                 String(parsed.model),
