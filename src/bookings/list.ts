@@ -14,20 +14,28 @@ const BASE_SELECT = `
   SELECT
     b.id, b.booking_ref, b.customer_id, b.vehicle_id, b.hoist_id, b.assigned_staff_id,
     b.booking_date, b.booking_time, b.slot, b.drop_off_type, b.status,
-    b.customer_notes, b.staff_notes, b.created_at,
+    b.customer_notes, b.staff_notes, b.courtesy_car_requested,
+    b.courtesy_car_id, b.courtesy_car_due_back, b.courtesy_car_returned_at,
+    b.created_at,
     CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
     c.email                                AS customer_email,
     s.name                                 AS store_name,
     h.name                                 AS hoist_name,
     CONCAT(LEFT(st.first_name, 1), '. ', st.last_name) AS tech_label,
     CONCAT(v.year, ' ', v.make, ' ', v.model) AS vehicle_label,
-    v.rego                                 AS vehicle_rego
+    v.rego                                 AS vehicle_rego,
+    CASE
+      WHEN cc.id IS NOT NULL THEN
+        CONCAT(cc.rego, ' — ', COALESCE(CONCAT(cc.year, ' '), ''), cc.make, ' ', cc.model)
+      ELSE NULL
+    END AS assigned_courtesy_car
   FROM bookings b
   JOIN customers c  ON c.id  = b.customer_id
   JOIN stores s     ON s.id  = b.store_id
-  LEFT JOIN hoists h   ON h.id  = b.hoist_id
-  LEFT JOIN staff st   ON st.id = b.assigned_staff_id
-  LEFT JOIN vehicles v ON v.id  = b.vehicle_id`
+  LEFT JOIN hoists h          ON h.id  = b.hoist_id
+  LEFT JOIN staff st          ON st.id = b.assigned_staff_id
+  LEFT JOIN vehicles v        ON v.id  = b.vehicle_id
+  LEFT JOIN courtesy_cars cc  ON cc.id = b.courtesy_car_id`
 
 // COUNT uses the same joins as BASE_SELECT so search by name/rego works correctly
 const BASE_COUNT = `

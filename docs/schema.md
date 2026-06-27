@@ -48,7 +48,7 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | [Reminders & AI](#reminders--ai) | `reminders`, `vehicle_model_profiles`, `ai_milestone_rules`, `ai_recommendations` |
 | [Vehicle chats](#vehicle-chats) | `vehicle_chats`, `vehicle_chat_messages` |
 | [Notifications](#notifications) | `notifications`, `notification_templates`, `customer_pickup_notifications` |
-| [Loan vehicles](#loan-vehicles) | `loan_vehicles`, `loan_vehicle_bookings` |
+| [Loan vehicles](#loan-vehicles) | `loan_vehicles`, `loan_vehicle_bookings`, `courtesy_cars` |
 | [Operations](#operations) | `hoists`, `business_hours`, `staff_roster`, `daily_kpi_snapshots` |
 | [Auth](#auth) | `staff_auth`, `staff_sessions`, `customer_auth`, `customer_sessions`, `customer_oauth_providers` |
 | [Permissions](#permissions) | `permissions`, `role_permissions`, `staff_permission_overrides`, `staff_store_access` |
@@ -244,6 +244,10 @@ Links vehicles to customers. A vehicle can have multiple owners over time; `is_c
 | `reminder_sent_24h` | tinyint(1) | NO | `0` |
 | `reminder_sent_1h` | tinyint(1) | NO | `0` |
 | `courtesy_car_requested` | tinyint(1) | NO | `0` |
+| `courtesy_car_id` | int | YES | — |
+| `courtesy_car_due_back` | date | YES | — |
+| `courtesy_car_assigned_at` | timestamp | YES | — |
+| `courtesy_car_returned_at` | timestamp | YES | — |
 | `cancellation_reason` | varchar(255) | YES | — |
 | `cancelled_at` | datetime | YES | — |
 | `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
@@ -1097,6 +1101,29 @@ Deduplication log for vehicle-ready emails. One row per job per channel — prev
 Tracks when a loan car is issued and returned for a booking.
 
 Key columns: `loan_vehicle_id`, `customer_id`, `booking_id`, `expected_out`, `expected_return`, `actual_out`, `actual_return`, `odometer_out`, `odometer_in`, `fuel_level_out`, `fuel_level_in`
+
+---
+
+### `courtesy_cars`
+
+Workshop-owned loan cars managed through Settings → Courtesy Cars. Assignment is tracked directly on the `bookings` table via `courtesy_car_id`.
+
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `id` | int | NO | — |
+| `rego` | varchar(20) | NO | — |
+| `make` | varchar(50) | NO | — |
+| `model` | varchar(50) | NO | — |
+| `year` | smallint | YES | — |
+| `color` | varchar(30) | YES | — |
+| `status` | enum | NO | `active` |
+| `store_id` | int | YES | — |
+| `created_at` | timestamp | NO | `NOW()` |
+| `updated_at` | timestamp | NO | `NOW()` |
+
+**`status` enum:** `active`, `inactive`
+
+`store_id` is `NULL` for cars shared across all stores. A car is considered "currently out" when a booking references it via `courtesy_car_id` and that booking's `courtesy_car_returned_at IS NULL`.
 
 ---
 

@@ -39,7 +39,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
-    const { status, assignedHoistId, assignedStaffId, dropOffTime, services, courtesyCar } = body
+    const { status, assignedHoistId, assignedStaffId, dropOffTime, services, courtesyCar,
+            courtesyCarId, courtesyCarDueBack, courtesyCarReturned } = body
 
     if (
       status === undefined &&
@@ -47,7 +48,10 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       assignedStaffId === undefined &&
       dropOffTime === undefined &&
       services === undefined &&
-      courtesyCar === undefined
+      courtesyCar === undefined &&
+      courtesyCarId === undefined &&
+      courtesyCarDueBack === undefined &&
+      courtesyCarReturned === undefined
     ) {
       return validationError('No valid fields to update.')
     }
@@ -100,10 +104,33 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       updates.push(['booking_time', dropOffTime ? `${dropOffTime}:00` : '00:00:00'])
     }
 
+    // ── Courtesy car assignment ────────────────────────────────────────────
+    if (courtesyCarId !== undefined) {
+      if (courtesyCarId === null) {
+        updates.push(['courtesy_car_id', null])
+        updates.push(['courtesy_car_due_back', null])
+        updates.push(['courtesy_car_assigned_at', null])
+      } else {
+        updates.push(['courtesy_car_id', courtesyCarId])
+        updates.push(['courtesy_car_due_back', courtesyCarDueBack ?? null])
+        updates.push(['courtesy_car_assigned_at', new Date()])
+      }
+    } else if (courtesyCarDueBack !== undefined) {
+      updates.push(['courtesy_car_due_back', courtesyCarDueBack])
+    }
+
     if (updates.length > 0) {
       const set    = updates.map(([k]) => `${k} = ?`).join(', ')
       const values = [...updates.map(([, v]) => v), id]
       await db.query<any>(`UPDATE bookings SET ${set} WHERE id = ?`, values)
+    }
+
+    // ── Mark courtesy car returned ─────────────────────────────────────────
+    if (courtesyCarReturned === true) {
+      await db.query(
+        'UPDATE bookings SET courtesy_car_returned_at = NOW() WHERE id = ? AND courtesy_car_returned_at IS NULL',
+        [id],
+      )
     }
 
     // ── Replace services if provided ───────────────────────────────────────

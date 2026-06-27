@@ -693,6 +693,52 @@ export class RodzApiStack2 extends Stack {
       authorizer,
     })
 
+    // ── Settings — Courtesy Cars ────────────────────────────────────────────
+
+    const courtesyCarsListFn = new LambdaFn(this, 'CourtesyCarsList', {
+      entry: src('settings/courtesy-cars/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const courtesyCarsCreateFn = new LambdaFn(this, 'CourtesyCarsCreate', {
+      entry: src('settings/courtesy-cars/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const courtesyCarsUpdateFn = new LambdaFn(this, 'CourtesyCarsUpdate', {
+      entry: src('settings/courtesy-cars/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const courtesyCarsDeleteFn = new LambdaFn(this, 'CourtesyCarsDelete', {
+      entry: src('settings/courtesy-cars/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CourtesyCarsListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CourtesyCarsListInt', courtesyCarsListFn),
+      routeKey: HttpRouteKey.with('/settings/courtesy-cars', HttpMethod.GET),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'CourtesyCarsCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CourtesyCarsCreateInt', courtesyCarsCreateFn),
+      routeKey: HttpRouteKey.with('/settings/courtesy-cars', HttpMethod.POST),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'CourtesyCarsUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CourtesyCarsUpdateInt', courtesyCarsUpdateFn),
+      routeKey: HttpRouteKey.with('/settings/courtesy-cars/{id}', HttpMethod.PATCH),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'CourtesyCarsDeleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CourtesyCarsDeleteInt', courtesyCarsDeleteFn),
+      routeKey: HttpRouteKey.with('/settings/courtesy-cars/{id}', HttpMethod.DELETE),
+      authorizer,
+    })
+
     // ── Capacity ────────────────────────────────────────────────────────────
 
     const capacityFn = new LambdaFn(this, 'Capacity', {
