@@ -590,6 +590,109 @@ export class RodzApiStack2 extends Stack {
       authorizer,
     })
 
+    // ── Reports (activity + P&L + GST) ─────────────────────────────────────
+
+    const reportJobsFn = new LambdaFn(this, 'ReportJobs', {
+      entry: src('reports/jobs.ts'), vpc, sharedEnv,
+    }).fn
+
+    const reportBookingsFn = new LambdaFn(this, 'ReportBookings', {
+      entry: src('reports/bookings.ts'), vpc, sharedEnv,
+    }).fn
+
+    const reportHoistsFn = new LambdaFn(this, 'ReportHoists', {
+      entry: src('reports/hoists.ts'), vpc, sharedEnv,
+    }).fn
+
+    const reportPlFn = new LambdaFn(this, 'ReportPL', {
+      entry: src('reports/pl.ts'), vpc, sharedEnv,
+    }).fn
+
+    const reportGstFn = new LambdaFn(this, 'ReportGST', {
+      entry: src('reports/gst.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'ReportJobsRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('ReportJobsInt', reportJobsFn),
+      routeKey: HttpRouteKey.with('/reports/jobs', HttpMethod.GET),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'ReportBookingsRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('ReportBookingsInt', reportBookingsFn),
+      routeKey: HttpRouteKey.with('/reports/bookings', HttpMethod.GET),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'ReportHoistsRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('ReportHoistsInt', reportHoistsFn),
+      routeKey: HttpRouteKey.with('/reports/hoists', HttpMethod.GET),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'ReportPLRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('ReportPLInt', reportPlFn),
+      routeKey: HttpRouteKey.with('/reports/pl', HttpMethod.GET),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'ReportGSTRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('ReportGSTInt', reportGstFn),
+      routeKey: HttpRouteKey.with('/reports/gst', HttpMethod.GET),
+      authorizer,
+    })
+
+    // ── Settings — Overheads ────────────────────────────────────────────────
+
+    const overheadsListFn = new LambdaFn(this, 'OverheadsList', {
+      entry: src('settings/overheads/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const overheadsCreateFn = new LambdaFn(this, 'OverheadsCreate', {
+      entry: src('settings/overheads/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    const overheadsUpdateFn = new LambdaFn(this, 'OverheadsUpdate', {
+      entry: src('settings/overheads/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const overheadsDeleteFn = new LambdaFn(this, 'OverheadsDelete', {
+      entry: src('settings/overheads/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'OverheadsListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('OverheadsListInt', overheadsListFn),
+      routeKey: HttpRouteKey.with('/settings/overheads', HttpMethod.GET),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'OverheadsCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('OverheadsCreateInt', overheadsCreateFn),
+      routeKey: HttpRouteKey.with('/settings/overheads', HttpMethod.POST),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'OverheadsUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('OverheadsUpdateInt', overheadsUpdateFn),
+      routeKey: HttpRouteKey.with('/settings/overheads/{id}', HttpMethod.PATCH),
+      authorizer,
+    })
+
+    new HttpRoute(this, 'OverheadsDeleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('OverheadsDeleteInt', overheadsDeleteFn),
+      routeKey: HttpRouteKey.with('/settings/overheads/{id}', HttpMethod.DELETE),
+      authorizer,
+    })
+
     // ── Capacity ────────────────────────────────────────────────────────────
 
     const capacityFn = new LambdaFn(this, 'Capacity', {
