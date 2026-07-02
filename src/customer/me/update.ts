@@ -1,0 +1,68 @@
+import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
+import { bootstrap } from '../../shared/bootstrap'
+import { getPool } from '../../shared/db'
+import { ok, validationError, notFound, serverError } from '../../shared/errors'
+import { getCustomerContext, buildCustomer, buildVehicleSummary } from '../_helpers'
+
+const ready = bootstrap()
+
+const VALID_STATES = new Set(['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'])
+
+export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
+  await ready
+  const db  = getPool()
+  const ctx = getCustomerContext(event)
+
+  try {
+    const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
+    const {
+      firstName, lastName, mobile, suburb, state, postcode, dateOfBirth, marketingOptIn, smsOptIn,
+    } = body
+
+    if (state != null && !VALID_STATES.has(String(state).toUpperCase())) {
+      return validationError('Invalid state.')
+    }
+    if (dateOfBirth != null && !/^\d{4}-\d{2}-\d{2}$/.test(String(dateOfBirth))) {
+      return validationError('dateOfBirth must be in YYYY-MM-DD format.')
+    }
+
+    const sets: string[] = ['updated_at = NOW()']
+    const params: any[]  = []
+
+    if (firstName     != null) { sets.push('first_name = ?');       params.push(String(firstName).trim()) }
+    if (lastName      != null) { sets.push('last_name = ?');        params.push(String(lastName).trim()) }
+    if (mobile        != null) { sets.push('mobile = ?');           params.push(String(mobile).trim()) }
+    if (suburb        != null) { sets.push('suburb = ?');           params.push(String(suburb).trim() || null) }
+    if (state         != null) { sets.push('state = ?');            params.push(String(state).trim().toUpperCase()) }
+    if (postcode      != null) { sets.push('postcode = ?');         params.push(String(postcode).trim() || null) }
+    if (dateOfBirth   != null) { sets.push('date_of_birth = ?');    params.push(String(dateOfBirth) || null) }
+    if (marketingOptIn != null) { sets.push('marketing_opt_in = ?'); params.push(marketingOptIn ? 1 : 0) }
+    if (smsOptIn      != null) { sets.push('sms_opt_in = ?');       params.push(smsOptIn ? 1 : 0) }
+
+    if (params.length > 0) {
+      params.push(ctx.customerId)
+      await db.query(`UPDATE customers SET ${sets.join(', ')} WHERE id = ?`, params)
+    }
+
+    const [[customerRow]] = await db.query<any[]>(
+      `SELECT id, first_name, last_name, email, mobile, suburb, state, postcode,
+              date_of_birth, marketing_opt_in, sms_opt_in, avatar_image_id, created_at
+       FROM customers WHERE id = ? AND is_active = 1 LIMIT 1`,
+      [ctx.customerId],
+    )
+    if (!customerRow) return notFound('Customer')
+
+    const [vehicleRows] = await db.query<any[]>(
+      `SELECT v.id, v.rego, v.make, v.model, v.year, v.avatar_image_id, v.cover_image_id, v.logbook_token
+       FROM vehicles v
+       JOIN vehicle_owners vo ON vo.vehicle_id = v.id
+       WHERE vo.customer_id = ? AND vo.is_current = 1 AND v.is_active = 1
+       ORDER BY v.make, v.model`,
+      [ctx.customerId],
+    )
+
+    return ok(buildCustomer(customerRow, vehicleRows.map(buildVehicleSummary)))
+  } catch (err) {
+    return serverError(err)
+  }
+}

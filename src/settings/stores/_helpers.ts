@@ -3,7 +3,7 @@ import { buildHoist } from '../../hoists/_helpers'
 
 const HOIST_SELECT_FOR_STORE = `
   SELECT
-    h.id, h.name, h.hoist_type, h.assigned_staff_id, h.service_roles, h.store_id,
+    h.id, h.name, h.hoist_type, h.is_active, h.assigned_staff_id, h.service_roles, h.store_id,
     s.name AS store_name,
     CONCAT(st.first_name, ' ', LEFT(st.last_name, 1), '.') AS tech_label,
     COALESCE(jstat.has_in_progress, 0)       AS has_in_progress,
@@ -27,12 +27,12 @@ const HOIST_SELECT_FOR_STORE = `
     WHERE b.booking_date = CURDATE()
     GROUP BY j.hoist_id
   ) jstat ON jstat.hoist_id = h.id
-  WHERE h.is_active = 1 AND h.store_id = ?
+  WHERE h.store_id = ?
   ORDER BY h.id`
 
 export async function buildStore(db: mysql.Pool, storeId: number | string) {
   const [[store]] = await db.query<any[]>(
-    'SELECT id, name, address_line1, suburb, state, postcode, phone FROM stores WHERE id = ? LIMIT 1',
+    'SELECT id, name, address_line1, suburb, state, postcode, phone, closure_dates FROM stores WHERE id = ? LIMIT 1',
     [storeId],
   )
   if (!store) return null
@@ -45,11 +45,16 @@ export async function buildStore(db: mysql.Pool, storeId: number | string) {
 
   const [hoistRows] = await db.query<any[]>(HOIST_SELECT_FOR_STORE, [storeId])
 
+  const closureDates: string[] = store.closure_dates
+    ? (typeof store.closure_dates === 'string' ? JSON.parse(store.closure_dates) : store.closure_dates)
+    : []
+
   return {
-    id:      store.id as number,
-    name:    store.name as string,
-    address: addressParts.join(', '),
-    phone:   (store.phone ?? '') as string,
-    hoists:  hoistRows.map(buildHoist),
+    id:           store.id as number,
+    name:         store.name as string,
+    address:      addressParts.join(', '),
+    phone:        (store.phone ?? '') as string,
+    closureDates,
+    hoists:       hoistRows.map(buildHoist),
   }
 }

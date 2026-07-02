@@ -23,7 +23,7 @@ const BOOKING_SELECT = `
   JOIN customers c  ON c.id  = b.customer_id
   JOIN stores s     ON s.id  = b.store_id
   LEFT JOIN hoists h          ON h.id  = b.hoist_id
-  LEFT JOIN staff st          ON st.id = b.assigned_staff_id
+  LEFT JOIN staff st          ON st.id = COALESCE(b.assigned_staff_id, h.assigned_staff_id)
   LEFT JOIN vehicles v        ON v.id  = b.vehicle_id
   LEFT JOIN courtesy_cars cc  ON cc.id = b.courtesy_car_id`
 

@@ -48,7 +48,7 @@ export function buildHoist(row: any) {
     status = 'completed'
   }
 
-  return {
+  const base: Record<string, unknown> = {
     id:              row.id,
     label:           row.name,
     store:           (row.store_name ?? '').replace(/^Rodz /, ''),
@@ -59,6 +59,8 @@ export function buildHoist(row: any) {
     assignedStaffId: row.assigned_staff_id ?? null,
     status,
   }
+  if (row.is_active != null) base.isActive = Boolean(row.is_active)
+  return base
 }
 
 export function hoistError(statusCode: number, code: string, message: string) {

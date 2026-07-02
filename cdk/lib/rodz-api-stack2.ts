@@ -8,7 +8,7 @@ import * as sqs from 'aws-cdk-lib/aws-sqs'
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs'
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources'
 import { HttpApi, HttpRoute, HttpRouteKey, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2'
-import { HttpLambdaAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers'
+import { HttpLambdaAuthorizer, HttpLambdaResponseType } from 'aws-cdk-lib/aws-apigatewayv2-authorizers'
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations'
 import { LambdaFn } from './constructs/lambda-fn'
 
@@ -42,6 +42,7 @@ export class RodzApiStack2 extends Stack {
       BOOKING_API_KEY:       process.env.BOOKING_API_KEY       ?? '',
       ZELLER_API_KEY:        process.env.ZELLER_API_KEY        ?? '',
       ZELLER_WEBHOOK_SECRET: process.env.ZELLER_WEBHOOK_SECRET ?? '',
+      WS_API_URL:            process.env.WS_API_URL            ?? '',
     }
 
     const src = (p: string) => path.join(__dirname, '../../src', p)
@@ -103,6 +104,16 @@ export class RodzApiStack2 extends Stack {
       httpApi,
       integration: new HttpLambdaIntegration('PublicAvailabilityInt', publicAvailabilityFn),
       routeKey: HttpRouteKey.with('/public/availability', HttpMethod.GET),
+    })
+
+    const publicBlocksFn = new LambdaFn(this, 'PublicBlocks', {
+      entry: src('public/blocks.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'PublicBlocksRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('PublicBlocksInt', publicBlocksFn),
+      routeKey: HttpRouteKey.with('/public/blocks', HttpMethod.GET),
     })
 
     const publicServicesFn = new LambdaFn(this, 'PublicServices', {
@@ -820,6 +831,235 @@ export class RodzApiStack2 extends Stack {
       integration: new HttpLambdaIntegration('VehicleNotesDeleteInt', vehicleNotesDeleteFn),
       routeKey: HttpRouteKey.with('/vehicles/{id}/notes/{noteId}', HttpMethod.DELETE),
       authorizer,
+    })
+
+    // ── Customer account — authorizer ───────────────────────────────────────
+
+    const customerAuthorizerFn = new LambdaFn(this, 'CustomerAuthorizer', {
+      entry: src('customer/authorizer/handler.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerAuthorizer = new HttpLambdaAuthorizer('CustomerJwtAuthorizer', customerAuthorizerFn, {
+      responseTypes: [HttpLambdaResponseType.SIMPLE],
+      identitySource: ['$request.header.Authorization'],
+      resultsCacheTtl: Duration.seconds(0),
+    })
+
+    // ── Customer auth (public — no authorizer) ──────────────────────────────
+
+    const customerSignupFn = new LambdaFn(this, 'CustomerSignup', {
+      entry: src('customer/auth/signup.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerLoginFn = new LambdaFn(this, 'CustomerLogin', {
+      entry: src('customer/auth/login.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerLogoutFn = new LambdaFn(this, 'CustomerLogout', {
+      entry: src('customer/auth/logout.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerMagicLinkRequestFn = new LambdaFn(this, 'CustomerMagicLinkRequest', {
+      entry: src('customer/auth/magic-link-request.ts'), vpc, sharedEnv, needsSes: true,
+    }).fn
+
+    const customerMagicLinkRedeemFn = new LambdaFn(this, 'CustomerMagicLinkRedeem', {
+      entry: src('customer/auth/magic-link-redeem.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerSignupRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerSignupInt', customerSignupFn),
+      routeKey: HttpRouteKey.with('/c/auth/signup', HttpMethod.POST),
+    })
+
+    new HttpRoute(this, 'CustomerLoginRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerLoginInt', customerLoginFn),
+      routeKey: HttpRouteKey.with('/c/auth/login', HttpMethod.POST),
+    })
+
+    new HttpRoute(this, 'CustomerLogoutRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerLogoutInt', customerLogoutFn),
+      routeKey: HttpRouteKey.with('/c/auth/logout', HttpMethod.POST),
+    })
+
+    new HttpRoute(this, 'CustomerMagicLinkRequestRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerMagicLinkRequestInt', customerMagicLinkRequestFn),
+      routeKey: HttpRouteKey.with('/c/auth/magic-link', HttpMethod.POST),
+    })
+
+    new HttpRoute(this, 'CustomerMagicLinkRedeemRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerMagicLinkRedeemInt', customerMagicLinkRedeemFn),
+      routeKey: HttpRouteKey.with('/c/auth/magic-link/{token}', HttpMethod.GET),
+    })
+
+    // ── Customer me (authenticated) ─────────────────────────────────────────
+
+    const customerMeGetFn = new LambdaFn(this, 'CustomerMe', {
+      entry: src('customer/me/get.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerMeUpdateFn = new LambdaFn(this, 'CustomerMeUpdate', {
+      entry: src('customer/me/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerMePasswordFn = new LambdaFn(this, 'CustomerMePassword', {
+      entry: src('customer/me/password.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerAvatarUploadUrlFn = new LambdaFn(this, 'CustomerAvatarUploadUrl', {
+      entry: src('customer/me/avatar-upload-url.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerAvatarUpdateFn = new LambdaFn(this, 'CustomerAvatarUpdate', {
+      entry: src('customer/me/avatar-update.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerMeGetRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerMeGetInt', customerMeGetFn),
+      routeKey: HttpRouteKey.with('/c/me', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerMeUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerMeUpdateInt', customerMeUpdateFn),
+      routeKey: HttpRouteKey.with('/c/me', HttpMethod.PATCH),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerMePasswordRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerMePasswordInt', customerMePasswordFn),
+      routeKey: HttpRouteKey.with('/c/me/password', HttpMethod.PATCH),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerAvatarUploadUrlRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerAvatarUploadUrlInt', customerAvatarUploadUrlFn),
+      routeKey: HttpRouteKey.with('/c/me/avatar-upload-url', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerAvatarUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerAvatarUpdateInt', customerAvatarUpdateFn),
+      routeKey: HttpRouteKey.with('/c/me/avatar', HttpMethod.PATCH),
+      authorizer: customerAuthorizer,
+    })
+
+    // ── Customer vehicles (authenticated) ───────────────────────────────────
+
+    const customerVehicleListFn = new LambdaFn(this, 'CustomerVehicleList', {
+      entry: src('customer/vehicles/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerVehicleCreateFn = new LambdaFn(this, 'CustomerVehicleCreate', {
+      entry: src('customer/vehicles/create.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(30),
+    }).fn
+
+    const customerVehicleGetFn = new LambdaFn(this, 'CustomerVehicleGet', {
+      entry: src('customer/vehicles/get.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerVehicleUpdateFn = new LambdaFn(this, 'CustomerVehicleUpdate', {
+      entry: src('customer/vehicles/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerVehicleAvatarUploadUrlFn = new LambdaFn(this, 'CustomerVehicleAvatarUploadUrl', {
+      entry: src('customer/vehicles/avatar-upload-url.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerVehicleAvatarUpdateFn = new LambdaFn(this, 'CustomerVehicleAvatarUpdate', {
+      entry: src('customer/vehicles/avatar-update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerVehicleCoverUploadUrlFn = new LambdaFn(this, 'CustomerVehicleCoverUploadUrl', {
+      entry: src('customer/vehicles/cover-upload-url.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerVehicleCoverUpdateFn = new LambdaFn(this, 'CustomerVehicleCoverUpdate', {
+      entry: src('customer/vehicles/cover-update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerVehicleLogbookFn = new LambdaFn(this, 'CustomerVehicleLogbook', {
+      entry: src('customer/vehicles/logbook.ts'), vpc, sharedEnv,
+    }).fn
+
+    // Allow vehicle create to invoke AI engines
+    aiRecommendationFn.grantInvoke(customerVehicleCreateFn)
+    vehicleProfileFn.grantInvoke(customerVehicleCreateFn)
+    customerVehicleCreateFn.addEnvironment('AI_RECOMMENDATION_FN_ARN', aiRecommendationFn.functionArn)
+    customerVehicleCreateFn.addEnvironment('VEHICLE_PROFILE_FN_ARN', vehicleProfileFn.functionArn)
+
+    new HttpRoute(this, 'CustomerVehicleListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleListInt', customerVehicleListFn),
+      routeKey: HttpRouteKey.with('/c/vehicles', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerVehicleCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleCreateInt', customerVehicleCreateFn),
+      routeKey: HttpRouteKey.with('/c/vehicles', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerVehicleGetRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleGetInt', customerVehicleGetFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerVehicleUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleUpdateInt', customerVehicleUpdateFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}', HttpMethod.PATCH),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerVehicleAvatarUploadUrlRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleAvatarUploadUrlInt', customerVehicleAvatarUploadUrlFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/avatar-upload-url', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerVehicleAvatarUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleAvatarUpdateInt', customerVehicleAvatarUpdateFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/avatar', HttpMethod.PATCH),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerVehicleCoverUploadUrlRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleCoverUploadUrlInt', customerVehicleCoverUploadUrlFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/cover-upload-url', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerVehicleCoverUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleCoverUpdateInt', customerVehicleCoverUpdateFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/cover', HttpMethod.PATCH),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerVehicleLogbookRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleLogbookInt', customerVehicleLogbookFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/logbook', HttpMethod.GET),
+      authorizer: customerAuthorizer,
     })
   }
 }

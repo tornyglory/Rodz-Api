@@ -78,10 +78,16 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | `google_business_id` | varchar(60) | YES | — |
 | `google_maps_url` | varchar(500) | YES | — |
 | `timezone` | varchar(50) | NO | `Australia/Melbourne` |
+| `block_times` | json | YES | — |
+| `closure_dates` | json | YES | — |
 | `is_active` | tinyint(1) | NO | `1` |
 | `opened_date` | date | YES | — |
 | `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
 | `updated_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+`block_times` is a JSON array of `"HH:MM"` strings — e.g. `["08:00","10:00","13:00","15:00"]`. `NULL` means system default. `closure_dates` is a JSON array of `"YYYY-MM-DD"` strings for emergency one-off closures — e.g. `["2026-07-04","2026-12-25"]`. Both `GET /public/blocks` and `GET /public/availability` treat these dates as closed regardless of business hours.
+
+`block_times` is a JSON array of `"HH:MM"` strings — e.g. `["08:00","10:00","13:00","15:00"]`. `NULL` means the store uses the system default `["08:00","10:00","13:00","15:00"]`. Each entry is a bookable time block on the website. Capacity per block = active hoist count.
 
 ---
 
