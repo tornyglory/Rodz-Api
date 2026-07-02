@@ -5,7 +5,10 @@ import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
 import { created, serverError } from '../shared/errors'
 import { generateBookingRef } from '../bookings/_helpers'
+import { generateJobNumber } from '../jobs/_helpers'
+import { DEFAULT_BLOCK_TIMES } from './blocks'
 import { sendBookingReceivedEmail } from '../shared/emailTemplates'
+import { notifyStore } from '../shared/staffNotifications'
 
 const lambdaClient = new LambdaClient({ region: process.env.REGION ?? 'ap-southeast-2' })
 
@@ -166,13 +169,16 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const {
       firstName, lastName, email, mobile,
       rego, regoState, vehicle, serviceTypeIds, notes,
-      preferredDate, slot, storeId, referralSource, courtesyCar,
+      preferredDate, slot, time, storeId, referralSource, courtesyCar,
     } = body
 
     // ── Validate required fields ───────────────────────────────────────────
     if (!firstName || !lastName || !email || !mobile || !rego || !regoState ||
-        !vehicle || !preferredDate || !slot || !storeId) {
+        !vehicle || !preferredDate || !storeId) {
       return err422('VALIDATION_ERROR', 'Required field missing.')
+    }
+    if (!slot && !time) {
+      return err422('VALIDATION_ERROR', 'Either slot or time is required.')
     }
 
     if (!Array.isArray(serviceTypeIds) || serviceTypeIds.length === 0) {
@@ -184,8 +190,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!VALID_STATES.has(regoStateStr)) {
       return err422('VALIDATION_ERROR', 'Invalid state. Must be one of: VIC, NSW, QLD, SA, WA, TAS, NT, ACT.')
     }
-    if (!VALID_SLOTS.has(String(slot))) {
+    if (slot && !VALID_SLOTS.has(String(slot))) {
       return err422('VALIDATION_ERROR', 'slot must be "morning" or "afternoon".')
+    }
+    if (time && !/^\d{2}:\d{2}$/.test(String(time))) {
+      return err422('VALIDATION_ERROR', 'time must be in HH:MM format.')
     }
     const bookingDate = String(preferredDate)
     if (!/^\d{4}-\d{2}-\d{2}$/.test(bookingDate) || bookingDate < new Date().toISOString().slice(0, 10)) {
@@ -205,7 +214,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     // ── Verify store ───────────────────────────────────────────────────────
-    const [[store]] = await db.query<any[]>('SELECT id, name FROM stores WHERE id = ? LIMIT 1', [Number(storeId)])
+    const [[store]] = await db.query<any[]>('SELECT id, name, block_times FROM stores WHERE id = ? LIMIT 1', [Number(storeId)])
     if (!store) return err422('VALIDATION_ERROR', 'Invalid storeId.')
 
     // ── Parse vehicle with Gemini ──────────────────────────────────────────
@@ -297,26 +306,79 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       void invokeVehicleProfileEngine(existingVehicle.id)
     }
 
+    // ── Resolve booking time and slot ──────────────────────────────────────
+    let resolvedSlot: string
+    let resolvedTime: string
+    let assignedHoistId: number | null = null
+
+    if (time) {
+      const timeStr = String(time)
+      const storeBlockTimes: string[] = store.block_times
+        ? (typeof store.block_times === 'string' ? JSON.parse(store.block_times) : store.block_times)
+        : DEFAULT_BLOCK_TIMES
+
+      if (!storeBlockTimes.includes(timeStr)) {
+        return err422('VALIDATION_ERROR', `time must be one of: ${storeBlockTimes.join(', ')}.`)
+      }
+
+      const bookingTimeFormatted = `${timeStr}:00`
+
+      // Check availability
+      const [[{ booked }]] = await db.query<any[]>(
+        `SELECT COUNT(*) AS booked FROM bookings
+         WHERE store_id = ? AND booking_date = ? AND booking_time = ?
+           AND cancelled_at IS NULL AND status NOT IN ('rejected','cancelled')`,
+        [store.id, bookingDate, bookingTimeFormatted],
+      )
+      const [[{ hoist_count }]] = await db.query<any[]>(
+        'SELECT COUNT(*) AS hoist_count FROM hoists WHERE store_id = ? AND is_active = 1',
+        [store.id],
+      )
+      if (Number(booked) >= Number(hoist_count)) {
+        return err422('SLOT_UNAVAILABLE', 'This time slot is no longer available. Please choose another.')
+      }
+
+      // Find first free hoist at this time
+      const [[freeHoist]] = await db.query<any[]>(
+        `SELECT id FROM hoists WHERE store_id = ? AND is_active = 1
+           AND id NOT IN (
+             SELECT hoist_id FROM bookings
+             WHERE store_id = ? AND booking_date = ? AND booking_time = ?
+               AND cancelled_at IS NULL AND status NOT IN ('rejected','cancelled')
+               AND hoist_id IS NOT NULL
+           )
+         ORDER BY id LIMIT 1`,
+        [store.id, store.id, bookingDate, bookingTimeFormatted],
+      )
+      assignedHoistId = freeHoist?.id ?? null
+
+      const [hours] = timeStr.split(':').map(Number)
+      resolvedSlot = hours < 12 ? 'morning' : 'afternoon'
+      resolvedTime = bookingTimeFormatted
+    } else {
+      resolvedSlot = String(slot)
+      resolvedTime = resolvedSlot === 'morning' ? '09:00:00' : '13:00:00'
+    }
+
     // ── Create booking ─────────────────────────────────────────────────────
-    const bookingRef  = generateBookingRef()
-    const bookingTime = slot === 'morning' ? '09:00:00' : '13:00:00'
+    const bookingRef = generateBookingRef()
 
     const [bookingIns] = await db.query<any>(
-      `INSERT INTO bookings
-         (store_id, booking_ref, customer_id, vehicle_id, booking_date, booking_time,
-          slot, drop_off_type, booking_source, customer_notes, courtesy_car_requested, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'drop_off', 'website', ?, ?, NOW(), NOW())`,
-      [
-        store.id,
-        bookingRef,
-        customer.id,
-        existingVehicle.id,
-        bookingDate,
-        bookingTime,
-        slot,
-        notes ? String(notes).trim() : null,
-        courtesyCar ? 1 : 0,
-      ],
+      time
+        ? `INSERT INTO bookings
+             (store_id, booking_ref, customer_id, vehicle_id, booking_date, booking_time,
+              slot, hoist_id, drop_off_type, booking_source, customer_notes, courtesy_car_requested,
+              status, confirmed_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'drop_off', 'website', ?, ?, 'confirmed', NOW(), NOW(), NOW())`
+        : `INSERT INTO bookings
+             (store_id, booking_ref, customer_id, vehicle_id, booking_date, booking_time,
+              slot, drop_off_type, booking_source, customer_notes, courtesy_car_requested, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'drop_off', 'website', ?, ?, NOW(), NOW())`,
+      time
+        ? [store.id, bookingRef, customer.id, existingVehicle.id, bookingDate, resolvedTime,
+           resolvedSlot, assignedHoistId, notes ? String(notes).trim() : null, courtesyCar ? 1 : 0]
+        : [store.id, bookingRef, customer.id, existingVehicle.id, bookingDate, resolvedTime,
+           resolvedSlot, notes ? String(notes).trim() : null, courtesyCar ? 1 : 0],
     )
 
     // ── Link service types to booking ──────────────────────────────────────
@@ -328,11 +390,42 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       )
     }
 
-    // ── Send confirmation email (non-fatal) ────────────────────────────────
+    // ── Auto-create job for slot-time bookings ──────────────────────────────
+    if (time && assignedHoistId) {
+      const [[{ maxOrder }]] = await db.query<any[]>(
+        `SELECT COALESCE(MAX(sort_order), 0) + 1 AS maxOrder
+         FROM service_jobs WHERE hoist_id = ? AND status NOT IN ('completed','invoiced','cancelled')`,
+        [assignedHoistId],
+      )
+      const jobNumber = await generateJobNumber(db)
+      await db.query(
+        `INSERT INTO service_jobs
+           (job_number, booking_id, hoist_id, store_id, customer_id, vehicle_id,
+            slot, scheduled_time, sort_order, customer_notes, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')`,
+        [
+          jobNumber, bookingId, assignedHoistId, store.id,
+          customer.id, existingVehicle.id,
+          resolvedSlot, resolvedTime, maxOrder,
+          notes ? String(notes).trim() : null,
+        ],
+      )
+    }
+
+    // ── Notify staff ───────────────────────────────────────────────────────
     const vehicleLabel = `${parsed.year} ${parsed.make} ${parsed.model}`
+    const customerName = `${String(firstName).trim()} ${String(lastName).trim()}`
+    await notifyStore(db, store.id, {
+      type:      'booking_received',
+      title:     'New Booking',
+      body:      `${customerName} — ${vehicleLabel} — ${bookingDate} (${resolvedSlot === 'morning' ? 'Morning' : 'Afternoon'})`,
+      bookingId,
+    }).catch(() => {})
+
+    // ── Send confirmation email (non-fatal) ────────────────────────────────
     await sendBookingReceivedEmail(db, {
       customerEmail: emailStr,
-      customer:      `${String(firstName).trim()} ${String(lastName).trim()}`,
+      customer:      customerName,
       bookingRef,
       date:          bookingDate,
       slot:          String(slot),
@@ -345,12 +438,16 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     return created({
       bookingReference: bookingRef,
-      customerName: `${String(firstName).trim()} ${String(lastName).trim()}`,
+      customerName,
       vehicle:      vehicleLabel,
       store:        store.name,
       preferredDate: bookingDate,
-      slot,
-      message: `Thanks ${String(firstName).trim()} — we'll be in touch to confirm your booking.`,
+      slot:         resolvedSlot,
+      time:         time ? String(time) : null,
+      status:       time ? 'confirmed' : 'pending',
+      message:      time
+        ? `Thanks ${String(firstName).trim()} — your booking is confirmed for ${bookingDate} at ${String(time)}.`
+        : `Thanks ${String(firstName).trim()} — we'll be in touch to confirm your booking.`,
     })
   } catch (err) {
     return serverError(err)

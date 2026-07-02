@@ -15,8 +15,10 @@ export const handler = async (event: any) => {
     const db           = getPool()
     const connectionId = event.requestContext.connectionId
     const staffId      = Number(payload.sub)
-    const storeId      = payload.storeId != null && payload.storeId !== '' ? Number(payload.storeId) : null
     const role         = String(payload.role ?? '')
+    const storeId      = role === 'super_admin'
+      ? null
+      : (payload.storeId != null && payload.storeId !== '' ? Number(payload.storeId) : null)
     const expiresAt    = new Date(Date.now() + 86400 * 1000)
 
     await db.query(

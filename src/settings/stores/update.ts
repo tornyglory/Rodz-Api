@@ -21,8 +21,18 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
     // Map API field 'address' → DB column 'address_line1'
     if ('address' in body) { body.address_line1 = body.address; delete body.address }
+
     const allowed = ['name', 'address_line1', 'phone']
     const updates = Object.entries(body).filter(([k]) => allowed.includes(k))
+
+    // Handle closureDates separately — validate and serialise to JSON
+    if ('closureDates' in body) {
+      const raw = body.closureDates
+      if (!Array.isArray(raw)) return validationError('closureDates must be an array.')
+      const invalid = (raw as any[]).filter((d) => typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d))
+      if (invalid.length > 0) return validationError('closureDates entries must be YYYY-MM-DD strings.')
+      updates.push(['closure_dates', JSON.stringify(raw)])
+    }
 
     if (updates.length === 0) return validationError('No valid fields to update.')
 

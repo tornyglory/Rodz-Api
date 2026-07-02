@@ -13,7 +13,10 @@ async function deleteStaleConnection(db: mysql.Pool, connectionId: string) {
 }
 
 export async function pushToStore(db: mysql.Pool, storeId: number, message: object): Promise<void> {
-  if (!process.env.WS_API_URL) return
+  if (!process.env.WS_API_URL) {
+    console.log('[ws] WS_API_URL not set, skipping push')
+    return
+  }
 
   try {
     const [rows] = await db.query<any[]>(
@@ -21,6 +24,7 @@ export async function pushToStore(db: mysql.Pool, storeId: number, message: obje
        WHERE (store_id = ? OR store_id IS NULL) AND expires_at > NOW()`,
       [storeId],
     )
+    console.log(`[ws] storeId=${storeId} connections=${rows.length} endpoint=${process.env.WS_API_URL}`)
     if (rows.length === 0) return
 
     const ws   = getWsClient()
@@ -30,15 +34,17 @@ export async function pushToStore(db: mysql.Pool, storeId: number, message: obje
       rows.map(async ({ connection_id }: { connection_id: string }) => {
         try {
           await ws.send(new PostToConnectionCommand({ ConnectionId: connection_id, Data: data }))
+          console.log(`[ws] pushed ok → ${connection_id}`)
         } catch (err: any) {
+          console.error(`[ws] push failed → ${connection_id} status=${err.$metadata?.httpStatusCode} msg=${err.message}`)
           if (err.$metadata?.httpStatusCode === 410) {
             await deleteStaleConnection(db, connection_id)
           }
         }
       }),
     )
-  } catch {
-    // WebSocket push is non-fatal
+  } catch (err) {
+    console.error('[ws] outer error:', err)
   }
 }
 

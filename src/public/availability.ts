@@ -33,7 +33,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const storeIdNum = Number(storeId)
 
     // Verify store exists
-    const [[store]] = await db.query<any[]>('SELECT id FROM stores WHERE id = ? LIMIT 1', [storeIdNum])
+    const [[store]] = await db.query<any[]>('SELECT id, closure_dates FROM stores WHERE id = ? LIMIT 1', [storeIdNum])
     if (!store) return err422('Invalid storeId.')
 
     // Date range for the month
@@ -50,7 +50,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       ),
       // Business hours — which days of the week are open (day_of_week: 0=Mon...6=Sun)
       db.query<any[]>(
-        'SELECT day_of_week, is_closed FROM business_hours WHERE store_id = ? ORDER BY day_of_week',
+        'SELECT day_of_week, is_closed, open_time, close_time, last_booking_offset_mins FROM business_hours WHERE store_id = ? ORDER BY day_of_week',
         [storeIdNum],
       ),
       // Existing bookings in the month by date + slot
@@ -68,13 +68,38 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const hoistCount: number = Number(hoistResult[0][0]?.hoist_count ?? 0)
 
-    // Build a lookup of closed days (day_of_week values where is_closed = 1)
-    // business_hours day_of_week: assume 0=Monday...6=Sunday (ISO weekday - 1)
+    // Build a lookup of business hours per day_of_week (0=Mon...6=Sun)
+    function toMins(t: string) {
+      const [h, m] = t.slice(0, 5).split(':').map(Number)
+      return h * 60 + m
+    }
+    const MORNING_MINS   = toMins('09:00')
+    const AFTERNOON_MINS = toMins('13:00')
+
     const closedDays = new Set<number>()
+    const noMorningDays   = new Set<number>()
+    const noAfternoonDays = new Set<number>()
     for (const row of hoursResult[0]) {
-      if (row.is_closed) closedDays.add(Number(row.day_of_week))
+      const dow = Number(row.day_of_week)
+      if (row.is_closed) {
+        closedDays.add(dow)
+        continue
+      }
+      if (row.open_time && row.close_time) {
+        const openMins        = toMins(row.open_time)
+        const lastBookingMins = toMins(row.close_time) - Number(row.last_booking_offset_mins ?? 0)
+        if (MORNING_MINS   < openMins || MORNING_MINS   > lastBookingMins) noMorningDays.add(dow)
+        if (AFTERNOON_MINS < openMins || AFTERNOON_MINS > lastBookingMins) noAfternoonDays.add(dow)
+      }
     }
     const hasBusinessHours = hoursResult[0].length > 0
+
+    // One-off closure dates (emergencies, public holidays, etc.)
+    const closureDates = new Set<string>(
+      store.closure_dates
+        ? (typeof store.closure_dates === 'string' ? JSON.parse(store.closure_dates) : store.closure_dates)
+        : [],
+    )
 
     // Build a booking count lookup: "date|slot" → count
     const bookingCounts = new Map<string, number>()
@@ -99,7 +124,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       const isoDow   = jsDow === 0 ? 6 : jsDow - 1
 
       const isPast   = dateStr <= today
-      const isClosed = hasBusinessHours ? closedDays.has(isoDow) : false
+      const isClosed = closureDates.has(dateStr) || (hasBusinessHours ? closedDays.has(isoDow) : false)
 
       if (isPast || isClosed) {
         days[dateStr] = { open: false, morning: 0, afternoon: 0 }
@@ -108,8 +133,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         const afternoonBooked = bookingCounts.get(`${dateStr}|afternoon`) ?? 0
         days[dateStr] = {
           open:      true,
-          morning:   Math.max(0, hoistCount - morningBooked),
-          afternoon: Math.max(0, hoistCount - afternoonBooked),
+          morning:   (hasBusinessHours && noMorningDays.has(isoDow))   ? 0 : Math.max(0, hoistCount - morningBooked),
+          afternoon: (hasBusinessHours && noAfternoonDays.has(isoDow)) ? 0 : Math.max(0, hoistCount - afternoonBooked),
         }
       }
 

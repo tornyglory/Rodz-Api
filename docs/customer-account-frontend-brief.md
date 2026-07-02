@@ -496,6 +496,319 @@ Both URLs are returned pre-built in API responses (`avatarUrl` uses `/thumbnail`
 
 ---
 
+---
+
+## AI Chat endpoint (streaming — Lambda Function URL)
+
+The chat uses a **separate streaming URL** — not the main API Gateway base URL. The frontend must `POST` directly to this URL with a streaming `fetch()`.
+
+```
+POST https://sktdhkyhdlqcsoq7gydire5fbu0txafl.lambda-url.ap-southeast-2.on.aws/
+```
+
+Include the customer JWT in `Authorization: Bearer <token>` and pass the vehicle ID in the path:
+
+```
+POST https://sktdhkyhdlqcsoq7gydire5fbu0txafl.lambda-url.ap-southeast-2.on.aws/c/vehicles/{vehicleId}/chat
+```
+
+**Request body**
+```json
+{
+  "content": "What oil does my car need?",
+  "imageId": null
+}
+```
+
+- `content` — the customer's message text (optional if `imageId` is provided)
+- `imageId` — a Cloudflare image ID (uploaded via the existing 3-step flow); optional
+
+**Streaming response — `Content-Type: text/event-stream`**
+
+The response is a stream of newline-delimited Server-Sent Events. Each line is `data: <json>`:
+
+```
+data: {"type":"user_message_id","id":42}
+
+data: {"type":"chunk","text":"Your "}
+
+data: {"type":"chunk","text":"car uses "}
+
+data: {"type":"chunk","text":"5W-30 full synthetic oil."}
+
+data: {"type":"function_call","name":"checkAvailability","args":{"storeId":1,"month":"2026-07"}}
+
+data: {"type":"function_result","name":"checkAvailability","result":{...}}
+
+data: {"type":"chunk","text":"I can see mornings are available on Tuesday 8th..."}
+
+data: {"type":"done","messageId":43}
+```
+
+**Event types:**
+
+| Type | When | Fields |
+|------|------|--------|
+| `user_message_id` | First event — after user message is saved | `id` |
+| `chunk` | Each AI text token | `text` |
+| `function_call` | AI is checking availability or booking | `name`, `args` |
+| `function_result` | Result of the function call | `name`, `result` |
+| `done` | Stream complete | `messageId` (the AI reply's DB id) |
+| `error` | Something went wrong | `code`, `message` |
+
+**Frontend implementation**
+
+```typescript
+const response = await fetch(
+  `https://sktdhkyhdlqcsoq7gydire5fbu0txafl.lambda-url.ap-southeast-2.on.aws/c/vehicles/${vehicleId}/chat`,
+  {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ content: message }),
+  }
+)
+
+const reader = response.body!.getReader()
+const decoder = new TextDecoder()
+
+while (true) {
+  const { done, value } = await reader.read()
+  if (done) break
+  
+  const text = decoder.decode(value)
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('data: ')) continue
+    const event = JSON.parse(line.slice(6))
+    
+    if (event.type === 'chunk') {
+      appendToCurrentMessage(event.text) // append to AI bubble in real time
+    } else if (event.type === 'function_call') {
+      showThinkingIndicator(`Checking ${event.name}...`)
+    } else if (event.type === 'done') {
+      finalizeMessage(event.messageId)
+    } else if (event.type === 'error') {
+      showError(event.message)
+    }
+  }
+}
+```
+
+**What the AI can do natively (via Gemini function calling):**
+- Check workshop availability for any month
+- List available service types
+- Book an appointment — will ask for confirmation first, then creates the booking
+
+---
+
+## Chat history endpoint
+
+### `GET /c/vehicles/:id/chat`
+
+Returns the full conversation history for this vehicle.
+
+**Response — 200**
+```json
+{
+  "messages": [
+    {
+      "id": 1,
+      "role": "user",
+      "content": "What oil does my car need?",
+      "imageUrl": null,
+      "createdAt": "2026-07-02T10:00:00.000Z"
+    },
+    {
+      "id": 2,
+      "role": "model",
+      "content": "Your 2021 Toyota Camry takes 5W-30 full synthetic oil...",
+      "imageUrl": null,
+      "createdAt": "2026-07-02T10:00:01.000Z"
+    }
+  ]
+}
+```
+
+---
+
+## Vehicle value endpoint
+
+### `GET /c/vehicles/:id/value`
+
+AI-generated market value estimate for the vehicle, based on current Australian used car market knowledge.
+
+**Response — 200**
+```json
+{
+  "vehicle": {
+    "year": 2021,
+    "make": "Toyota",
+    "model": "Camry",
+    "series": "ASV70R",
+    "odometerKm": 42300,
+    "serviceCount": 3
+  },
+  "valuation": {
+    "estimatedValueAud": { "low": 28000, "mid": 32000, "high": 35000 },
+    "condition": "good",
+    "conditionRationale": "Well-maintained with a documented service record.",
+    "keyFactors": [
+      { "factor": "Service record", "impact": "positive", "detail": "3 documented Rodz workshop services add buyer confidence" },
+      { "factor": "Odometer", "impact": "neutral", "detail": "42,300 km is below average for a 2021 model" }
+    ],
+    "marketInsight": "The Toyota Camry hybrid holds its value well in Australia...",
+    "sellTips": ["Get a full detail before listing", "Highlight the service record", "Price mid-range and negotiate"],
+    "disclaimer": "This is an estimate only. Actual sale price will vary..."
+  },
+  "generatedAt": "2026-07-02"
+}
+```
+
+---
+
+## Booking endpoints
+
+### `GET /c/stores`
+
+List all active Rodz locations.
+
+**Response — 200**
+```json
+{
+  "stores": [
+    {
+      "id": 1,
+      "name": "Rodz Somerville",
+      "address": "123 Frankston-Flinders Rd",
+      "suburb": "Somerville",
+      "state": "VIC",
+      "postcode": "3912",
+      "phone": "03 5977 0000",
+      "mapsUrl": "https://maps.google.com/?q=..."
+    }
+  ]
+}
+```
+
+---
+
+### `GET /c/service-types`
+
+List all bookable service types.
+
+**Response — 200**
+```json
+{
+  "services": [
+    {
+      "id": 1,
+      "name": "Log Book Service",
+      "category": "service",
+      "description": "Full manufacturer log book service",
+      "fixedPrice": null,
+      "estimatedHours": 1.5
+    }
+  ]
+}
+```
+
+---
+
+### `GET /c/availability?storeId=1&month=2026-07`
+
+Check available slots at a store for a given month.
+
+**Query params:** `storeId` (required), `month` (required, `YYYY-MM`)
+
+**Response — 200**
+```json
+{
+  "storeId": 1,
+  "storeName": "Rodz Somerville",
+  "month": "2026-07",
+  "days": {
+    "2026-07-01": { "open": false, "morning": 0, "afternoon": 0 },
+    "2026-07-02": { "open": true,  "morning": 2, "afternoon": 3 },
+    "2026-07-03": { "open": true,  "morning": 0, "afternoon": 1 }
+  }
+}
+```
+
+`morning`/`afternoon` values are **remaining capacity** (0 = full). `open: false` = closed or in the past.
+
+---
+
+### `GET /c/bookings`
+
+List the customer's bookings (most recent first, excludes cancelled).
+
+**Response — 200**
+```json
+{
+  "bookings": [
+    {
+      "id": 12,
+      "bookingRef": "ABCD1234",
+      "date": "2026-07-15",
+      "slot": "morning",
+      "type": "drop_off",
+      "status": "pending",
+      "notes": null,
+      "store": { "name": "Rodz Somerville", "suburb": "Somerville", "phone": "03 5977 0000" },
+      "vehicle": { "id": 7, "make": "Toyota", "model": "Camry", "year": 2021, "rego": "ABC123" },
+      "services": "Log Book Service, Brake Inspection"
+    }
+  ]
+}
+```
+
+---
+
+### `POST /c/bookings`
+
+Create a booking directly (alternative to booking via chat).
+
+**Request**
+```json
+{
+  "vehicleId":      7,
+  "storeId":        1,
+  "date":           "2026-07-15",
+  "slot":           "morning",
+  "type":           "drop_off",
+  "serviceTypeIds": [1, 3],
+  "notes":          "Please check the squeaking noise from the brakes"
+}
+```
+
+- `slot` — `"morning"` or `"afternoon"`
+- `type` — `"drop_off"` | `"wait"` | `"pickup"`
+- `serviceTypeIds` — array of IDs from `GET /c/service-types`
+
+**Response — 201**
+```json
+{
+  "booking": {
+    "id": 12,
+    "bookingRef": "ABCD1234",
+    "date": "2026-07-15",
+    "slot": "morning",
+    "type": "drop_off",
+    "status": "pending",
+    "store": { "name": "Rodz Somerville", "suburb": "Somerville" },
+    "services": "Log Book Service, Tyre Rotation"
+  }
+}
+```
+
+**Errors**
+- `422 VALIDATION_ERROR` — missing or invalid fields
+- `404 NOT_FOUND` — store or vehicle not found
+
+---
+
 ## Screens to build
 
 | Screen | Endpoints |
@@ -512,7 +825,11 @@ Both URLs are returned pre-built in API responses (`avatarUrl` uses `/thumbnail`
 | Vehicle detail | `GET /c/vehicles/:id` + `PATCH /c/vehicles/:id` |
 | Vehicle avatar | `GET /c/vehicles/:id/avatar-upload-url` → upload → `PATCH /c/vehicles/:id/avatar` |
 | Vehicle cover | `GET /c/vehicles/:id/cover-upload-url` → upload → `PATCH /c/vehicles/:id/cover` |
-| Logbook | `GET /c/vehicles/:id/logbook` |
+| **AI Chat** | Streaming Lambda URL + `GET /c/vehicles/:id/chat` |
+| **Logbook** (tab) | `GET /c/vehicles/:id/logbook` |
+| **Vehicle value** (tab) | `GET /c/vehicles/:id/value` |
+| **Book a service** | `GET /c/stores` + `GET /c/service-types` + `GET /c/availability` + `POST /c/bookings` |
+| **My bookings** | `GET /c/bookings` |
 
 ---
 
@@ -525,3 +842,9 @@ Both URLs are returned pre-built in API responses (`avatarUrl` uses `/thumbnail`
 **Empty logbook:** A customer who just signed up and has no Rodz service history will see `entries: []`. Show an empty state: "Your service history will appear here after your first Rodz visit."
 
 **Vehicle description tips:** When the Gemini parse fails (422), the error message explains what was unclear. Suggested placeholder text for the vehicle input: *"e.g. 2021 Toyota Camry hybrid, 2019 Mazda CX-5 diesel"*
+
+**Chat is the home screen:** When a customer opens the app (or scans the QR code on their car), the AI chat is the first thing they see. The logbook, vehicle profile, maintenance, and value estimate are tabs within the same vehicle view.
+
+**AI books for you:** The chat AI can check availability and create bookings on the customer's behalf via Gemini function calling. Show a visual indicator when the AI is "checking availability..." (the `function_call` event). After booking, show the booking reference in a card within the chat.
+
+**Mechanic chats are never visible:** Staff/mechanic chat history (`vehicle_chats` table) is completely separate and is never surfaced to customers under any circumstances.

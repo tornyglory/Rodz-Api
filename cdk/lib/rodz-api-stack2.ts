@@ -2,6 +2,7 @@ import * as path from 'path'
 import { Stack, StackProps, Duration } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as ec2 from 'aws-cdk-lib/aws-ec2'
+import * as lambda from 'aws-cdk-lib/aws-lambda'
 import * as events from 'aws-cdk-lib/aws-events'
 import * as targets from 'aws-cdk-lib/aws-events-targets'
 import * as sqs from 'aws-cdk-lib/aws-sqs'
@@ -1059,6 +1060,101 @@ export class RodzApiStack2 extends Stack {
       httpApi,
       integration: new HttpLambdaIntegration('CustomerVehicleLogbookInt', customerVehicleLogbookFn),
       routeKey: HttpRouteKey.with('/c/vehicles/{id}/logbook', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    // ── Customer AI chat + booking endpoints ──────────────────────────────
+
+    const customerChatHistoryFn = new LambdaFn(this, 'CustomerChatHistory', {
+      entry: src('customer/vehicles/chat-history.ts'), vpc, sharedEnv,
+    }).fn
+
+    // Streaming chat Lambda — uses a Function URL, not API Gateway
+    const customerChatStreamFn = new LambdaFn(this, 'CustomerChatStream', {
+      entry: src('customer/vehicles/chat-stream.ts'), vpc, sharedEnv,
+    }).fn
+
+    customerChatStreamFn.addFunctionUrl({
+      authType:   lambda.FunctionUrlAuthType.NONE,
+      invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
+      cors: {
+        allowedOrigins: ['*'],
+        allowedHeaders: ['authorization', 'content-type'],
+        allowedMethods: [lambda.HttpMethod.POST, lambda.HttpMethod.OPTIONS],
+        maxAge:          Duration.hours(24),
+      },
+    })
+
+    const customerVehicleValueFn = new LambdaFn(this, 'CustomerVehicleValue', {
+      entry: src('customer/vehicles/value.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerAvailabilityFn = new LambdaFn(this, 'CustomerAvailability', {
+      entry: src('customer/availability.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerStoresFn = new LambdaFn(this, 'CustomerStores', {
+      entry: src('customer/stores.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerServiceTypesFn = new LambdaFn(this, 'CustomerServiceTypes', {
+      entry: src('customer/service-types.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerBookingListFn = new LambdaFn(this, 'CustomerBookingList', {
+      entry: src('customer/bookings/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerBookingCreateFn = new LambdaFn(this, 'CustomerBookingCreate', {
+      entry: src('customer/bookings/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerChatHistoryRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerChatHistoryInt', customerChatHistoryFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/chat', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerVehicleValueRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleValueInt', customerVehicleValueFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/value', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerAvailabilityRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerAvailabilityInt', customerAvailabilityFn),
+      routeKey: HttpRouteKey.with('/c/availability', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerStoresRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoresInt', customerStoresFn),
+      routeKey: HttpRouteKey.with('/c/stores', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerServiceTypesRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerServiceTypesInt', customerServiceTypesFn),
+      routeKey: HttpRouteKey.with('/c/service-types', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerBookingListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerBookingListInt', customerBookingListFn),
+      routeKey: HttpRouteKey.with('/c/bookings', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerBookingCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerBookingCreateInt', customerBookingCreateFn),
+      routeKey: HttpRouteKey.with('/c/bookings', HttpMethod.POST),
       authorizer: customerAuthorizer,
     })
   }
