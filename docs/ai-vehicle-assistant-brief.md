@@ -203,7 +203,7 @@ GET /c/vehicles/:id/value
 Authorization: Bearer <token>
 ```
 
-AI-generated market value estimate for the Australian used car market. Takes ~5 seconds. Show a loading skeleton.
+AI-generated market value estimate backed by **live Google Search** — Gemini searches carsales.com.au, Autotrader, and Gumtree in real time before generating the valuation. Takes ~8–10 seconds. Show a loading skeleton.
 
 **Response — 200**
 ```json
@@ -222,28 +222,28 @@ AI-generated market value estimate for the Australian used car market. Takes ~5 
       "mid":  32000,
       "high": 35000
     },
-    "condition": "good",
-    "conditionRationale": "Well-maintained with 3 documented Rodz services.",
-    "keyFactors": [
-      {
-        "factor": "Service record",
-        "impact": "positive",
-        "detail": "Documented history adds buyer confidence and supports asking price."
-      },
-      {
-        "factor": "Odometer",
-        "impact": "neutral",
-        "detail": "42,300 km is below average for a 5-year-old vehicle."
-      }
+    "comparableSales": [
+      { "price": 31990, "odometer": 38000, "description": "2021 Toyota Camry Ascent Sport Hybrid, 38,000km, VIC" },
+      { "price": 29500, "odometer": 51000, "description": "2021 Toyota Camry SL Hybrid, 51,000km, NSW" }
     ],
-    "marketInsight": "The Toyota Camry hybrid holds its value well in Australia due to strong fuel economy and reliability reputation...",
+    "condition": "good",
+    "conditionRationale": "Well-maintained with 3 documented Rodz services and below-average kilometres.",
+    "keyFactors": [
+      { "factor": "Service record", "impact": "positive", "detail": "Documented history adds buyer confidence." },
+      { "factor": "Odometer",       "impact": "neutral",  "detail": "42,300 km is below average for age." }
+    ],
+    "marketInsight": "Current listings on carsales.com.au show 2021 Camry Hybrids ranging from $28,000 to $36,000 depending on variant and kilometres...",
     "sellTips": [
       "Get a full detail before listing",
       "Highlight the Rodz service record",
       "Price at mid-range and negotiate down"
     ],
-    "disclaimer": "This is an estimate only. Actual sale price will vary based on vehicle condition, location, negotiation, and market timing."
+    "disclaimer": "This is an estimate based on current Australian listings. Actual sale price will vary based on vehicle condition, location, negotiation, and market timing."
   },
+  "sources": [
+    "https://www.carsales.com.au/...",
+    "https://www.autotrader.com.au/..."
+  ],
   "generatedAt": "2026-07-03"
 }
 ```
@@ -251,6 +251,10 @@ AI-generated market value estimate for the Australian used car market. Takes ~5 
 **`condition` values:** `"excellent"` | `"good"` | `"fair"` | `"poor"`
 
 **`impact` values:** `"positive"` | `"negative"` | `"neutral"`
+
+**`comparableSales`** — up to 4 real listings found by Google Search. `odometer` may be `null` if not in the listing. Render these as "comparable cars for sale" cards.
+
+**`sources`** — grounding URLs from the Google Search results (may be redirect URLs). Optional to show; if you do, label them "Based on current listings".
 
 **Suggested UI layout:**
 
