@@ -47,6 +47,7 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | [Vehicles — extended](#vehicles--extended) | `vehicle_service_history` |
 | [Reminders & AI](#reminders--ai) | `reminders`, `vehicle_model_profiles`, `ai_milestone_rules`, `ai_recommendations` |
 | [Vehicle chats](#vehicle-chats) | `vehicle_chats`, `vehicle_chat_messages` |
+| [Customer AI chat](#customer-ai-chat) | `customer_vehicle_chats` |
 | [Notifications](#notifications) | `notifications`, `notification_templates`, `customer_pickup_notifications` |
 | [Loan vehicles](#loan-vehicles) | `loan_vehicles`, `loan_vehicle_bookings`, `courtesy_cars` |
 | [Operations](#operations) | `hoists`, `business_hours`, `staff_roster`, `daily_kpi_snapshots` |
@@ -1020,6 +1021,29 @@ Individual messages within a vehicle chat. Role is `user` (mechanic) or `model` 
 - `image_id` is a Cloudflare Images ID — use `imageUrls(imageId)` to get thumbnail/public URLs
 - `staff_id` is null on `model` (assistant) messages
 - Index: `idx_vehicle_chat_messages_chat_id (chat_id)`
+
+---
+
+## Customer AI chat
+
+### `customer_vehicle_chats`
+
+Flat message log for the customer-facing AI chat. One continuous conversation per vehicle per customer — no sessions. Separate from the staff-side `vehicle_chats`/`vehicle_chat_messages` tables.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | Auto increment |
+| `vehicle_id` | bigint unsigned | NO | FK → `vehicles.id` |
+| `customer_id` | bigint unsigned | NO | FK → `customers.id` |
+| `role` | enum(`user`, `model`) | NO | `user` = customer message, `model` = Gemini response |
+| `content` | text | YES | Null for image-only messages |
+| `image_id` | varchar(255) | YES | Cloudflare Images ID — use `imageUrls(imageId)` for URLs |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+- Filter by both `vehicle_id` AND `customer_id` on every query — a customer can only see their own messages on their own vehicles
+- Ownership must be verified via `vehicle_owners` before reading or writing
+- History is returned ordered by `id ASC`, limited to last 100 messages per conversation
+- Index: `(vehicle_id, customer_id)`
 
 ---
 
