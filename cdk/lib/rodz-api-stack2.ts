@@ -1069,21 +1069,10 @@ export class RodzApiStack2 extends Stack {
       entry: src('customer/vehicles/chat-history.ts'), vpc, sharedEnv,
     }).fn
 
-    // Streaming chat Lambda — uses a Function URL, not API Gateway
-    const customerChatStreamFn = new LambdaFn(this, 'CustomerChatStream', {
-      entry: src('customer/vehicles/chat-stream.ts'), vpc, sharedEnv,
+    const customerChatFn = new LambdaFn(this, 'CustomerChat', {
+      entry: src('customer/vehicles/chat.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(60),
     }).fn
-
-    customerChatStreamFn.addFunctionUrl({
-      authType:   lambda.FunctionUrlAuthType.NONE,
-      invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
-      cors: {
-        allowedOrigins: ['*'],
-        allowedHeaders: ['authorization', 'content-type'],
-        allowedMethods: [lambda.HttpMethod.POST, lambda.HttpMethod.OPTIONS],
-        maxAge:          Duration.hours(24),
-      },
-    })
 
     const customerVehicleValueFn = new LambdaFn(this, 'CustomerVehicleValue', {
       entry: src('customer/vehicles/value.ts'), vpc, sharedEnv,
@@ -1113,6 +1102,13 @@ export class RodzApiStack2 extends Stack {
       httpApi,
       integration: new HttpLambdaIntegration('CustomerChatHistoryInt', customerChatHistoryFn),
       routeKey: HttpRouteKey.with('/c/vehicles/{id}/chat', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerChatRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerChatInt', customerChatFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/chat', HttpMethod.POST),
       authorizer: customerAuthorizer,
     })
 
