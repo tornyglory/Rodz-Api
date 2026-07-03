@@ -50,9 +50,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       : null
     const age = new Date().getFullYear() - Number(v.year)
 
-    const prompt = `You are a vehicle valuation expert for the Australian used car market. Provide a detailed market value estimate for the following vehicle. Base your estimate on your knowledge of Australian used car pricing, carsales.com.au, car market trends, and the vehicle's specifics.
+    const prompt = `You are a vehicle valuation expert for the Australian used car market. Search for current listings of this exact vehicle on carsales.com.au, Autotrader Australia, and Gumtree Australia to find what comparable cars are actually selling for right now, then provide a market value estimate.
 
-## Vehicle
+## Vehicle to value
 ${v.year} ${v.make} ${v.model}${v.series ? ` (${v.series})` : ''}
 Body: ${v.body_type ?? 'unknown'} | Fuel: ${v.fuel_type ?? 'unknown'} | Transmission: ${v.transmission ?? 'unknown'}
 Colour: ${v.colour ?? 'not specified'} | Registered in: ${v.rego_state}
@@ -60,40 +60,45 @@ Age: ${age} years
 Odometer: ${odometerKm ? `${odometerKm.toLocaleString()} km` : 'unknown'}
 
 ## Service Record
-Number of Rodz workshop services on record: ${serviceCount}
-Total service spend at Rodz: $${totalSpend.toFixed(0)} AUD
+Rodz workshop services on record: ${serviceCount}
+Total spend at Rodz: $${totalSpend.toFixed(0)} AUD
 Most recent service: ${lastService ?? 'unknown'}
-${serviceCount > 0 ? 'This vehicle has a documented workshop service record which adds value.' : 'No prior workshop service history on record.'}
+${serviceCount > 0 ? 'This vehicle has a documented service history which adds value.' : 'No prior workshop service history on record.'}
 
-Provide your response in this exact JSON format (no markdown, just raw JSON):
+Search for current Australian listings of this vehicle, then respond in this exact JSON format (no markdown, raw JSON only):
 {
   "estimatedValueAud": {
     "low": <number>,
     "mid": <number>,
     "high": <number>
   },
+  "comparableSales": [
+    { "price": <number>, "odometer": <number or null>, "description": "<brief listing summary e.g. '2023 Toyota Corolla Ascent Sport, 28,000km, VIC'>" }
+  ],
   "condition": "<excellent|good|fair|poor>",
   "conditionRationale": "<1 sentence explaining the condition assessment>",
   "keyFactors": [
     { "factor": "<factor name>", "impact": "<positive|negative|neutral>", "detail": "<brief explanation>" }
   ],
-  "marketInsight": "<2-3 sentence summary of the current Australian market for this vehicle>",
+  "marketInsight": "<2-3 sentences on what you found in the current Australian market for this vehicle — mention actual price ranges seen>",
   "sellTips": ["<tip 1>", "<tip 2>", "<tip 3>"],
-  "disclaimer": "This is an estimate only. Actual sale price will vary based on vehicle condition, location, negotiation, and market timing."
+  "disclaimer": "This is an estimate based on current Australian listings. Actual sale price will vary based on vehicle condition, location, negotiation, and market timing."
 }`
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
     const model = genAI.getGenerativeModel({
-      model:            'gemini-2.5-flash',
+      model: 'gemini-2.5-flash',
+      // @ts-ignore — googleSearch tool not yet in type definitions
+      tools: [{ googleSearch: {} }],
       generationConfig: {
-        maxOutputTokens: 1200,
+        maxOutputTokens: 1500,
         // @ts-ignore — thinkingConfig not yet in type definitions
         thinkingConfig: { thinkingBudget: 0 },
       },
     })
 
-    const result   = await model.generateContent(prompt)
-    const raw      = result.response.text().trim()
+    const result = await model.generateContent(prompt)
+    const raw    = result.response.text().trim()
 
     // Extract JSON from potential markdown code block
     const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/) ?? raw.match(/(\{[\s\S]*\})/)
@@ -107,6 +112,15 @@ Provide your response in this exact JSON format (no markdown, just raw JSON):
       return serverError(new Error('Failed to parse valuation from AI'))
     }
 
+    // Extract grounding sources if present
+    const groundingMeta = (result.response as any).candidates?.[0]?.groundingMetadata
+    const sources: string[] = []
+    if (groundingMeta?.groundingChunks) {
+      for (const chunk of groundingMeta.groundingChunks) {
+        if (chunk.web?.uri) sources.push(chunk.web.uri)
+      }
+    }
+
     return ok({
       vehicle: {
         year:        v.year,
@@ -117,6 +131,7 @@ Provide your response in this exact JSON format (no markdown, just raw JSON):
         serviceCount,
       },
       valuation,
+      sources:     sources.length ? sources : undefined,
       generatedAt: new Date().toISOString().slice(0, 10),
     })
   } catch (err) {
