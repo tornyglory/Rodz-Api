@@ -83,16 +83,27 @@ Provide your response in this exact JSON format (no markdown, just raw JSON):
 }`
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
+    const model = genAI.getGenerativeModel({
+      model:            'gemini-2.5-flash',
+      generationConfig: {
+        maxOutputTokens: 1200,
+        // @ts-ignore — thinkingConfig not yet in type definitions
+        thinkingConfig: { thinkingBudget: 0 },
+      },
+    })
 
     const result   = await model.generateContent(prompt)
     const raw      = result.response.text().trim()
-    const jsonText = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim()
+
+    // Extract JSON from potential markdown code block
+    const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/) ?? raw.match(/(\{[\s\S]*\})/)
+    const jsonText  = jsonMatch ? jsonMatch[1].trim() : raw.trim()
 
     let valuation: any
     try {
       valuation = JSON.parse(jsonText)
-    } catch {
+    } catch (parseErr) {
+      console.error('Gemini parse error. Raw response:', raw.slice(0, 500))
       return serverError(new Error('Failed to parse valuation from AI'))
     }
 
