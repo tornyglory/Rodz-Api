@@ -38,10 +38,10 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const [rows] = await db.query<any[]>(
       `SELECT vsl.id, vsl.invoice_id, vsl.invoice_number, vsl.service_date,
               COALESCE(i.odometer_in, vsl.odometer) AS odometer,
-              vsl.store, vsl.tech, vsl.total, vsl.status, vsl.ai_summary,
-              i.token AS invoice_token
+              vsl.store, vsl.tech, vsl.total, vsl.ai_summary,
+              i.status AS invoice_status, i.token AS invoice_token
        FROM vehicle_service_log vsl
-       JOIN invoices i ON i.id = vsl.invoice_id
+       LEFT JOIN invoices i ON i.id = vsl.invoice_id
        WHERE vsl.vehicle_rego = ?
        ORDER BY COALESCE(vsl.odometer, 0) DESC, vsl.service_date DESC`,
       [vehicle.rego],
@@ -63,7 +63,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         workshop:      r.store        ?? null,
         tech:          r.tech         ?? null,
         cost:          Number(r.total),
-        status:        r.status,
+        status:        r.invoice_status ?? null,
         invoiceId:     r.invoice_id,
         invoiceNumber: r.invoice_number,
         invoiceUrl:    r.invoice_token ? `${FRONTEND_URL}/invoice/${r.invoice_token}` : null,

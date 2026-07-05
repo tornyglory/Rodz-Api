@@ -16,7 +16,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   try {
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
     const {
-      firstName, lastName, mobile, suburb, state, postcode, dateOfBirth, marketingOptIn, smsOptIn,
+      firstName, lastName, mobile, suburb, state, postcode, dateOfBirth, gender, marketingOptIn, smsOptIn,
     } = body
 
     if (state != null && !VALID_STATES.has(String(state).toUpperCase())) {
@@ -24,6 +24,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
     if (dateOfBirth != null && !/^\d{4}-\d{2}-\d{2}$/.test(String(dateOfBirth))) {
       return validationError('dateOfBirth must be in YYYY-MM-DD format.')
+    }
+    if (gender != null && !['male', 'female', 'other'].includes(String(gender))) {
+      return validationError('gender must be male, female, or other.')
     }
 
     const sets: string[] = ['updated_at = NOW()']
@@ -36,6 +39,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (state         != null) { sets.push('state = ?');            params.push(String(state).trim().toUpperCase()) }
     if (postcode      != null) { sets.push('postcode = ?');         params.push(String(postcode).trim() || null) }
     if (dateOfBirth   != null) { sets.push('date_of_birth = ?');    params.push(String(dateOfBirth) || null) }
+    if (gender        != null) { sets.push('gender = ?');           params.push(String(gender)) }
     if (marketingOptIn != null) { sets.push('marketing_opt_in = ?'); params.push(marketingOptIn ? 1 : 0) }
     if (smsOptIn      != null) { sets.push('sms_opt_in = ?');       params.push(smsOptIn ? 1 : 0) }
 
@@ -46,7 +50,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const [[customerRow]] = await db.query<any[]>(
       `SELECT id, first_name, last_name, email, mobile, suburb, state, postcode,
-              date_of_birth, marketing_opt_in, sms_opt_in, avatar_image_id, created_at
+              date_of_birth, gender, marketing_opt_in, sms_opt_in, avatar_image_id, created_at
        FROM customers WHERE id = ? AND is_active = 1 LIMIT 1`,
       [ctx.customerId],
     )

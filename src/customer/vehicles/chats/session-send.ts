@@ -1,23 +1,15 @@
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { GoogleGenerativeAI, Part, Content, SchemaType, Tool } from '@google/generative-ai'
 import type mysql from 'mysql2/promise'
-import { bootstrap } from '../../shared/bootstrap'
-import { getPool } from '../../shared/db'
-import { ok, forbidden, validationError, serverError } from '../../shared/errors'
-import { getCustomerContext } from '../_helpers'
-import { notifyStore } from '../../shared/staffNotifications'
+import { bootstrap } from '../../../shared/bootstrap'
+import { getPool } from '../../../shared/db'
+import { ok, forbidden, notFound, validationError, serverError } from '../../../shared/errors'
+import { getCustomerContext } from '../../_helpers'
+import { notifyStore } from '../../../shared/staffNotifications'
 
 const ready = bootstrap()
 
 const CF_HASH = process.env.CF_ACCOUNT_HASH ?? ''
-
-// Add tool_calls column once per cold start (non-blocking if already exists)
-let toolCallsColumnReady = false
-async function ensureToolCallsColumn(db: mysql.Pool): Promise<void> {
-  if (toolCallsColumnReady) return
-  try { await db.query('ALTER TABLE customer_vehicle_chats ADD COLUMN tool_calls JSON NULL') } catch {}
-  toolCallsColumnReady = true
-}
 
 async function fetchImageAsBase64(imageId: string): Promise<{ base64: string; mimeType: string }> {
   const url  = `https://imagedelivery.net/${CF_HASH}/${imageId}/public`
@@ -48,14 +40,10 @@ async function buildCustomerVehicleContext(db: mysql.Pool, vehicleId: number): P
   ]
   if (v.colour)           lines.push(`Colour: ${v.colour}`)
   if (v.odometer_current) lines.push(`Current odometer: ${Number(v.odometer_current).toLocaleString()} km`)
-  if (v.engine_code)      lines.push(`Engine: ${v.engine_code}${v.engine_size_cc ? ` ${v.engine_size_cc}cc` : ''}${v.cylinders ? ` ${v.cylinders}-cyl` : ''}`)
   if (v.tyre_size_front)  lines.push(`Tyres: ${v.tyre_size_front}${v.tyre_size_rear && v.tyre_size_rear !== v.tyre_size_front ? ` front / ${v.tyre_size_rear} rear` : ''}`)
-  if (v.service_interval_km) {
-    lines.push(`Service interval: every ${Number(v.service_interval_km).toLocaleString()} km${v.service_interval_months ? ` or ${v.service_interval_months} months` : ''}`)
-  }
   if (v.next_service_due_km || v.next_service_due_date) {
-    const parts = []
-    if (v.next_service_due_km) parts.push(`${Number(v.next_service_due_km).toLocaleString()} km`)
+    const parts: string[] = []
+    if (v.next_service_due_km)   parts.push(`${Number(v.next_service_due_km).toLocaleString()} km`)
     if (v.next_service_due_date) {
       const d = v.next_service_due_date instanceof Date
         ? v.next_service_due_date.toISOString().slice(0, 10)
@@ -91,8 +79,7 @@ async function buildCustomerVehicleContext(db: mysql.Pool, vehicleId: number): P
      FROM vehicle_service_log vsl
      JOIN invoices i ON i.id = vsl.invoice_id
      WHERE vsl.vehicle_rego = ?
-     ORDER BY vsl.service_date DESC
-     LIMIT 8`,
+     ORDER BY vsl.service_date DESC LIMIT 8`,
     [v.rego],
   )
   if (logs.length) {
@@ -110,16 +97,26 @@ async function buildCustomerVehicleContext(db: mysql.Pool, vehicleId: number): P
   return lines.join('\n')
 }
 
+const BOOKING_TIMES = [
+  { time: '08:00:00', label: '8:00 AM',  slot: 'morning'   as const },
+  { time: '10:00:00', label: '10:00 AM', slot: 'morning'   as const },
+  { time: '13:00:00', label: '1:00 PM',  slot: 'afternoon' as const },
+  { time: '15:00:00', label: '3:00 PM',  slot: 'afternoon' as const },
+]
+
+function generateBookingRef(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  return Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
+}
+
 async function checkAvailability(db: mysql.Pool, storeId: number, month: string): Promise<object> {
   const [[store]] = await db.query<any[]>(
-    'SELECT id, name, closure_dates FROM stores WHERE id = ? AND is_active = 1 LIMIT 1',
-    [storeId],
-  )
+    'SELECT id, name, closure_dates FROM stores WHERE id = ? AND is_active = 1 LIMIT 1', [storeId])
   if (!store) return { error: 'Store not found' }
 
   const [year, mon] = month.split('-').map(Number)
-  const firstDay    = `${month}-01`
-  const lastDay     = new Date(year, mon, 0).toISOString().slice(0, 10)
+  const firstDay = `${month}-01`
+  const lastDay  = new Date(year, mon, 0).toISOString().slice(0, 10)
 
   const [hoistResult, hoursResult, bookingsResult, techsResult, techBookingsResult] = await Promise.all([
     db.query<any[]>('SELECT COUNT(*) AS hoist_count FROM hoists WHERE store_id = ? AND is_active = 1', [storeId]),
@@ -139,8 +136,7 @@ async function checkAvailability(db: mysql.Pool, storeId: number, month: string)
     db.query<any[]>(
       `SELECT booking_date, assigned_staff_id, COUNT(*) AS cnt FROM bookings
        WHERE store_id = ? AND booking_date BETWEEN ? AND ?
-         AND assigned_staff_id IS NOT NULL
-         AND cancelled_at IS NULL AND status NOT IN ('rejected','cancelled')
+         AND assigned_staff_id IS NOT NULL AND cancelled_at IS NULL AND status NOT IN ('rejected','cancelled')
        GROUP BY booking_date, assigned_staff_id`,
       [storeId, firstDay, lastDay],
     ),
@@ -152,7 +148,6 @@ async function checkAvailability(db: mysql.Pool, storeId: number, month: string)
   const closureDates = new Set<string>(store.closure_dates ? (typeof store.closure_dates === 'string' ? JSON.parse(store.closure_dates) : store.closure_dates) : [])
   const technicians: { id: number; name: string }[] = techsResult[0].map((r: any) => ({ id: r.id, name: `${r.first_name} ${r.last_name}` }))
 
-  // booked count keyed by "date|HH:MM:SS"
   const bookingCounts = new Map<string, number>()
   for (const row of bookingsResult[0]) {
     const d = row.booking_date instanceof Date ? row.booking_date.toISOString().slice(0, 10) : String(row.booking_date).slice(0, 10)
@@ -160,7 +155,6 @@ async function checkAvailability(db: mysql.Pool, storeId: number, month: string)
     bookingCounts.set(`${d}|${t}`, Number(row.booked))
   }
 
-  // existing booking counts per technician per day
   const techDayCounts = new Map<string, number>()
   for (const row of techBookingsResult[0]) {
     const d = row.booking_date instanceof Date ? row.booking_date.toISOString().slice(0, 10) : String(row.booking_date).slice(0, 10)
@@ -173,22 +167,19 @@ async function checkAvailability(db: mysql.Pool, storeId: number, month: string)
   const end    = new Date(`${lastDay}T00:00:00`)
 
   while (cursor <= end) {
-    const dateStr  = cursor.toISOString().slice(0, 10)
-    const jsDow    = cursor.getDay()
-    const isoDow   = jsDow === 0 ? 6 : jsDow - 1
-    const isPast   = dateStr <= today
+    const dateStr = cursor.toISOString().slice(0, 10)
+    const jsDow   = cursor.getDay()
+    const isoDow  = jsDow === 0 ? 6 : jsDow - 1
+    const isPast  = dateStr <= today
     const isClosed = closureDates.has(dateStr) || (hasHours && closedDays.has(isoDow))
 
     if (isPast || isClosed) {
       days[dateStr] = { open: false }
     } else {
-      // Simulate technician assignment for each available slot (least-busy first)
       const dayCounts = new Map(technicians.map(t => [t.id, techDayCounts.get(`${dateStr}|${t.id}`) ?? 0]))
-
       const slots = BOOKING_TIMES
         .filter(({ time }) => (bookingCounts.get(`${dateStr}|${time}`) ?? 0) < hoistCount)
         .map(({ time, label }) => {
-          // Pick least-busy technician, increment their simulated count
           let assignedTech: string | null = null
           if (technicians.length) {
             const pick = technicians.reduce((a, b) => (dayCounts.get(a.id) ?? 0) <= (dayCounts.get(b.id) ?? 0) ? a : b)
@@ -197,7 +188,6 @@ async function checkAvailability(db: mysql.Pool, storeId: number, month: string)
           }
           return { time: time.slice(0, 5), label, technician: assignedTech }
         })
-
       days[dateStr] = { open: slots.length > 0, slots }
     }
     cursor.setDate(cursor.getDate() + 1)
@@ -206,34 +196,23 @@ async function checkAvailability(db: mysql.Pool, storeId: number, month: string)
   return { storeName: store.name, storeId, month, days }
 }
 
-const BOOKING_TIMES = [
-  { time: '08:00:00', label: '8:00 AM', slot: 'morning'   as const },
-  { time: '10:00:00', label: '10:00 AM', slot: 'morning'  as const },
-  { time: '13:00:00', label: '1:00 PM', slot: 'afternoon' as const },
-  { time: '15:00:00', label: '3:00 PM', slot: 'afternoon' as const },
-]
-
 async function checkTimeSlots(db: mysql.Pool, storeId: number, date: string): Promise<object> {
   const today = new Date().toISOString().slice(0, 10)
   if (date <= today) return { available: false, slots: [], reason: 'Date must be in the future.' }
 
   const [[storeRow]] = await db.query<any[]>(
-    'SELECT name, closure_dates FROM stores WHERE id = ? AND is_active = 1 LIMIT 1',
-    [storeId],
-  )
+    'SELECT name, closure_dates FROM stores WHERE id = ? AND is_active = 1 LIMIT 1', [storeId])
   if (!storeRow) return { error: 'Store not found' }
 
   const closureDates: string[] = storeRow.closure_dates
-    ? (typeof storeRow.closure_dates === 'string' ? JSON.parse(storeRow.closure_dates) : storeRow.closure_dates)
-    : []
+    ? (typeof storeRow.closure_dates === 'string' ? JSON.parse(storeRow.closure_dates) : storeRow.closure_dates) : []
   if (closureDates.includes(date)) return { available: false, slots: [], reason: 'Store is closed on this date.' }
 
   const [hoistResult, bookingRows, techRows, techBookingRows] = await Promise.all([
     db.query<any[]>('SELECT COUNT(*) AS hoist_count FROM hoists WHERE store_id = ? AND is_active = 1', [storeId]),
     db.query<any[]>(
       `SELECT booking_time, COUNT(*) AS booked FROM bookings
-       WHERE store_id = ? AND booking_date = ?
-         AND cancelled_at IS NULL AND status NOT IN ('rejected','cancelled')
+       WHERE store_id = ? AND booking_date = ? AND cancelled_at IS NULL AND status NOT IN ('rejected','cancelled')
        GROUP BY booking_time`,
       [storeId, date],
     ),
@@ -244,8 +223,7 @@ async function checkTimeSlots(db: mysql.Pool, storeId: number, date: string): Pr
     ),
     db.query<any[]>(
       `SELECT assigned_staff_id, COUNT(*) AS cnt FROM bookings
-       WHERE store_id = ? AND booking_date = ?
-         AND assigned_staff_id IS NOT NULL
+       WHERE store_id = ? AND booking_date = ? AND assigned_staff_id IS NOT NULL
          AND cancelled_at IS NULL AND status NOT IN ('rejected','cancelled')
        GROUP BY assigned_staff_id`,
       [storeId, date],
@@ -280,22 +258,80 @@ async function checkTimeSlots(db: mysql.Pool, storeId: number, date: string): Pr
   return { date, storeName: storeRow.name, available: slots.length > 0, slots }
 }
 
-function generateBookingRef(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  return Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
+async function checkCourtesyCars(db: mysql.Pool, storeId: number, date: string): Promise<object> {
+  const [cars] = await db.query<any[]>(
+    `SELECT cc.id, cc.make, cc.model, cc.year, cc.color
+     FROM courtesy_cars cc
+     WHERE cc.status = 'active' AND (cc.store_id = ? OR cc.store_id IS NULL)
+       AND cc.id NOT IN (
+         SELECT b.courtesy_car_id FROM bookings b
+         WHERE b.courtesy_car_id IS NOT NULL AND b.booking_date = ? AND b.cancelled_at IS NULL
+       )`,
+    [storeId, date],
+  )
+  if (!cars.length) return { available: false, message: 'No courtesy cars available on that date.' }
+  return { available: true, cars: cars.map((c: any) => ({ id: c.id, description: `${c.year ?? ''} ${c.make} ${c.model}${c.color ? ` (${c.color})` : ''}`.trim() })) }
+}
+
+async function getVehicleValue(db: mysql.Pool, vehicleId: number): Promise<object> {
+  const [[v]] = await db.query<any[]>(
+    `SELECT make, model, year, series, fuel_type, transmission, body_type, colour, odometer_current, rego_state
+     FROM vehicles WHERE id = ? AND is_active = 1 LIMIT 1`,
+    [vehicleId],
+  )
+  if (!v) return { error: 'Vehicle not found' }
+
+  const odometerKm = v.odometer_current ? Number(v.odometer_current) : null
+  const [[countRow]] = await db.query<any[]>(
+    'SELECT COUNT(*) AS cnt FROM vehicle_service_log WHERE vehicle_rego = (SELECT rego FROM vehicles WHERE id = ? LIMIT 1)',
+    [vehicleId],
+  )
+  const serviceCount = Number(countRow?.cnt ?? 0)
+
+  const prompt = `You are a vehicle valuation expert for the Australian used car market. Search current Australian car listings (carsales.com.au, Autotrader, Gumtree) for this vehicle and return a realistic market value estimate.
+
+Vehicle: ${v.year} ${v.make} ${v.model}${v.series ? ` ${v.series}` : ''}
+Fuel: ${v.fuel_type ?? 'unknown'} | Transmission: ${v.transmission ?? 'unknown'}
+${v.body_type ? `Body: ${v.body_type}` : ''}${v.colour ? ` | Colour: ${v.colour}` : ''}
+${odometerKm ? `Odometer: ${odometerKm.toLocaleString()} km` : ''}
+State: ${v.rego_state ?? 'VIC'}
+Rodz service history: ${serviceCount} recorded service${serviceCount !== 1 ? 's' : ''}
+
+Return ONLY valid JSON in this exact shape — no markdown, no explanation:
+{
+  "estimatedValueAud": { "low": number, "mid": number, "high": number },
+  "comparableSales": [{ "price": number, "odometer": number|null, "description": string }],
+  "condition": "excellent"|"good"|"fair"|"poor",
+  "conditionRationale": string,
+  "keyFactors": [{ "factor": string, "impact": "positive"|"negative"|"neutral", "detail": string }],
+  "marketInsight": string,
+  "sellTips": [string],
+  "disclaimer": string
+}`
+
+  const genAI     = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
+  const valueModel = genAI.getGenerativeModel({
+    model: 'gemini-2.5-flash',
+    // @ts-ignore
+    tools: [{ googleSearch: {} }],
+    generationConfig: { maxOutputTokens: 1500, thinkingConfig: { thinkingBudget: 0 } } as any,
+  })
+
+  try {
+    const result   = await valueModel.generateContent(prompt)
+    const raw      = result.response.text().trim()
+    const match    = raw.match(/```(?:json)?\s*([\s\S]*?)```/) ?? raw.match(/(\{[\s\S]*\})/)
+    const jsonText = match ? match[1].trim() : raw.trim()
+    return { vehicle: { year: v.year, make: v.make, model: v.model, odometerKm, serviceCount }, valuation: JSON.parse(jsonText) }
+  } catch {
+    return { error: 'Could not retrieve market value at this time. Please try the Vehicle Value tab.' }
+  }
 }
 
 async function createBooking(
-  db: mysql.Pool,
-  customerId: number,
-  vehicleId: number,
-  storeId: number,
-  date: string,
-  time: string,
-  type: 'drop_off' | 'wait' | 'pickup_required' | 'loan_car_needed',
-  serviceTypeIds: number[],
-  notes?: string,
-  courtesyCarId?: number,
+  db: mysql.Pool, customerId: number, vehicleId: number, storeId: number, date: string,
+  time: string, type: 'drop_off' | 'wait' | 'pickup_required' | 'loan_car_needed',
+  serviceTypeIds: number[], notes?: string, courtesyCarId?: number,
 ): Promise<object> {
   const [[store]] = await db.query<any[]>('SELECT id, name FROM stores WHERE id = ? AND is_active = 1 LIMIT 1', [storeId])
   if (!store) return { error: 'Store not found' }
@@ -323,26 +359,20 @@ async function createBooking(
     if (stRows.length !== serviceTypeIds.length) return { error: 'One or more service types are invalid' }
   }
 
-  // Pick the first available hoist at this specific time
   const [[freeHoist]] = await db.query<any[]>(
     `SELECT id FROM hoists WHERE store_id = ? AND is_active = 1
        AND id NOT IN (
-         SELECT hoist_id FROM bookings
-         WHERE store_id = ? AND booking_date = ? AND booking_time = ?
-           AND cancelled_at IS NULL AND status NOT IN ('rejected','cancelled')
-           AND hoist_id IS NOT NULL
-       )
-     ORDER BY id LIMIT 1`,
+         SELECT hoist_id FROM bookings WHERE store_id = ? AND booking_date = ? AND booking_time = ?
+           AND cancelled_at IS NULL AND status NOT IN ('rejected','cancelled') AND hoist_id IS NOT NULL
+       ) ORDER BY id LIMIT 1`,
     [storeId, storeId, date, bookingTime],
   )
   const hoistId = freeHoist?.id ?? null
 
-  // Assign least-busy technician at this store
   const [[tech]] = await db.query<any[]>(
     `SELECT s.id, s.first_name, s.last_name,
-       (SELECT COUNT(*) FROM bookings b WHERE b.assigned_staff_id = s.id
-        AND b.booking_date = ? AND b.cancelled_at IS NULL
-        AND b.status NOT IN ('rejected','cancelled')) AS booking_count
+       (SELECT COUNT(*) FROM bookings b WHERE b.assigned_staff_id = s.id AND b.booking_date = ?
+        AND b.cancelled_at IS NULL AND b.status NOT IN ('rejected','cancelled')) AS booking_count
      FROM staff s
      WHERE s.store_id = ? AND s.role IN ('technician','senior_mechanic','qualified_mechanic','service_tech','tyre_tech','apprentice') AND s.is_active = 1
      ORDER BY booking_count ASC, s.id ASC LIMIT 1`,
@@ -351,16 +381,11 @@ async function createBooking(
   const techId   = tech?.id ?? null
   const techName = tech ? `${tech.first_name} ${tech.last_name}` : null
 
-  // Auto-assign courtesy car if needed and not already specified
   let resolvedCcId = courtesyCarId ?? null
   if (type === 'loan_car_needed' && !resolvedCcId) {
     const [[availableCar]] = await db.query<any[]>(
-      `SELECT id FROM courtesy_cars
-       WHERE status = 'active' AND (store_id = ? OR store_id IS NULL)
-         AND id NOT IN (
-           SELECT courtesy_car_id FROM bookings
-           WHERE courtesy_car_id IS NOT NULL AND booking_date = ? AND cancelled_at IS NULL
-         )
+      `SELECT id FROM courtesy_cars WHERE status = 'active' AND (store_id = ? OR store_id IS NULL)
+         AND id NOT IN (SELECT courtesy_car_id FROM bookings WHERE courtesy_car_id IS NOT NULL AND booking_date = ? AND cancelled_at IS NULL)
        ORDER BY id LIMIT 1`,
       [storeId, date],
     )
@@ -369,8 +394,6 @@ async function createBooking(
 
   const courtesyCar  = type === 'loan_car_needed' ? 1 : 0
   const ccAssignedAt = resolvedCcId ? new Date() : null
-
-  console.log('[createBooking]', { date, bookingTime, hoistId, techId, techName, resolvedCcId, type })
 
   const [result] = await db.query<any>(
     `INSERT INTO bookings (store_id, booking_ref, customer_id, vehicle_id, booking_date, booking_time,
@@ -389,196 +412,78 @@ async function createBooking(
   }
 
   const [[booking]] = await db.query<any[]>(
-    `SELECT b.booking_ref, b.booking_date, b.slot, b.status, s.name AS store_name
-     FROM bookings b JOIN stores s ON s.id = b.store_id WHERE b.id = ? LIMIT 1`,
+    'SELECT booking_ref, booking_date, slot, status, (SELECT name FROM stores WHERE id = store_id) AS store_name FROM bookings WHERE id = ? LIMIT 1',
     [bookingId],
   )
   const date_ = booking.booking_date instanceof Date
     ? booking.booking_date.toISOString().slice(0, 10)
     : String(booking.booking_date).slice(0, 10)
 
-  // Notify store staff (non-fatal)
-  const [[customer]] = await db.query<any[]>(
-    'SELECT first_name, last_name FROM customers WHERE id = ? LIMIT 1',
-    [customerId],
-  )
-  const [[veh]] = await db.query<any[]>(
-    'SELECT year, make, model FROM vehicles WHERE id = ? LIMIT 1',
-    [vehicleId],
-  )
-  const customerName  = customer ? `${customer.first_name} ${customer.last_name}` : 'Customer'
-  const vehicleLabel  = veh ? `${veh.year} ${veh.make} ${veh.model}` : 'Vehicle'
-  const slotLabel     = slot === 'morning' ? 'Morning' : 'Afternoon'
+  const [[customer]] = await db.query<any[]>('SELECT first_name, last_name FROM customers WHERE id = ? LIMIT 1', [customerId])
+  const [[veh]]      = await db.query<any[]>('SELECT year, make, model FROM vehicles WHERE id = ? LIMIT 1', [vehicleId])
+  const slotLabel    = slot === 'morning' ? 'Morning' : 'Afternoon'
   await notifyStore(db, storeId, {
-    type:      'booking_received',
-    title:     'New Booking',
-    body:      `${customerName} — ${vehicleLabel} — ${date_} (${slotLabel})`,
+    type: 'booking_received', title: 'New Booking',
+    body: `${customer ? `${customer.first_name} ${customer.last_name}` : 'Customer'} — ${veh ? `${veh.year} ${veh.make} ${veh.model}` : 'Vehicle'} — ${date_} (${slotLabel})`,
     bookingId,
   }).catch(() => {})
 
   return { bookingId, bookingRef: booking.booking_ref, date: date_, time: bookingSlot.label, slot: booking.slot, store: booking.store_name, technician: techName, confirmed: true }
 }
 
-async function checkCourtesyCars(db: mysql.Pool, storeId: number, date: string): Promise<object> {
-  const [cars] = await db.query<any[]>(
-    `SELECT cc.id, cc.make, cc.model, cc.year, cc.color
-     FROM courtesy_cars cc
-     WHERE cc.status = 'active'
-       AND (cc.store_id = ? OR cc.store_id IS NULL)
-       AND cc.id NOT IN (
-         SELECT b.courtesy_car_id FROM bookings b
-         WHERE b.courtesy_car_id IS NOT NULL
-           AND b.booking_date = ?
-           AND b.cancelled_at IS NULL
-       )`,
-    [storeId, date],
-  )
-  if (!cars.length) return { available: false, message: 'No courtesy cars available on that date.' }
-  return {
-    available: true,
-    cars: cars.map((c: any) => ({
-      id: c.id,
-      description: `${c.year ?? ''} ${c.make} ${c.model}${c.color ? ` (${c.color})` : ''}`.trim(),
-    })),
-  }
-}
-
-async function getVehicleValue(db: mysql.Pool, vehicleId: number): Promise<object> {
-  const [[v]] = await db.query<any[]>(
-    `SELECT make, model, year, series, fuel_type, transmission, body_type, colour,
-            odometer_current, rego_state
-     FROM vehicles WHERE id = ? AND is_active = 1 LIMIT 1`,
-    [vehicleId],
-  )
-  if (!v) return { error: 'Vehicle not found' }
-
-  const [[svcSummary]] = await db.query<any[]>(
-    `SELECT COUNT(*) AS service_count, SUM(vsl.total) AS total_spend
-     FROM vehicle_service_log vsl
-     WHERE vsl.vehicle_rego = (SELECT rego FROM vehicles WHERE id = ? LIMIT 1)`,
-    [vehicleId],
-  )
-
-  const odometerKm   = v.odometer_current ? Number(v.odometer_current) : null
-  const serviceCount = svcSummary ? Number(svcSummary.service_count) : 0
-  const totalSpend   = svcSummary?.total_spend ? Number(svcSummary.total_spend) : 0
-  const age          = new Date().getFullYear() - Number(v.year)
-
-  const prompt = `You are a vehicle valuation expert for the Australian used car market. Search for current listings of this exact vehicle on carsales.com.au, Autotrader Australia, and Gumtree Australia to find what comparable cars are actually selling for right now, then provide a market value estimate.
-
-## Vehicle to value
-${v.year} ${v.make} ${v.model}${v.series ? ` (${v.series})` : ''}
-Body: ${v.body_type ?? 'unknown'} | Fuel: ${v.fuel_type ?? 'unknown'} | Transmission: ${v.transmission ?? 'unknown'}
-Colour: ${v.colour ?? 'not specified'} | Registered in: ${v.rego_state}
-Age: ${age} years
-Odometer: ${odometerKm ? `${odometerKm.toLocaleString()} km` : 'unknown'}
-
-## Service Record
-Rodz workshop services on record: ${serviceCount}
-Total spend at Rodz: $${totalSpend.toFixed(0)} AUD
-${serviceCount > 0 ? 'This vehicle has a documented service history which adds value.' : 'No prior workshop service history on record.'}
-
-Search for current Australian listings of this vehicle, then respond in this exact JSON format (no markdown, raw JSON only):
-{
-  "estimatedValueAud": { "low": <number>, "mid": <number>, "high": <number> },
-  "comparableSales": [
-    { "price": <number>, "odometer": <number or null>, "description": "<brief listing summary>" }
-  ],
-  "condition": "<excellent|good|fair|poor>",
-  "conditionRationale": "<1 sentence>",
-  "keyFactors": [
-    { "factor": "<name>", "impact": "<positive|negative|neutral>", "detail": "<brief>" }
-  ],
-  "marketInsight": "<2-3 sentences on current Australian market for this vehicle>",
-  "sellTips": ["<tip 1>", "<tip 2>", "<tip 3>"],
-  "disclaimer": "This is an estimate based on current Australian listings. Actual sale price will vary based on vehicle condition, location, negotiation, and market timing."
-}`
-
-  const genAI      = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
-  const valueModel = genAI.getGenerativeModel({
+async function generateSessionTitle(db: mysql.Pool, sessionId: number, firstMessage: string): Promise<void> {
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
+  const model = genAI.getGenerativeModel({
     model: 'gemini-2.5-flash',
-    // @ts-ignore — googleSearch tool not yet in type definitions
-    tools: [{ googleSearch: {} }],
-    generationConfig: {
-      maxOutputTokens: 1500,
-      // @ts-ignore
-      thinkingConfig: { thinkingBudget: 0 },
-    },
+    generationConfig: { maxOutputTokens: 20, thinkingConfig: { thinkingBudget: 0 } } as any,
   })
-
-  try {
-    const result   = await valueModel.generateContent(prompt)
-    const raw      = result.response.text().trim()
-    const match    = raw.match(/```(?:json)?\s*([\s\S]*?)```/) ?? raw.match(/(\{[\s\S]*\})/)
-    const jsonText = match ? match[1].trim() : raw.trim()
-    const valuation = JSON.parse(jsonText)
-    return { vehicle: { year: v.year, make: v.make, model: v.model, odometerKm, serviceCount }, valuation }
-  } catch {
-    return { error: 'Could not retrieve market value at this time. Please try the Vehicle Value tab.' }
-  }
+  const result = await model.generateContent(
+    `Generate a 3-5 word title for a vehicle support chat that starts with this message. Return only the title, no punctuation, no quotes:\n\n"${firstMessage.slice(0, 300)}"`,
+  )
+  const title = result.response.text().trim().slice(0, 100)
+  if (title) await db.query('UPDATE customer_chat_sessions SET title = ? WHERE id = ?', [title, sessionId])
 }
 
 const TOOLS: Tool[] = [{
   functionDeclarations: [
     {
       name: 'checkAvailability',
-      description: 'Check available booking slots at a Rodz workshop for a given month. Call this before suggesting specific dates to the customer.',
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          storeId: { type: SchemaType.NUMBER, description: 'The store ID (1 = Rodz Somerville)' },
-          month:   { type: SchemaType.STRING, description: 'Month in YYYY-MM format, e.g. "2026-07"' },
-        },
-        required: ['storeId', 'month'],
-      },
+      description: 'Check available booking slots at a Rodz workshop for a given month.',
+      parameters: { type: SchemaType.OBJECT, properties: { storeId: { type: SchemaType.NUMBER }, month: { type: SchemaType.STRING } }, required: ['storeId', 'month'] },
     },
     {
       name: 'getServiceTypes',
-      description: 'Get the list of services available at Rodz workshops so you can present options to the customer and collect the correct service IDs for booking.',
+      description: 'Get the list of services available at Rodz workshops.',
       parameters: { type: SchemaType.OBJECT, properties: {} },
     },
     {
       name: 'checkTimeSlots',
-      description: 'Get available time slots for a specific date at a Rodz store. Use this when the customer already knows which date they want — avoids fetching the whole month. Returns only available slots (8am, 10am, 1pm, 3pm) with the assigned technician.',
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          storeId: { type: SchemaType.NUMBER, description: 'The store ID' },
-          date:    { type: SchemaType.STRING, description: 'The specific date in YYYY-MM-DD format' },
-        },
-        required: ['storeId', 'date'],
-      },
+      description: 'Get available time slots for a specific date at a Rodz store.',
+      parameters: { type: SchemaType.OBJECT, properties: { storeId: { type: SchemaType.NUMBER }, date: { type: SchemaType.STRING } }, required: ['storeId', 'date'] },
     },
     {
       name: 'checkCourtesyCars',
-      description: 'Check if a courtesy/loan car is available at a Rodz store on a specific date. Call this when the customer mentions they need a loan car, courtesy car, or a car to use while theirs is being serviced.',
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          storeId: { type: SchemaType.NUMBER, description: 'The store ID' },
-          date:    { type: SchemaType.STRING, description: 'The booking date in YYYY-MM-DD format' },
-        },
-        required: ['storeId', 'date'],
-      },
+      description: 'Check if a courtesy/loan car is available at a Rodz store on a specific date.',
+      parameters: { type: SchemaType.OBJECT, properties: { storeId: { type: SchemaType.NUMBER }, date: { type: SchemaType.STRING } }, required: ['storeId', 'date'] },
     },
     {
       name: 'getVehicleValue',
-      description: 'Get a live market value estimate for this vehicle by searching current Australian car listings (carsales.com.au, Autotrader, Gumtree). Call this when the customer asks what their vehicle is worth, its resale value, what they could sell it for, or anything about market value.',
+      description: 'Get a live market value estimate for this vehicle by searching current Australian car listings.',
       parameters: { type: SchemaType.OBJECT, properties: {} },
     },
     {
       name: 'bookAppointment',
-      description: 'Book a service appointment at a Rodz workshop for the customer. Only call this after confirming the date, slot, store, and services with the customer.',
+      description: 'Book a service appointment at a Rodz workshop. Only call after confirming all details with the customer.',
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
-          storeId:        { type: SchemaType.NUMBER, description: 'Store ID' },
-          date:           { type: SchemaType.STRING, description: 'Date in YYYY-MM-DD format' },
-          time:           { type: SchemaType.STRING, format: 'enum', enum: ['08:00', '10:00', '13:00', '15:00'], description: 'The specific booking time from checkTimeSlots. 08:00 = 8am, 10:00 = 10am, 13:00 = 1pm, 15:00 = 3pm.' },
-          type:           { type: SchemaType.STRING, format: 'enum', enum: ['drop_off', 'wait', 'pickup_required', 'loan_car_needed'], description: 'How the customer will manage their car. Use loan_car_needed if they want a courtesy car.' },
-          serviceTypeIds: { type: SchemaType.ARRAY, items: { type: SchemaType.NUMBER }, description: 'Array of service type IDs to book' },
-          notes:          { type: SchemaType.STRING, description: 'Optional notes from the customer' },
-          courtesyCarId:  { type: SchemaType.NUMBER, description: 'ID of the courtesy car to assign (from checkCourtesyCars result). Only provide when type is loan_car_needed.' },
+          storeId:        { type: SchemaType.NUMBER },
+          date:           { type: SchemaType.STRING },
+          time:           { type: SchemaType.STRING, format: 'enum', enum: ['08:00', '10:00', '13:00', '15:00'] },
+          type:           { type: SchemaType.STRING, format: 'enum', enum: ['drop_off', 'wait', 'pickup_required', 'loan_car_needed'] },
+          serviceTypeIds: { type: SchemaType.ARRAY, items: { type: SchemaType.NUMBER } },
+          notes:          { type: SchemaType.STRING },
+          courtesyCarId:  { type: SchemaType.NUMBER },
         },
         required: ['storeId', 'date', 'time', 'type', 'serviceTypeIds'],
       },
@@ -591,48 +496,56 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   const db        = getPool()
   const ctx       = getCustomerContext(event)
   const vehicleId = Number(event.pathParameters?.id)
+  const sessionId = Number(event.pathParameters?.sessionId)
 
   try {
-    await ensureToolCallsColumn(db)
-
     const [[ownership]] = await db.query<any[]>(
       'SELECT id FROM vehicle_owners WHERE vehicle_id = ? AND customer_id = ? AND is_current = 1 LIMIT 1',
       [vehicleId, ctx.customerId],
     )
     if (!ownership) return forbidden()
 
-    const body     = JSON.parse(event.body ?? '{}')
-    const content  = body.content ? String(body.content).trim() : null
-    const imageId  = body.imageId ? String(body.imageId) : null
+    const [[session]] = await db.query<any[]>(
+      'SELECT id FROM customer_chat_sessions WHERE id = ? AND vehicle_id = ? AND customer_id = ? LIMIT 1',
+      [sessionId, vehicleId, ctx.customerId],
+    )
+    if (!session) return notFound('Session')
+
+    const body    = JSON.parse(event.body ?? '{}')
+    const content = body.content ? String(body.content).trim() : null
+    const imageId = body.imageId ? String(body.imageId) : null
 
     if (!content && !imageId) return validationError('content or imageId is required')
 
-    // Save user message
+    // Check if this is the first message in the session for auto-title
+    const [[countRow]] = await db.query<any[]>(
+      'SELECT COUNT(*) AS cnt FROM customer_vehicle_chats WHERE session_id = ?',
+      [sessionId],
+    )
+    const isFirstMessage = Number(countRow.cnt) === 0
+
     const [userInsert] = await db.query<any>(
-      'INSERT INTO customer_vehicle_chats (vehicle_id, customer_id, role, content, image_id) VALUES (?,?,?,?,?)',
-      [vehicleId, ctx.customerId, 'user', content, imageId],
+      'INSERT INTO customer_vehicle_chats (vehicle_id, customer_id, session_id, role, content, image_id) VALUES (?,?,?,?,?,?)',
+      [vehicleId, ctx.customerId, sessionId, 'user', content, imageId],
     )
     const userMessageId = userInsert.insertId
 
-    // Build context and history in parallel
     const [vehicleContext, historyResult, customerResult] = await Promise.all([
       buildCustomerVehicleContext(db, vehicleId),
       db.query<any[]>(
         `SELECT role, content, image_id, tool_calls FROM customer_vehicle_chats
-         WHERE vehicle_id = ? AND customer_id = ? AND id < ?
-         ORDER BY id ASC LIMIT 40`,
-        [vehicleId, ctx.customerId, userMessageId],
+         WHERE session_id = ? AND id < ? ORDER BY id ASC LIMIT 40`,
+        [sessionId, userMessageId],
       ),
-      db.query<any[]>(
-        'SELECT first_name, gender FROM customers WHERE id = ? LIMIT 1',
-        [ctx.customerId],
-      ),
+      db.query<any[]>('SELECT first_name, gender FROM customers WHERE id = ? LIMIT 1', [ctx.customerId])
+        .catch(() => [[]] as [any[]]),
     ])
 
-    const customer         = customerResult[0][0]
+    const customer          = customerResult[0][0]
     const customerFirstName = customer?.first_name ?? null
-    const assistantName    = 'Rod'
-    const today = new Date().toISOString().slice(0, 10)
+    const assistantName     = 'Rod'
+    const today             = new Date().toISOString().slice(0, 10)
+
     const systemInstruction = `You are ${assistantName}, a friendly and knowledgeable vehicle assistant for Rodz, an Australian automotive workshop. You are talking directly with the vehicle owner — not a mechanic. Use plain English, be warm and helpful, and avoid jargon unless you explain it.
 ${customerFirstName ? `\nThe customer's name is ${customerFirstName}. Use their name naturally in conversation — not in every message, just where it feels warm and personal.\n` : ''}
 Today's date is ${today}. Always use this when reasoning about availability, service due dates, or anything time-related.
@@ -647,29 +560,28 @@ ${vehicleContext}
 When helping with booking, follow these steps in order:
 1. Call getServiceTypes to fetch the real service list from the database
 2. Present the actual service names to the customer and ask which one(s) they want — do NOT invent service names or guess IDs
-3. If the customer mentions a specific date (e.g. "the 12th", "August 12th", "next Tuesday"), call checkTimeSlots for that exact date — do NOT fetch the whole month
+3. If the customer mentions a specific date, call checkTimeSlots for that exact date — do NOT fetch the whole month
 4. If no specific date is mentioned, call checkAvailability for the relevant month. Present options clearly (e.g. "Tuesday 12th August — 8:00 AM with Mike G, or 3:00 PM with Sarah K")
-5. When the customer replies with a time (e.g. "1:00 PM", "8am") — that is their selection. Do NOT call checkAvailability or checkTimeSlots again
+5. When the customer replies with a time — that is their selection. Do NOT call checkAvailability or checkTimeSlots again
 6. Ask how they'll manage their car: dropping it off, waiting, or needing a courtesy car
-7. If they want a courtesy car, call checkCourtesyCars for that store and date — tell them what's available (make/model)
-8. Include any symptom or issue the customer described in the notes field (e.g. "Customer reports low compression issue")
-9. Show a summary of ALL details (service, date, time, drop-off type) and ask the customer to confirm before calling bookAppointment
+7. If they want a courtesy car, call checkCourtesyCars for that store and date
+8. Include any symptom or issue the customer described in the notes field
+9. Show a summary of ALL details and ask the customer to confirm before calling bookAppointment
 10. After booking, confirm with their booking reference, time, and the technician's name if assigned
 
-For vehicle diagnosis: ask them to describe symptoms (sounds, when it happens, warning lights) and give helpful guidance while recommending a professional inspection for anything safety-related.
+For vehicle diagnosis: ask them to describe symptoms and give helpful guidance while recommending a professional inspection for anything safety-related.
 
-If the customer asks what their vehicle is worth, what they could sell it for, or anything about market value — use the getVehicleValue tool. It performs a live search of current Australian listings and returns a real estimate.
+If the customer asks what their vehicle is worth — use the getVehicleValue tool.
 
 Keep responses conversational and concise. Use markdown for lists or emphasis where it helps readability.`
 
     const historyRows: any[] = historyResult[0]
     const contents: Content[] = []
+
     for (const msg of historyRows) {
       if (msg.role === 'model' && msg.tool_calls) {
-        // Replay function call sequence so Gemini has full context on next turn
         const toolCalls: { name: string; args: any; result: any }[] = typeof msg.tool_calls === 'string'
-          ? JSON.parse(msg.tool_calls)
-          : msg.tool_calls
+          ? JSON.parse(msg.tool_calls) : msg.tool_calls
         for (const tc of toolCalls) {
           contents.push({ role: 'model', parts: [{ functionCall: { name: tc.name, args: tc.args } }] })
           contents.push({ role: 'user',  parts: [{ functionResponse: { name: tc.name, response: tc.result } }] })
@@ -700,10 +612,7 @@ Keep responses conversational and concise. Use markdown for lists or emphasis wh
       model:             'gemini-2.5-flash',
       systemInstruction: { role: 'system', parts: [{ text: systemInstruction }] },
       tools:             TOOLS,
-      generationConfig:  {
-        // @ts-ignore — thinkingConfig not yet in type definitions
-        thinkingConfig: { thinkingBudget: 0 },
-      },
+      generationConfig:  { thinkingConfig: { thinkingBudget: 0 } } as any,
     })
 
     let fullResponse = ''
@@ -713,7 +622,7 @@ Keep responses conversational and concise. Use markdown for lists or emphasis wh
 
     while (loopCount < MAX_LOOPS) {
       loopCount++
-      const result = await model.generateContent({ contents })
+      const result    = await model.generateContent({ contents })
       const candidate = result.response.candidates?.[0]
       if (!candidate) break
 
@@ -721,12 +630,8 @@ Keep responses conversational and concise. Use markdown for lists or emphasis wh
       let chunkText = ''
 
       for (const part of candidate.content?.parts ?? []) {
-        if (part.text) {
-          chunkText    += part.text
-          fullResponse += part.text
-        } else if (part.functionCall) {
-          functionCallPart = part.functionCall
-        }
+        if (part.text)         { chunkText += part.text; fullResponse += part.text }
+        else if (part.functionCall) { functionCallPart = part.functionCall }
       }
 
       if (!functionCallPart) break
@@ -734,53 +639,41 @@ Keep responses conversational and concise. Use markdown for lists or emphasis wh
       const { name, args } = functionCallPart
       let fnResult: object
 
-      if (name === 'checkTimeSlots') {
-        fnResult = await checkTimeSlots(db, Number(args.storeId), String(args.date))
-      } else if (name === 'checkCourtesyCars') {
-        fnResult = await checkCourtesyCars(db, Number(args.storeId), String(args.date))
-      } else if (name === 'getVehicleValue') {
-        fnResult = await getVehicleValue(db, vehicleId)
-      } else if (name === 'checkAvailability') {
-        fnResult = await checkAvailability(db, Number(args.storeId), String(args.month))
-      } else if (name === 'getServiceTypes') {
+      if (name === 'checkTimeSlots')     { fnResult = await checkTimeSlots(db, Number(args.storeId), String(args.date)) }
+      else if (name === 'checkCourtesyCars') { fnResult = await checkCourtesyCars(db, Number(args.storeId), String(args.date)) }
+      else if (name === 'getVehicleValue')   { fnResult = await getVehicleValue(db, vehicleId) }
+      else if (name === 'checkAvailability') { fnResult = await checkAvailability(db, Number(args.storeId), String(args.month)) }
+      else if (name === 'getServiceTypes') {
         const [rows] = await db.query<any[]>(
-          `SELECT id, name, category, description, fixed_price, labour_hours_estimate
-           FROM service_types WHERE is_active = 1 ORDER BY sort_order, name`,
+          'SELECT id, name, category, description, fixed_price, labour_hours_estimate FROM service_types WHERE is_active = 1 ORDER BY sort_order, name',
         )
-        fnResult = { services: rows.map((r: any) => ({
-          id: r.id, name: r.name, category: r.category, description: r.description ?? null,
-          fixedPrice: r.fixed_price ? Number(r.fixed_price) : null,
-          estimatedHours: Number(r.labour_hours_estimate),
-        }))}
+        fnResult = { services: rows.map((r: any) => ({ id: r.id, name: r.name, category: r.category, description: r.description ?? null, fixedPrice: r.fixed_price ? Number(r.fixed_price) : null, estimatedHours: Number(r.labour_hours_estimate) })) }
       } else if (name === 'bookAppointment') {
         fnResult = await createBooking(
-          db, ctx.customerId, vehicleId,
-          Number(args.storeId), String(args.date),
-          String(args.time),
-          (args.type as 'drop_off' | 'wait' | 'pickup_required' | 'loan_car_needed') ?? 'drop_off',
-          (args.serviceTypeIds as number[]) ?? [],
-          args.notes ? String(args.notes) : undefined,
-          args.courtesyCarId ? Number(args.courtesyCarId) : undefined,
+          db, ctx.customerId, vehicleId, Number(args.storeId), String(args.date), String(args.time),
+          (args.type as any) ?? 'drop_off', (args.serviceTypeIds as number[]) ?? [],
+          args.notes ? String(args.notes) : undefined, args.courtesyCarId ? Number(args.courtesyCarId) : undefined,
         )
-      } else {
-        fnResult = { error: `Unknown function: ${name}` }
-      }
+      } else { fnResult = { error: `Unknown function: ${name}` } }
 
       functionCalls.push({ name, args, result: fnResult })
 
-      if (chunkText) {
-        contents.push({ role: 'model', parts: [{ text: chunkText }, { functionCall: functionCallPart }] })
-      } else {
-        contents.push({ role: 'model', parts: [{ functionCall: functionCallPart }] })
-      }
+      if (chunkText) { contents.push({ role: 'model', parts: [{ text: chunkText }, { functionCall: functionCallPart }] }) }
+      else           { contents.push({ role: 'model', parts: [{ functionCall: functionCallPart }] }) }
       contents.push({ role: 'user', parts: [{ functionResponse: { name, response: fnResult } }] })
     }
 
     const toolCallsJson = functionCalls.length ? JSON.stringify(functionCalls) : null
     const [modelInsert] = await db.query<any>(
-      'INSERT INTO customer_vehicle_chats (vehicle_id, customer_id, role, content, tool_calls) VALUES (?,?,?,?,?)',
-      [vehicleId, ctx.customerId, 'model', fullResponse || null, toolCallsJson],
+      'INSERT INTO customer_vehicle_chats (vehicle_id, customer_id, session_id, role, content, tool_calls) VALUES (?,?,?,?,?,?)',
+      [vehicleId, ctx.customerId, sessionId, 'model', fullResponse || null, toolCallsJson],
     )
+
+    await db.query('UPDATE customer_chat_sessions SET updated_at = NOW() WHERE id = ?', [sessionId])
+
+    if (isFirstMessage && content) {
+      await generateSessionTitle(db, sessionId, content).catch(() => {})
+    }
 
     return ok({
       userMessageId,

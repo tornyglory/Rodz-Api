@@ -66,6 +66,7 @@ export function buildCustomer(row: any, vehicles: ReturnType<typeof buildVehicle
     state:          row.state       ?? null,
     postcode:       row.postcode    ?? null,
     dateOfBirth:    row.date_of_birth ? toDate(row.date_of_birth) : null,
+    gender:         row.gender        ?? null,
     avatarUrl:      avatarUrls?.public    ?? null,
     avatarThumbUrl: avatarUrls?.thumbnail ?? null,
     marketingOptIn: Boolean(row.marketing_opt_in),
