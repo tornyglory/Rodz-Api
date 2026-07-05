@@ -1,0 +1,22 @@
+CREATE TABLE vehicle_service_log_external (
+  id              bigint unsigned NOT NULL AUTO_INCREMENT,
+  vehicle_id      bigint unsigned NOT NULL,
+  customer_id     bigint unsigned NOT NULL,
+  image_id        varchar(255)    NOT NULL,
+  workshop_name   varchar(200)    NULL,
+  workshop_suburb varchar(100)    NULL,
+  service_date    date            NULL,
+  odometer_km     int unsigned    NULL,
+  services        text            NULL,
+  amount_aud      decimal(10,2)   NULL,
+  invoice_number  varchar(100)    NULL,
+  ai_raw          json            NULL,
+  status          enum('pending','extracted','failed') NOT NULL DEFAULT 'pending',
+  created_at      datetime        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      datetime        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_vehicle (vehicle_id),
+  KEY idx_date (service_date),
+  FOREIGN KEY (vehicle_id)  REFERENCES vehicles(id),
+  FOREIGN KEY (customer_id) REFERENCES customers(id)
+);

@@ -4,6 +4,7 @@ import { getPool } from '../../shared/db'
 import { ok, forbidden, notFound, serverError } from '../../shared/errors'
 import { getInvoiceItems } from '../../invoices/_helpers'
 import { getCustomerContext } from '../_helpers'
+import { imageUrls } from '../../shared/cloudflare'
 
 const ready       = bootstrap()
 const FRONTEND_URL = process.env.FRONTEND_URL ?? ''
@@ -50,7 +51,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const invoiceIds = rows.map((r: any) => r.invoice_id)
     const itemsMap   = invoiceIds.length ? await getInvoiceItems(db, invoiceIds) : new Map()
 
-    const entries = rows.map((r: any) => {
+    const rodzEntries = rows.map((r: any) => {
       const items  = itemsMap.get(r.invoice_id) ?? []
       const photos = items.flatMap((item: any) => item.photos ?? [])
 
@@ -68,6 +69,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         invoiceNumber: r.invoice_number,
         invoiceUrl:    r.invoice_token ? `${FRONTEND_URL}/invoice/${r.invoice_token}` : null,
         aiSummary:     r.ai_summary    ?? null,
+        imageUrl:      null,
         photos,
         lineItems: items.map((item: any) => ({
           type:        item.type,
@@ -76,6 +78,47 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
           unitPrice:   item.unitPrice,
         })),
       }
+    })
+
+    // Merge in external entries (customer-imported invoices)
+    const [extRows] = await db.query<any[]>(
+      `SELECT id, image_id, workshop_name, workshop_suburb, service_date,
+              odometer_km, services, amount_aud, invoice_number
+       FROM vehicle_service_log_external
+       WHERE vehicle_id = ? AND customer_id = ?
+       ORDER BY service_date DESC, id DESC`,
+      [vehicleId, ctx.customerId],
+    ).catch(() => [[]] as any)
+
+    const externalEntries = extRows.map((r: any) => ({
+      id:            `ext-${r.id}`,
+      source:        'external' as const,
+      date:          r.service_date ? toDate(r.service_date) : null,
+      odometerKm:    r.odometer_km   != null ? Number(r.odometer_km)  : null,
+      title:         r.services ? (r.services.split('.')[0] ?? 'Service') : 'Service',
+      workshop:      r.workshop_name   ?? null,
+      tech:          null,
+      cost:          r.amount_aud      != null ? Number(r.amount_aud)  : null,
+      status:        null,
+      invoiceId:     null,
+      invoiceNumber: r.invoice_number  ?? null,
+      invoiceUrl:    null,
+      aiSummary:     r.services        ?? null,
+      imageUrl:      r.image_id ? imageUrls(r.image_id).public : null,
+      photos:        [],
+      lineItems:     [],
+    }))
+
+    // Merge and sort by date descending, Rodz jobs first on same date
+    const entries = [...rodzEntries, ...externalEntries].sort((a, b) => {
+      if (!a.date && !b.date) return 0
+      if (!a.date) return 1
+      if (!b.date) return -1
+      if (b.date !== a.date) return b.date.localeCompare(a.date)
+      // Same date: workshop entries first
+      if (a.source === 'workshop' && b.source !== 'workshop') return -1
+      if (b.source === 'workshop' && a.source !== 'workshop') return 1
+      return 0
     })
 
     return ok({
