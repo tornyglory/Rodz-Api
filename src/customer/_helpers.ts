@@ -77,6 +77,7 @@ export function buildCustomer(row: any, vehicles: ReturnType<typeof buildVehicle
     gender:         row.gender        ?? null,
     avatarUrl:      avatarUrls?.public    ?? null,
     avatarThumbUrl: avatarUrls?.thumbnail ?? null,
+    isPremium:      Boolean(row.is_premium),
     marketingOptIn: Boolean(row.marketing_opt_in),
     smsOptIn:       Boolean(row.sms_opt_in),
     memberSince:    row.created_at ? toDate(row.created_at) : null,
