@@ -2,7 +2,7 @@ import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { bootstrap } from '../../../shared/bootstrap'
 import { getPool } from '../../../shared/db'
 import { ok, forbidden, notFound, validationError, serverError } from '../../../shared/errors'
-import { getCustomerContext } from '../../_helpers'
+import { getCustomerContext, isPremium } from '../../_helpers'
 import { imageUrls } from '../../../shared/cloudflare'
 
 const ready = bootstrap()
@@ -20,6 +20,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [vehicleId, ctx.customerId],
     )
     if (!ownership) return forbidden()
+    if (!await isPremium(db, ctx.customerId)) return forbidden()
 
     const [[existing]] = await db.query<any[]>(
       'SELECT id FROM vehicle_service_log_external WHERE id = ? AND vehicle_id = ? AND customer_id = ? LIMIT 1',

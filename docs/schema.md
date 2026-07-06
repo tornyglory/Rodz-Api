@@ -137,6 +137,7 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | `suburb` | varchar(80) | YES | — |
 | `state` | char(3) | YES | — |
 | `postcode` | char(4) | YES | — |
+| `is_premium` | tinyint(1) | NO | `0` |
 | `preferred_contact` | enum | NO | `mobile` |
 | `marketing_opt_in` | tinyint(1) | NO | `1` |
 | `sms_opt_in` | tinyint(1) | NO | `1` |

@@ -1,8 +1,8 @@
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
-import { ok, validationError, serverError } from '../../shared/errors'
-import { getCustomerContext } from '../_helpers'
+import { ok, forbidden, validationError, serverError } from '../../shared/errors'
+import { getCustomerContext, isPremium } from '../_helpers'
 
 const ready = bootstrap()
 
@@ -11,8 +11,10 @@ const VALID_FUEL_TYPES = ['unleaded_91','unleaded_95','unleaded_98','diesel','lp
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
   const db  = getPool()
-  getCustomerContext(event) // auth check only
+  const ctx = getCustomerContext(event)
   const q   = event.queryStringParameters ?? {}
+
+  if (!await isPremium(db, ctx.customerId)) return forbidden()
 
   const suburb   = q.suburb?.trim()
   const state    = q.state?.trim().toUpperCase() ?? null

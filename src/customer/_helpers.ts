@@ -11,6 +11,14 @@ export function getCustomerContext(event: APIGatewayProxyEventV2): CustomerConte
   return { customerId: Number(ctx.customerId ?? 0) }
 }
 
+export async function isPremium(db: any, customerId: number): Promise<boolean> {
+  const [[cust]] = await db.query<any[]>(
+    'SELECT is_premium FROM customers WHERE id = ? LIMIT 1',
+    [customerId],
+  )
+  return !!cust?.is_premium
+}
+
 export function buildVehicleSummary(row: any) {
   return {
     id:            row.id            as number,

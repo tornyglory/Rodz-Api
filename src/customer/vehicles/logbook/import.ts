@@ -3,7 +3,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai'
 import { bootstrap } from '../../../shared/bootstrap'
 import { getPool } from '../../../shared/db'
 import { ok, forbidden, validationError, serverError } from '../../../shared/errors'
-import { getCustomerContext } from '../../_helpers'
+import { getCustomerContext, isPremium } from '../../_helpers'
 import { imageUrls } from '../../../shared/cloudflare'
 
 const ready   = bootstrap()
@@ -36,6 +36,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [vehicleId, ctx.customerId],
     )
     if (!ownership) return forbidden()
+    if (!await isPremium(db, ctx.customerId)) return forbidden()
 
     const body    = JSON.parse(event.body ?? '{}')
     const imageId = body.imageId ? String(body.imageId) : null

@@ -2,7 +2,7 @@ import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { bootstrap } from '../../../shared/bootstrap'
 import { getPool } from '../../../shared/db'
 import { forbidden, serverError } from '../../../shared/errors'
-import { getCustomerContext } from '../../_helpers'
+import { getCustomerContext, isPremium } from '../../_helpers'
 
 const ready = bootstrap()
 
@@ -28,6 +28,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [vehicleId, ctx.customerId],
     )
     if (!ownership) return forbidden()
+    if (!await isPremium(db, ctx.customerId)) return forbidden()
 
     const [[veh]] = await db.query<any[]>(
       'SELECT rego, make, model, year FROM vehicles WHERE id = ? LIMIT 1',
