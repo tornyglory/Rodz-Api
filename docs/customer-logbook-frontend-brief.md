@@ -1,6 +1,6 @@
 # Customer Vehicle Logbook — Frontend Implementation Brief
 
-The vehicle logbook is a combined timeline of every service event in the vehicle's life: jobs completed at a Rodz workshop **plus** any external invoices the customer has imported themselves. Customers can photograph past paper invoices or receipts and Rod (AI) extracts the details automatically.
+The logbook is a unified timeline of every service event in the life of a vehicle. It combines jobs completed at a Rodz workshop with invoices the customer has imported themselves from other garages. Customers photograph a past paper invoice, Rod (AI) extracts the details, and the entry appears in the same timeline as their Rodz history.
 
 ---
 
@@ -20,23 +20,21 @@ Authorization: Bearer <customer_jwt>
 
 ## Endpoints
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET`   | `/c/vehicles/:id/logbook` | Customer JWT | Full merged timeline (Rodz jobs + external entries) |
-| `GET`   | `/c/vehicles/:id/logbook/upload-url` | Customer JWT | Get Cloudflare upload URL for an invoice photo |
-| `POST`  | `/c/vehicles/:id/logbook/import` | Customer JWT | AI-scan an uploaded invoice and create an external entry |
-| `PATCH` | `/c/vehicles/:id/logbook/external/:entryId` | Customer JWT | Edit/correct an external entry |
-| `DELETE`| `/c/vehicles/:id/logbook/external/:entryId` | Customer JWT | Remove an external entry |
-
-> **Backend note:** `GET /c/vehicles/:id/logbook` currently returns Rodz workshop jobs only. The Phase 3 import endpoints and the external-entry merge into the logbook response are not yet built. Both are required before this page can go live.
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`    | `/c/vehicles/:id/logbook` | Full merged timeline — Rodz jobs + imported entries |
+| `GET`    | `/c/vehicles/:id/logbook/upload-url` | Get Cloudflare upload URL for an invoice photo |
+| `POST`   | `/c/vehicles/:id/logbook/import` | AI-scan an uploaded invoice and save the entry |
+| `PATCH`  | `/c/vehicles/:id/logbook/external/:entryId` | Edit a customer-imported entry |
+| `DELETE` | `/c/vehicles/:id/logbook/external/:entryId` | Delete a customer-imported entry |
 
 ---
 
-## Fetch the logbook
+## Get the logbook
 
 ### `GET /c/vehicles/:id/logbook`
 
-Call on mount. Returns vehicle info and the full merged service timeline sorted newest first.
+Call on mount. Returns vehicle metadata and all entries sorted newest first. Rodz jobs and customer-imported entries use the same shape — use the `source` field to differentiate them.
 
 **Response — 200**
 ```json
@@ -55,7 +53,7 @@ Call on mount. Returns vehicle info and the full merged service timeline sorted 
     {
       "id":            "job-12",
       "source":        "workshop",
-      "date":          "2026-06-18",
+      "date":          "2026-06-25",
       "odometerKm":    87400,
       "title":         "Full service — oil, filters, brake inspection",
       "workshop":      "Frankston Rodz",
@@ -79,9 +77,9 @@ Call on mount. Returns vehicle info and the full merged service timeline sorted 
         }
       ],
       "lineItems": [
-        { "type": "labour", "description": "Full Service",     "quantity": 1, "unitPrice": 220.00 },
-        { "type": "part",   "description": "Oil Filter",       "quantity": 1, "unitPrice": 28.00  },
-        { "type": "part",   "description": "Air Filter",       "quantity": 1, "unitPrice": 45.00  }
+        { "type": "labour", "description": "Full Service", "quantity": 1, "unitPrice": 220.00 },
+        { "type": "part",   "description": "Oil Filter",   "quantity": 1, "unitPrice": 28.00  },
+        { "type": "part",   "description": "Air Filter",   "quantity": 1, "unitPrice": 45.00  }
       ]
     },
     {
@@ -106,40 +104,66 @@ Call on mount. Returns vehicle info and the full merged service timeline sorted 
 }
 ```
 
-### Entry field reference
+### Entry fields
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `id` | string | Prefixed: `"job-{n}"` for Rodz jobs, `"ext-{n}"` for external entries |
-| `source` | string | `"workshop"` (Rodz) or `"external"` (customer imported) |
-| `date` | string | `YYYY-MM-DD` |
+| `id` | string | `"job-{n}"` for Rodz jobs, `"ext-{n}"` for imported entries |
+| `source` | string | `"workshop"` or `"external"` |
+| `date` | string \| null | `YYYY-MM-DD`. Can be `null` on external entries if not yet edited. |
 | `odometerKm` | number \| null | Odometer at time of service |
-| `title` | string | First sentence of `aiSummary`, or invoice number as fallback |
-| `workshop` | string \| null | Workshop / garage name |
-| `tech` | string \| null | Technician — only set on Rodz jobs |
+| `title` | string | First sentence of `aiSummary`, or invoice number, or `"Service"` as final fallback |
+| `workshop` | string \| null | Workshop or garage name |
+| `tech` | string \| null | Technician name — Rodz jobs only |
 | `cost` | number \| null | Total amount paid |
-| `status` | string \| null | `"paid"` / `"sent"` for Rodz jobs; `null` for external entries |
-| `invoiceId` | number \| null | Rodz invoice ID — only on `source: "workshop"` |
-| `invoiceNumber` | string \| null | Invoice number |
-| `invoiceUrl` | string \| null | Deep link to Rodz invoice — only on `source: "workshop"` |
-| `aiSummary` | string \| null | AI plain-English summary of work done |
-| `imageUrl` | string \| null | Scanned invoice photo — only on `source: "external"` |
-| `photos` | array | Workshop photos — only on `source: "workshop"` |
-| `lineItems` | array | Invoice line items — only on `source: "workshop"` |
+| `status` | string \| null | `"paid"` or `"sent"` for Rodz jobs; `null` for external entries |
+| `invoiceId` | number \| null | Rodz invoice ID — Rodz jobs only |
+| `invoiceNumber` | string \| null | Invoice or job number |
+| `invoiceUrl` | string \| null | Deep link to Rodz invoice page — Rodz jobs only |
+| `aiSummary` | string \| null | AI plain-English summary — set on Rodz jobs; also used for `services` on external entries |
+| `imageUrl` | string \| null | Scanned invoice photo URL — external entries only |
+| `photos` | array | Workshop job photos — Rodz jobs only |
+| `lineItems` | array | Invoice line items — Rodz jobs only |
+
+### `lineItems[]` fields
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `type` | string | `"part"` \| `"labour"` \| `"other"` |
+| `description` | string | |
+| `quantity` | number | |
+| `unitPrice` | number | Retail price — safe to display |
+
+### `photos[]` fields
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | number | |
+| `imageId` | string | Cloudflare image ID |
+| `caption` | string \| null | |
+| `urls.thumbnail` | string | Use in photo grid |
+| `urls.public` | string | Use in lightbox |
 
 ---
 
 ## Import an external invoice
 
-Adding a past invoice is a three-step flow: **upload → scan → review & save.**
+Three steps: **upload → scan → review.**
 
 ```
-1. GET  /c/vehicles/:id/logbook/upload-url    →  { uploadUrl, imageId }
-2. PUT  uploadUrl  (Cloudflare direct upload)
-3. POST /c/vehicles/:id/logbook/import  { imageId }  →  extracted fields
-4. Show pre-filled review form
-5. Customer confirms or corrects → entry is saved (no separate confirm call needed — import saves immediately)
-6. If edits needed → PATCH /c/vehicles/:id/logbook/external/:entryId
+1. GET  /c/vehicles/:id/logbook/upload-url
+         → { uploadUrl, imageId }
+
+2. POST  uploadUrl  with FormData  (direct to Cloudflare — no auth header)
+         → wait for 200 before continuing
+
+3. POST /c/vehicles/:id/logbook/import  { imageId }
+         → { id, status, workshopName, serviceDate, ... }
+
+4. Open review form pre-filled with extracted fields
+   Entry is already saved — id is the entryId for PATCH/DELETE
+
+5. Customer edits anything → PATCH /c/vehicles/:id/logbook/external/:entryId
 ```
 
 ---
@@ -148,7 +172,7 @@ Adding a past invoice is a three-step flow: **upload → scan → review & save.
 
 `GET /c/vehicles/:id/logbook/upload-url`
 
-No request body.
+No body. Save both values — you need `uploadUrl` for the upload and `imageId` for the import call.
 
 **Response — 200**
 ```json
@@ -164,16 +188,17 @@ No request body.
 
 ```javascript
 const form = new FormData()
-form.append('file', imageFile)
+form.append('file', imageFile)   // File from camera or photo library
 
 await fetch(uploadUrl, {
   method: 'POST',
   body: form,
-  // Do NOT set Content-Type — let fetch set it with the multipart boundary
+  // Do NOT manually set Content-Type — fetch sets it automatically
+  // with the multipart boundary. Setting it manually breaks the upload.
 })
 ```
 
-Wait for the upload to complete before calling import.
+Wait for the fetch to resolve with a 200 before calling import.
 
 ---
 
@@ -186,74 +211,78 @@ Wait for the upload to complete before calling import.
 { "imageId": "abc123-..." }
 ```
 
-**Response — 200 (successful extraction)**
+**Response — 200 (extraction succeeded)**
 ```json
 {
-  "id":            5,
-  "status":        "extracted",
-  "workshopName":  "Frankston Automotive",
-  "workshopSuburb":"Frankston",
-  "serviceDate":   "2024-11-03",
-  "odometerKm":    72000,
-  "services":      "Full service — oil, filter, spark plugs, brake inspection",
-  "amountAud":     385.00,
-  "invoiceNumber": "INV-2241",
-  "imageUrl":      "https://imagedelivery.net/...public"
+  "id":             5,
+  "status":         "extracted",
+  "workshopName":   "Frankston Automotive",
+  "workshopSuburb": "Frankston",
+  "serviceDate":    "2024-11-03",
+  "odometerKm":     72000,
+  "services":       "Full service — oil, filter, spark plugs, brake inspection",
+  "amountAud":      385.00,
+  "invoiceNumber":  "INV-2241",
+  "imageUrl":       "https://imagedelivery.net/...public"
 }
 ```
 
-**Response — 200 (extraction failed)**
+**Response — 200 (extraction failed — illegible image or wrong image type)**
 ```json
 {
-  "id":            6,
-  "status":        "failed",
-  "workshopName":  null,
-  "workshopSuburb":null,
-  "serviceDate":   null,
-  "odometerKm":    null,
-  "services":      null,
-  "amountAud":     null,
-  "invoiceNumber": null,
-  "imageUrl":      "https://imagedelivery.net/...public"
+  "id":             6,
+  "status":         "failed",
+  "workshopName":   null,
+  "workshopSuburb": null,
+  "serviceDate":    null,
+  "odometerKm":     null,
+  "services":       null,
+  "amountAud":      null,
+  "invoiceNumber":  null,
+  "imageUrl":       "https://imagedelivery.net/...public"
 }
 ```
 
-The entry is saved immediately on import — the `id` returned is the `entryId` used for subsequent PATCH/DELETE calls. Open the review form whether extraction succeeded or failed.
+Always returns 200 — never returns an error for a failed extraction. The entry is saved either way. `id` is the `entryId` for all subsequent PATCH/DELETE calls.
 
-**Status values**
+| `status` | What to show |
+|----------|-------------|
+| `extracted` | Pre-fill form. Show "Please check the details before saving." |
+| `failed` | Open blank form. Show "We couldn't read this image — please enter the details manually." The photo is still attached. |
 
-| Value | Action |
-|-------|--------|
-| `extracted` | Pre-fill form fields from the response. Show a "Please check the details" prompt. |
-| `failed` | Open blank form. Show "We couldn't read this invoice — please enter the details." The photo is still attached. |
-
----
-
-### Step 4 — Review form (edit if needed)
-
-Show a form pre-filled with the extracted values. All fields are optional — the customer can correct anything or leave a field blank.
-
-| Field | Input type | Notes |
-|-------|-----------|-------|
-| Workshop name | Text | |
-| Suburb | Text | |
-| Date of service | Date picker | |
-| Odometer at service | Number | |
-| Work done | Multiline text | Maps to `services` |
-| Amount paid | Currency | |
-| Invoice number | Text | Optional |
-
-Show a thumbnail of the scanned invoice at the top of the form so the customer can refer to it while filling in details.
-
-If the customer closes the form without editing, the entry is already saved as-is from the import response — no extra call needed.
+**Errors**
+- `422 VALIDATION_ERROR` — `imageId` missing, or image hasn't finished uploading yet (retry after a short delay)
+- `403 FORBIDDEN` — vehicle doesn't belong to this customer
 
 ---
 
-### Edit an external entry
+### Step 4 — Review form
+
+Show a bottom sheet or screen with all extracted fields editable. The invoice photo thumbnail appears at the top so the customer can cross-check against it.
+
+| Field label | API field | Input |
+|-------------|-----------|-------|
+| Workshop name | `workshopName` | Text |
+| Suburb | `workshopSuburb` | Text |
+| Date of service | `serviceDate` | Date picker (`YYYY-MM-DD`) |
+| Odometer | `odometerKm` | Number |
+| Work done | `services` | Multiline text |
+| Amount paid | `amountAud` | Currency / decimal |
+| Invoice number | `invoiceNumber` | Text (optional) |
+
+**If the customer taps Save with no changes:** the entry is already saved from the import response — no API call needed. Just close the form and reload the logbook.
+
+**If the customer edits any field:** call `PATCH /c/vehicles/:id/logbook/external/:entryId` with only the changed fields.
+
+**If the customer taps Cancel / discards:** the entry is already saved (with whatever AI extracted). It will appear in the logbook. This is acceptable — they can edit it later from the logbook.
+
+---
+
+## Edit an imported entry
 
 `PATCH /c/vehicles/:id/logbook/external/:entryId`
 
-All fields optional — only send what changed.
+Send only the fields you want to change. All optional.
 
 **Request body**
 ```json
@@ -268,93 +297,151 @@ All fields optional — only send what changed.
 }
 ```
 
+To explicitly clear a field, send it as `null`:
+```json
+{ "invoiceNumber": null }
+```
+
 **Response — 200**
 ```json
 {
-  "id":            5,
-  "workshopName":  "Frankston Automotive",
-  "workshopSuburb":"Frankston",
-  "serviceDate":   "2024-11-03",
-  "odometerKm":    72000,
-  "services":      "Full service — oil, filter, spark plugs, brake inspection",
-  "amountAud":     385.00,
-  "invoiceNumber": "INV-2241",
-  "imageUrl":      "https://imagedelivery.net/...public",
-  "status":        "extracted"
+  "id":             5,
+  "workshopName":   "Frankston Automotive",
+  "workshopSuburb": "Frankston",
+  "serviceDate":    "2024-11-03",
+  "odometerKm":     72000,
+  "services":       "Full service — oil, filter, spark plugs, brake inspection",
+  "amountAud":      385.00,
+  "invoiceNumber":  "INV-2241",
+  "imageUrl":       "https://imagedelivery.net/...public",
+  "status":         "extracted"
 }
 ```
 
 **Errors**
-- `404 NOT_FOUND` — entry doesn't exist or belongs to another customer
 - `403 FORBIDDEN` — vehicle doesn't belong to this customer
+- `404 NOT_FOUND` — entry not found or belongs to another customer
+- `422 VALIDATION_ERROR` — `serviceDate` not in `YYYY-MM-DD` format
 
 ---
 
-### Delete an external entry
+## Delete an imported entry
 
 `DELETE /c/vehicles/:id/logbook/external/:entryId`
 
-No request body.
+No body.
 
 **Response — 200**
 ```json
 { "deleted": true }
 ```
 
-The scanned invoice photo is deleted from Cloudflare automatically.
+The invoice photo is deleted from Cloudflare automatically. Rodz workshop jobs cannot be deleted — only external entries.
+
+**Errors**
+- `403 FORBIDDEN` — vehicle doesn't belong to this customer
+- `404 NOT_FOUND` — entry not found
 
 ---
 
 ## Workshop expenses → logbook (automatic)
 
-When a customer logs a **workshop expense** in the expense tracker (category = `workshop`), the entry is automatically written to the logbook — no separate action needed. The expense scan extracts the same fields (workshop name, date, odometer, cost, work summary) and both records are created simultaneously.
+When a customer logs a **workshop expense** in the expense tracker (category = `workshop`), a logbook entry is written automatically in the background — the customer doesn't need to do anything separately. Scanning a workshop invoice once in the expense tracker puts it in both the expense history and the logbook.
 
-From the customer's point of view: they scan the invoice once in the expense tracker and it appears in both their running cost history and their service logbook. You do not need to build a separate "also add to logbook" toggle.
+You do not need a "also add to logbook" toggle or a separate import flow for expenses — it happens silently.
 
 ---
 
 ## Suggested UI
 
-### Logbook screen
+### Logbook screen layout
 
-**Header:** Vehicle name + rego. Odometer if available (e.g. "87,400 km"). Next service due if set.
+**Header strip**
+- Vehicle make, model, year
+- Current odometer (if set): e.g. "87,400 km"
+- Next service due km or date (if set) — show as an amber chip: "Service due at 90,000 km"
 
-**"Import invoice" button:** Prominent in the header or as a FAB. Opens the import flow.
+**Action button**
+- "Import past invoice" — prominent button or FAB. Triggers the import flow.
 
-**Timeline list:** Entries sorted newest first. Each card shows:
-
-| For `source: "workshop"` (Rodz jobs) | For `source: "external"` (imported) |
-|--------------------------------------|--------------------------------------|
-| Rodz logo or "R" badge | Camera icon or "Imported" badge |
-| Date + workshop name | Date + workshop name |
-| `aiSummary` as the primary description | `services` as the primary description |
-| Cost | Cost |
-| "View Invoice" link if `invoiceUrl` is set | Thumbnail of scanned invoice if `imageUrl` is set |
-| Photos grid | — |
-| Line items (collapsible) | — |
-| Not editable | Edit / Delete actions (swipe or long-press) |
-
-**Empty state:** "No service history yet. Import a past invoice to get started, or visit a Rodz workshop and your job will appear here automatically."
-
-### Import flow
-
-1. Tap "Import invoice"
-2. Camera opens (or photo library picker on iOS/Android)
-3. Show upload progress indicator
-4. Show "Scanning invoice…" spinner during the import call
-5. Review form opens pre-filled (or blank if `status: "failed"`)
-6. Customer taps "Save" → PATCH if they changed anything, or dismiss if unchanged
-7. Navigate back to logbook — new entry appears at the correct position in the timeline
+**Timeline**
+- Chronological list, newest at top
+- One card per entry
+- Group by year with a year divider label if the list spans multiple years
 
 ---
 
-## Differentiating entry types visually
+### Entry cards
 
-Rodz jobs are verified by the workshop. External entries are customer self-reported. Make this distinction clear without being heavy-handed:
+**Rodz workshop job card**
 
-- **Rodz jobs:** Subtle "Verified by Rodz" badge or checkmark
-- **External entries:** Camera / receipt icon. Tapping it opens the scanned invoice image in a lightbox.
-- Use the same card shape — the distinction should be secondary to the content
+```
+┌─────────────────────────────────────────┐
+│ ✓ Rodz  ·  25 Jun 2026      87,400 km  │
+│ Frankston Rodz · N. Rodda               │
+│                                         │
+│ Full service — oil, filters, brake      │
+│ inspection and air filter replacement.  │
+│                                         │
+│ [photo] [photo]           $385  INV-001 │
+│ ▸ View Invoice    ▸ See line items      │
+└─────────────────────────────────────────┘
+```
+
+- Rodz checkmark badge (verified)
+- `tech` shown if present
+- `aiSummary` as the body
+- Photo thumbnails in a small row — tap to open lightbox
+- "View Invoice" link if `invoiceUrl` is set
+- "See line items" expander for `lineItems`
+- Not editable or deletable
+
+**Customer-imported entry card**
+
+```
+┌─────────────────────────────────────────┐
+│ 📷 Imported  ·  3 Nov 2024   72,000 km │
+│ Frankston Automotive                    │
+│                                         │
+│ Full service — oil, filter, spark       │
+│ plugs, brake inspection.                │
+│                                         │
+│ [invoice thumbnail]         $385        │
+└─────────────────────────────────────────┘
+```
+
+- Camera / receipt badge (customer self-reported)
+- Invoice thumbnail if `imageUrl` is set — tap to view full image in lightbox
+- No "View Invoice" link, no line items, no tech
+- Swipe left (or long-press) to reveal Edit / Delete actions
+
+---
+
+### Import flow (step by step)
+
+1. Customer taps "Import past invoice"
+2. Show two options: **Take photo** / **Choose from library**
+3. After image is selected — show upload progress bar
+4. On upload complete — call import, show "Scanning invoice…" with a spinner
+5. Import returns → open review sheet:
+   - Invoice thumbnail at top
+   - All fields pre-filled (or empty if `status: "failed"`)
+   - If `status: "failed"` show: *"We couldn't read this image. Please fill in the details."*
+   - If `status: "extracted"` show: *"Please check the details below."*
+6. Customer reviews, edits if needed, taps **Save**
+   - If no changes: close sheet (entry already saved, no call needed)
+   - If changes: `PATCH` with changed fields, then close
+7. Logbook reloads — new entry appears in timeline at the correct date position
+
+---
+
+### Empty states
+
+| Scenario | Message |
+|----------|---------|
+| No entries at all | "No service history yet. Import a past invoice to get started, or visit a Rodz workshop and your job will appear here automatically." |
+| Only Rodz jobs, no imported entries | Show normal list — no empty state needed |
+| Import failed (blank form) | "We couldn't read this image — please enter the details manually." |
 
 ---
 
@@ -363,5 +450,5 @@ Rodz jobs are verified by the workshop. External entries are customer self-repor
 | Status | Code | When |
 |--------|------|------|
 | `403` | `FORBIDDEN` | Vehicle doesn't belong to this customer |
-| `404` | `NOT_FOUND` | Vehicle or entry not found |
-| `422` | `VALIDATION_ERROR` | `imageId` missing on import call |
+| `404` | `NOT_FOUND` | Vehicle not found, or entry not found / belongs to another customer |
+| `422` | `VALIDATION_ERROR` | `imageId` missing on import, or `serviceDate` not in `YYYY-MM-DD` format |
