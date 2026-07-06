@@ -39,15 +39,15 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 |-------|--------|
 | [Core](#core) | `stores`, `staff`, `customers`, `vehicles`, `vehicle_owners` |
 | [Bookings](#bookings) | `bookings`, `booking_services` |
-| [Jobs](#jobs) | `service_jobs`, `service_job_items`, `service_job_parts`, `service_job_staff`, `job_card_items` |
+| [Jobs](#jobs) | `service_jobs`, `service_job_items`, `job_parts`, `service_job_staff`, `job_card_items` |
 | [Financials](#financials) | `invoices`, `invoice_items`, `payments`, `quotes`, `quote_items`, `purchase_orders`, `purchase_order_items` |
 | [Catalog](#catalog) | `service_types`, `catalog_items`, `parts`, `suppliers`, `part_names` |
 | [Inspections](#inspections) | `job_inspections`, `job_inspection_results`, `inspection_checklist_items`, `job_documents` |
 | [Customers — extended](#customers--extended) | `customer_tags`, `customer_communications`, `loyalty_transactions` |
-| [Vehicles — extended](#vehicles--extended) | `vehicle_service_history` |
+| [Vehicles — extended](#vehicles--extended) | `vehicle_service_history`, `vehicle_service_log` |
 | [Reminders & AI](#reminders--ai) | `reminders`, `vehicle_model_profiles`, `ai_milestone_rules`, `ai_recommendations` |
 | [Vehicle chats](#vehicle-chats) | `vehicle_chats`, `vehicle_chat_messages` |
-| [Customer AI chat](#customer-ai-chat) | `customer_vehicle_chats` |
+| [Customer AI chat](#customer-ai-chat) | `customer_chat_sessions`, `customer_vehicle_chats` |
 | [Notifications](#notifications) | `notifications`, `notification_templates`, `customer_pickup_notifications` |
 | [Loan vehicles](#loan-vehicles) | `loan_vehicles`, `loan_vehicle_bookings`, `courtesy_cars` |
 | [Operations](#operations) | `hoists`, `business_hours`, `staff_roster`, `daily_kpi_snapshots` |
@@ -59,6 +59,9 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | [Reviews](#reviews) | `reviews` |
 | [Warranty](#warranty) | `warranty_claims` |
 | [Photos](#photos) | `photos` |
+| [Premium — Expense tracker](#premium--expense-tracker) | `vehicle_expenses` |
+| [Premium — Fuel price intelligence](#premium--fuel-price-intelligence) | `fuel_station_prices` |
+| [Premium — Logbook import](#premium--logbook-import) | `vehicle_service_log_external` |
 
 ---
 
@@ -352,14 +355,14 @@ Line items on a job (labour, parts, sublets, discounts).
 
 ---
 
-### `service_job_parts`
+### `job_parts`
 
 Parts tracking on a job (requested, ordered, arrived).
 
 | Column | Type | Null |
 |--------|------|------|
 | `id` | bigint unsigned | NO |
-| `service_job_id` | bigint unsigned | NO |
+| `job_id` | bigint unsigned | NO |
 | `description` | varchar(255) | NO |
 | `part_number` | varchar(100) | YES |
 | `qty` | tinyint unsigned | NO |
@@ -872,6 +875,32 @@ Stores service records (both from Rodz jobs and imported history).
 
 ---
 
+### `vehicle_service_log`
+
+Denormalised service log built from Rodz invoices. Populated automatically via `ON DUPLICATE KEY UPDATE` whenever an invoice is sent or paid. Powers the customer-facing logbook, service history, AI chat context, and the shareable public logbook page. Read-only from the API — never write to this table directly; let the invoice pipeline maintain it.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | Auto increment |
+| `invoice_id` | bigint unsigned | NO | FK → `invoices.id` — unique key |
+| `vehicle_rego` | varchar | NO | Denormalised from invoice |
+| `invoice_number` | varchar | NO | e.g. `INV-2606-001` |
+| `service_date` | date | NO | `DATE(invoice.created_at)` |
+| `odometer` | int unsigned | YES | `invoice.odometer_in` |
+| `store` | varchar | YES | Denormalised store name |
+| `tech` | varchar | YES | Denormalised tech name, format `"N. Rodda"` |
+| `total` | decimal(10,2) | NO | Invoice total inc. GST |
+| `status` | enum | NO | Mirrors invoice status |
+| `ai_summary` | text | YES | AI plain-English summary — set async after invoice is sent |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+**`status` enum:** `sent`, `paid`
+
+Filter by `status IN ('sent', 'paid')` when querying public-facing history — drafts are excluded.
+
+---
+
 ## Reminders & AI
 
 ### `reminders`
@@ -1026,23 +1055,43 @@ Individual messages within a vehicle chat. Role is `user` (mechanic) or `model` 
 
 ## Customer AI chat
 
-### `customer_vehicle_chats`
+### `customer_chat_sessions`
 
-Flat message log for the customer-facing AI chat. One continuous conversation per vehicle per customer — no sessions. Separate from the staff-side `vehicle_chats`/`vehicle_chat_messages` tables.
+Groups chat messages into named sessions. A customer can have multiple sessions per vehicle — each gets an auto-generated title from the first message via Gemini. Separate from the staff-side chat tables.
 
 | Column | Type | Null | Notes |
 |--------|------|------|-------|
 | `id` | bigint unsigned | NO | Auto increment |
 | `vehicle_id` | bigint unsigned | NO | FK → `vehicles.id` |
 | `customer_id` | bigint unsigned | NO | FK → `customers.id` |
-| `role` | enum(`user`, `model`) | NO | `user` = customer message, `model` = Gemini response |
-| `content` | text | YES | Null for image-only messages |
+| `title` | varchar(255) | YES | AI-generated title — null until first message processed |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` — bumped on every new message |
+
+- `updated_at` is used to sort sessions newest-first in the session list
+- Index: `(vehicle_id, customer_id)`
+
+---
+
+### `customer_vehicle_chats`
+
+Individual messages within a customer chat session. One row per message (user or AI). Separate from the staff-side `vehicle_chats`/`vehicle_chat_messages` tables.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | Auto increment |
+| `vehicle_id` | bigint unsigned | NO | FK → `vehicles.id` |
+| `customer_id` | bigint unsigned | NO | FK → `customers.id` |
+| `session_id` | bigint unsigned | NO | FK → `customer_chat_sessions.id` |
+| `role` | enum(`user`, `model`) | NO | `user` = customer message, `model` = AI response |
+| `content` | text | YES | Null for image-only messages or tool-call-only turns |
 | `image_id` | varchar(255) | YES | Cloudflare Images ID — use `imageUrls(imageId)` for URLs |
+| `tool_calls` | json | YES | Gemini function call history for multi-turn tool use |
 | `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
 
-- Filter by both `vehicle_id` AND `customer_id` on every query — a customer can only see their own messages on their own vehicles
-- Ownership must be verified via `vehicle_owners` before reading or writing
-- History is returned ordered by `id ASC`, limited to last 100 messages per conversation
+- Always filter by `vehicle_id`, `customer_id`, AND `session_id` — never query cross-session
+- Ownership verified via `vehicle_owners` and `customer_chat_sessions` before reading or writing
+- History returned ordered by `id ASC`
 - Index: `(vehicle_id, customer_id)`
 
 ---
