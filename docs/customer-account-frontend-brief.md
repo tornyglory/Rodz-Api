@@ -498,173 +498,173 @@ Both URLs are returned pre-built in API responses (`avatarUrl` uses `/thumbnail`
 
 ---
 
-## AI Chat endpoint (streaming — Lambda Function URL)
+## AI Chat
 
-The chat uses a **separate streaming URL** — not the main API Gateway base URL. The frontend must `POST` directly to this URL with a streaming `fetch()`.
+### `POST /c/vehicles/:id/chat`
 
-```
-POST https://sktdhkyhdlqcsoq7gydire5fbu0txafl.lambda-url.ap-southeast-2.on.aws/
-```
+Sends a message to the AI assistant and returns the full response. The AI has access to the vehicle's full spec, service history, and known issues, and can check availability and book appointments via Gemini function calling.
 
-Include the customer JWT in `Authorization: Bearer <token>` and pass the vehicle ID in the path:
-
-```
-POST https://sktdhkyhdlqcsoq7gydire5fbu0txafl.lambda-url.ap-southeast-2.on.aws/c/vehicles/{vehicleId}/chat
-```
-
-**Request body**
+**Request**
 ```json
 {
   "content": "What oil does my car need?",
-  "imageId": null
+  "imageId": "abc123"
 }
 ```
 
 - `content` — the customer's message text (optional if `imageId` is provided)
-- `imageId` — a Cloudflare image ID (uploaded via the existing 3-step flow); optional
+- `imageId` — Cloudflare image ID for image messages (optional)
 
-**Streaming response — `Content-Type: text/event-stream`**
-
-The response is a stream of newline-delimited Server-Sent Events. Each line is `data: <json>`:
-
-```
-data: {"type":"user_message_id","id":42}
-
-data: {"type":"chunk","text":"Your "}
-
-data: {"type":"chunk","text":"car uses "}
-
-data: {"type":"chunk","text":"5W-30 full synthetic oil."}
-
-data: {"type":"function_call","name":"checkAvailability","args":{"storeId":1,"month":"2026-07"}}
-
-data: {"type":"function_result","name":"checkAvailability","result":{...}}
-
-data: {"type":"chunk","text":"I can see mornings are available on Tuesday 8th..."}
-
-data: {"type":"done","messageId":43}
-```
-
-**Event types:**
-
-| Type | When | Fields |
-|------|------|--------|
-| `user_message_id` | First event — after user message is saved | `id` |
-| `chunk` | Each AI text token | `text` |
-| `function_call` | AI is checking availability or booking | `name`, `args` |
-| `function_result` | Result of the function call | `name`, `result` |
-| `done` | Stream complete | `messageId` (the AI reply's DB id) |
-| `error` | Something went wrong | `code`, `message` |
-
-**Frontend implementation**
-
-```typescript
-const response = await fetch(
-  `https://sktdhkyhdlqcsoq7gydire5fbu0txafl.lambda-url.ap-southeast-2.on.aws/c/vehicles/${vehicleId}/chat`,
-  {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ content: message }),
-  }
-)
-
-const reader = response.body!.getReader()
-const decoder = new TextDecoder()
-
-while (true) {
-  const { done, value } = await reader.read()
-  if (done) break
-  
-  const text = decoder.decode(value)
-  for (const line of text.split('\n')) {
-    if (!line.startsWith('data: ')) continue
-    const event = JSON.parse(line.slice(6))
-    
-    if (event.type === 'chunk') {
-      appendToCurrentMessage(event.text) // append to AI bubble in real time
-    } else if (event.type === 'function_call') {
-      showThinkingIndicator(`Checking ${event.name}...`)
-    } else if (event.type === 'done') {
-      finalizeMessage(event.messageId)
-    } else if (event.type === 'error') {
-      showError(event.message)
-    }
-  }
+**Response — 200**
+```json
+{
+  "userMessageId": 42,
+  "messageId":     43,
+  "content":       "Your 2021 Toyota Camry takes 5W-30 full synthetic oil (4.5L with filter).",
+  "functionCalls": null
 }
 ```
 
-**What the AI can do natively (via Gemini function calling):**
-- Check workshop availability for any month
-- List available service types
-- Book an appointment — will ask for confirmation first, then creates the booking
+| Field | Description |
+|-------|-------------|
+| `userMessageId` | DB id of the saved user message |
+| `messageId` | DB id of the saved AI response |
+| `content` | The AI's full response — render as markdown |
+| `functionCalls` | Array of tool calls made, or `null` |
+
+**When the AI uses tools** (booking / availability check), `functionCalls` is populated:
+
+```json
+{
+  "userMessageId": 44,
+  "messageId":     45,
+  "content":       "Great — I've booked you in for Thursday 10 July morning at Somerville. Your reference is **HNZV5PVV**.",
+  "functionCalls": [
+    { "name": "checkAvailability", "result": { "storeName": "Somerville", ... } },
+    { "name": "getServiceTypes",   "result": { "services": [...] } },
+    { "name": "bookAppointment",   "result": { "bookingRef": "HNZV5PVV", "date": "2026-07-10", "slot": "morning", "store": "Somerville", "confirmed": true } }
+  ]
+}
+```
+
+After receiving the response:
+- Show the AI `content` with a typewriter animation
+- If `functionCalls` contains a `bookAppointment` entry with `confirmed: true` → show a booking confirmation card (see Notes section)
+
+**What the AI knows:**
+- Full vehicle specs (make, model, year, engine, oil type, tyre sizes, etc.)
+- Complete Rodz service history with dates, odometer, costs, and AI summaries
+- Known issues for the vehicle model
+- Upcoming service intervals and due dates
+
+**What the AI can do via function calling:**
+- Check real workshop availability for any month
+- Present service type options with pricing
+- Create a confirmed booking — always confirms details with the customer first
+
+**UX recommendation:**
+Show a "Rodz is thinking…" indicator immediately on send. Response arrives in ~2–4 seconds. Apply a typewriter animation to `content` — this gives a natural chat feel without requiring streaming.
+
+**Errors**
+- `403 FORBIDDEN` — vehicle doesn't belong to this customer
+- `422 VALIDATION_ERROR` — no `content` or `imageId` provided
 
 ---
 
-## Chat history endpoint
-
 ### `GET /c/vehicles/:id/chat`
 
-Returns the full conversation history for this vehicle.
+Returns the full conversation history for this vehicle. Call on mount to prepopulate the chat.
 
 **Response — 200**
 ```json
 {
   "messages": [
     {
-      "id": 1,
-      "role": "user",
-      "content": "What oil does my car need?",
-      "imageUrl": null,
+      "id":        1,
+      "role":      "user",
+      "content":   "What oil does my car need?",
+      "imageUrl":  null,
       "createdAt": "2026-07-02T10:00:00.000Z"
     },
     {
-      "id": 2,
-      "role": "model",
-      "content": "Your 2021 Toyota Camry takes 5W-30 full synthetic oil...",
-      "imageUrl": null,
-      "createdAt": "2026-07-02T10:00:01.000Z"
+      "id":        2,
+      "role":      "model",
+      "content":   "Your 2021 Toyota Camry takes 5W-30 full synthetic oil...",
+      "imageUrl":  null,
+      "createdAt": "2026-07-02T10:00:02.000Z"
     }
   ]
 }
 ```
 
+- `role` — `"user"` (customer) or `"model"` (AI)
+- `imageUrl` — full-size Cloudflare URL if the message had an image, else `null`
+- Limited to the last 100 messages
+
+**Empty state:** `messages: []` means no conversation yet. Show conversation starter prompts:
+
+| Label | Message to send |
+|-------|----------------|
+| Service history | `"Show me my service history"` |
+| Upcoming maintenance | `"What maintenance is coming up for my vehicle?"` |
+| Vehicle specs | `"Tell me everything about my vehicle's specs"` |
+| Market value | `"What's my vehicle worth right now?"` |
+| Book a service | `"I'd like to book a service at Rodz"` |
+| Diagnose an issue | `"I'm hearing a noise / seeing a warning light — can you help?"` |
+
 ---
 
-## Vehicle value endpoint
+## Vehicle value
 
 ### `GET /c/vehicles/:id/value`
 
-AI-generated market value estimate for the vehicle, based on current Australian used car market knowledge.
+AI-generated market value estimate backed by **live Google Search** — Gemini searches carsales.com.au, Autotrader, and Gumtree in real time. Takes ~8–10 seconds. Show a skeleton loading state.
 
 **Response — 200**
 ```json
 {
   "vehicle": {
-    "year": 2021,
-    "make": "Toyota",
-    "model": "Camry",
-    "series": "ASV70R",
-    "odometerKm": 42300,
+    "year":         2021,
+    "make":         "Toyota",
+    "model":        "Camry",
+    "series":       "ASV70R",
+    "odometerKm":   42300,
     "serviceCount": 3
   },
   "valuation": {
     "estimatedValueAud": { "low": 28000, "mid": 32000, "high": 35000 },
-    "condition": "good",
-    "conditionRationale": "Well-maintained with a documented service record.",
-    "keyFactors": [
-      { "factor": "Service record", "impact": "positive", "detail": "3 documented Rodz workshop services add buyer confidence" },
-      { "factor": "Odometer", "impact": "neutral", "detail": "42,300 km is below average for a 2021 model" }
+    "comparableSales": [
+      { "price": 31990, "odometer": 38000, "description": "2021 Toyota Camry Ascent Sport Hybrid, 38,000km, VIC" },
+      { "price": 29500, "odometer": 51000, "description": "2021 Toyota Camry SL Hybrid, 51,000km, NSW" }
     ],
-    "marketInsight": "The Toyota Camry hybrid holds its value well in Australia...",
-    "sellTips": ["Get a full detail before listing", "Highlight the service record", "Price mid-range and negotiate"],
-    "disclaimer": "This is an estimate only. Actual sale price will vary..."
+    "condition": "good",
+    "conditionRationale": "Well-maintained with 3 documented Rodz services and below-average kilometres.",
+    "keyFactors": [
+      { "factor": "Service record", "impact": "positive", "detail": "3 documented Rodz services add buyer confidence." },
+      { "factor": "Odometer",       "impact": "neutral",  "detail": "42,300 km is below average for a 2021 model." }
+    ],
+    "marketInsight": "Current carsales.com.au listings show 2021 Camry Hybrids ranging from $28,000–$36,000 depending on variant and kilometres...",
+    "sellTips": [
+      "Get a full detail before listing",
+      "Highlight the Rodz service record",
+      "Price at mid-range and negotiate down"
+    ],
+    "disclaimer": "This is an estimate based on current Australian listings. Actual sale price will vary based on vehicle condition, location, negotiation, and market timing."
   },
-  "generatedAt": "2026-07-02"
+  "sources": [
+    "https://www.carsales.com.au/..."
+  ],
+  "generatedAt": "2026-07-03"
 }
 ```
+
+| Field | Notes |
+|-------|-------|
+| `estimatedValueAud` | `low` / `mid` / `high` in AUD — render as a range bar |
+| `comparableSales` | Up to 4 real current listings. `odometer` may be `null`. Render as "Comparable cars for sale" cards |
+| `condition` | `"excellent"` \| `"good"` \| `"fair"` \| `"poor"` |
+| `keyFactors[].impact` | `"positive"` \| `"negative"` \| `"neutral"` |
+| `sources` | Grounding URLs from the live search — optional to display, label as "Based on current listings" |
 
 ---
 
@@ -825,7 +825,7 @@ Create a booking directly (alternative to booking via chat).
 | Vehicle detail | `GET /c/vehicles/:id` + `PATCH /c/vehicles/:id` |
 | Vehicle avatar | `GET /c/vehicles/:id/avatar-upload-url` → upload → `PATCH /c/vehicles/:id/avatar` |
 | Vehicle cover | `GET /c/vehicles/:id/cover-upload-url` → upload → `PATCH /c/vehicles/:id/cover` |
-| **AI Chat** | Streaming Lambda URL + `GET /c/vehicles/:id/chat` |
+| **AI Chat** | `POST /c/vehicles/:id/chat` + `GET /c/vehicles/:id/chat` |
 | **Logbook** (tab) | `GET /c/vehicles/:id/logbook` |
 | **Vehicle value** (tab) | `GET /c/vehicles/:id/value` |
 | **Book a service** | `GET /c/stores` + `GET /c/service-types` + `GET /c/availability` + `POST /c/bookings` |
@@ -845,6 +845,6 @@ Create a booking directly (alternative to booking via chat).
 
 **Chat is the home screen:** When a customer opens the app (or scans the QR code on their car), the AI chat is the first thing they see. The logbook, vehicle profile, maintenance, and value estimate are tabs within the same vehicle view.
 
-**AI books for you:** The chat AI can check availability and create bookings on the customer's behalf via Gemini function calling. Show a visual indicator when the AI is "checking availability..." (the `function_call` event). After booking, show the booking reference in a card within the chat.
+**AI books for you:** The chat AI can check availability and create bookings on the customer's behalf via Gemini function calling. When the response includes a `functionCalls` array, inspect it to determine what the AI did behind the scenes — if it contains a `bookAppointment` entry, show a booking confirmation card with the reference number. While waiting for the response (~2–4s), show a "Rodz is thinking…" indicator; the AI has already executed any tool calls server-side by the time the response arrives.
 
 **Mechanic chats are never visible:** Staff/mechanic chat history (`vehicle_chats` table) is completely separate and is never surfaced to customers under any circumstances.

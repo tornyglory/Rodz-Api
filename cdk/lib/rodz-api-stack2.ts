@@ -1069,6 +1069,10 @@ export class RodzApiStack2 extends Stack {
       entry: src('customer/vehicles/chat-history.ts'), vpc, sharedEnv,
     }).fn
 
+    const customerChatUploadUrlFn = new LambdaFn(this, 'CustomerChatUploadUrl', {
+      entry: src('customer/vehicles/chat-upload-url.ts'), vpc, sharedEnv,
+    }).fn
+
     const customerChatFn = new LambdaFn(this, 'CustomerChat', {
       entry: src('customer/vehicles/chat.ts'), vpc, sharedEnv,
       timeout: Duration.seconds(60),
@@ -1102,6 +1106,13 @@ export class RodzApiStack2 extends Stack {
       httpApi,
       integration: new HttpLambdaIntegration('CustomerChatHistoryInt', customerChatHistoryFn),
       routeKey: HttpRouteKey.with('/c/vehicles/{id}/chat', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerChatUploadUrlRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerChatUploadUrlInt', customerChatUploadUrlFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/chat/upload-url', HttpMethod.GET),
       authorizer: customerAuthorizer,
     })
 
