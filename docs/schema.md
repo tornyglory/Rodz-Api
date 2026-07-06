@@ -1449,3 +1449,115 @@ Free-text staff notes against a vehicle record. Append-only — no editing after
 | `staff_id` | bigint unsigned | NO | — |
 | `content` | text | NO | — |
 | `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+---
+
+## Premium — Expense tracker
+
+### `vehicle_expenses`
+
+Every cost associated with a vehicle — fuel, servicing, registration, insurance, tolls, parts, etc. Customers log expenses manually or by scanning a receipt via AI. Workshop entries are dual-written to `vehicle_service_log_external`.
+
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `id` | bigint unsigned | NO | — |
+| `vehicle_id` | bigint unsigned | NO | — |
+| `customer_id` | bigint unsigned | NO | — |
+| `category` | enum | NO | — |
+| `merchant_name` | varchar(200) | YES | — |
+| `merchant_suburb` | varchar(100) | YES | — |
+| `merchant_state` | char(3) | YES | — |
+| `amount_aud` | decimal(10,2) | YES | — |
+| `expense_date` | date | NO | — |
+| `odometer_km` | int unsigned | YES | — |
+| `fuel_type` | enum | YES | — |
+| `fuel_litres` | decimal(8,3) | YES | — |
+| `price_per_litre` | decimal(6,3) | YES | — |
+| `ev_kwh` | decimal(8,3) | YES | — |
+| `price_per_kwh` | decimal(6,3) | YES | — |
+| `image_id` | varchar(255) | YES | — |
+| `extraction_status` | enum | NO | `manual` |
+| `ai_raw` | json | YES | — |
+| `is_business_expense` | tinyint(1) | NO | `0` |
+| `notes` | text | YES | — |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+**`category` enum:** `fuel`, `ev_charging`, `workshop`, `parts`, `car_wash`, `parking`, `tolls`, `registration`, `insurance`, `roadside`, `other`
+
+**`fuel_type` enum:** `unleaded_91`, `unleaded_95`, `unleaded_98`, `diesel`, `lpg`, `e10`
+
+**`extraction_status` enum:** `manual` (entered by hand), `extracted` (AI-populated from receipt scan), `failed` (scan attempted but unreadable)
+
+**Indexes:** `(vehicle_id, expense_date)`, `(customer_id)`
+
+**Foreign keys:** `vehicle_id → vehicles(id)`, `customer_id → customers(id)`
+
+---
+
+## Premium — Fuel price intelligence
+
+### `fuel_station_prices`
+
+Crowd-sourced fuel and EV charging prices. A row is inserted automatically whenever a customer confirms a fuel or EV expense that includes price data. Pump photos can contribute prices for multiple fuel types in a single entry via the `allFuelPrices` field on the expense create endpoint.
+
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `id` | bigint unsigned | NO | — |
+| `expense_id` | bigint unsigned | YES | — |
+| `customer_id` | bigint unsigned | NO | — |
+| `station_name` | varchar(200) | NO | — |
+| `station_suburb` | varchar(100) | YES | — |
+| `station_state` | char(3) | YES | — |
+| `fuel_type` | enum | NO | — |
+| `price` | decimal(6,3) | NO | — |
+| `price_unit` | enum | NO | `per_litre` |
+| `image_id` | varchar(255) | YES | — |
+| `reported_at` | datetime | NO | — |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+**`fuel_type` enum:** `unleaded_91`, `unleaded_95`, `unleaded_98`, `diesel`, `lpg`, `e10`, `ev_kwh`
+
+**`price_unit` enum:** `per_litre`, `per_kwh`
+
+`reported_at` is the `expense_date` of the source expense (the date the price was observed), not the insert time. `expense_id` is `NULL` for prices contributed from pump photos without a personal expense.
+
+**Indexes:** `(station_name, station_suburb, fuel_type)`, `(reported_at)`, `(station_suburb, station_state, fuel_type)`
+
+**Foreign keys:** `expense_id → vehicle_expenses(id) ON DELETE SET NULL`, `customer_id → customers(id)`
+
+---
+
+## Premium — Logbook import
+
+### `vehicle_service_log_external`
+
+Customer-imported workshop invoices and service records from garages outside the Rodz network. Entries are created by photographing a paper invoice — AI extracts the fields and the customer reviews/corrects them. These entries are merged into the vehicle logbook timeline alongside Rodz workshop jobs.
+
+Also populated automatically when a customer logs a `workshop` category expense in the expense tracker.
+
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `id` | bigint unsigned | NO | — |
+| `vehicle_id` | bigint unsigned | NO | — |
+| `customer_id` | bigint unsigned | NO | — |
+| `image_id` | varchar(255) | NO | — |
+| `workshop_name` | varchar(200) | YES | — |
+| `workshop_suburb` | varchar(100) | YES | — |
+| `service_date` | date | YES | — |
+| `odometer_km` | int unsigned | YES | — |
+| `services` | text | YES | — |
+| `amount_aud` | decimal(10,2) | YES | — |
+| `invoice_number` | varchar(100) | YES | — |
+| `ai_raw` | json | YES | — |
+| `status` | enum | NO | `pending` |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+**`status` enum:** `pending`, `extracted` (AI successfully read the image), `failed` (image unreadable — customer fills in manually)
+
+`services` is a plain-English summary of work done, AI-generated from the invoice. `ai_raw` stores the full Gemini response for debugging.
+
+**Indexes:** `(vehicle_id)`, `(service_date)`
+
+**Foreign keys:** `vehicle_id → vehicles(id)`, `customer_id → customers(id)`
