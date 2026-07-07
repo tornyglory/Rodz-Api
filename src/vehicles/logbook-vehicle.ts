@@ -14,26 +14,18 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   try {
     // Look up vehicle by token — check without is_active to distinguish 404 vs 410
     const [[vehicle]] = await db.query<any[]>(
-      `SELECT v.id, v.rego, v.year, v.make, v.model, v.series, v.colour,
-              v.fuel_type, v.transmission, v.engine_size_cc, v.vin,
-              v.odometer_current, v.avatar_image_id, v.cover_image_id, v.is_active
-       FROM vehicles v
-       WHERE v.logbook_token = ?
+      `SELECT id, rego, year, make, model, series, colour,
+              fuel_type, transmission, engine_size_cc, vin,
+              odometer_current, avatar_image_id, cover_image_id, is_active,
+              for_sale, asking_price, city, country,
+              contact_name, contact_phone, contact_email
+       FROM vehicles
+       WHERE logbook_token = ?
        LIMIT 1`,
       [token],
     )
     if (!vehicle) return notFound('Vehicle')
     if (!vehicle.is_active) return gone('Vehicle')
-
-    // Get for-sale details from current owner record
-    const [[owner]] = await db.query<any[]>(
-      `SELECT for_sale, asking_price, city, country,
-              contact_name, contact_phone, contact_email
-       FROM vehicle_owners
-       WHERE vehicle_id = ? AND is_current = 1
-       LIMIT 1`,
-      [vehicle.id],
-    )
 
     // Gallery images
     const [galleryRows] = await db.query<any[]>(
@@ -62,13 +54,13 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       odometerCurrent: vehicle.odometer_current != null ? Number(vehicle.odometer_current) : null,
       avatarUrl:       vehicle.avatar_image_id ? imageUrls(vehicle.avatar_image_id).public     : null,
       coverUrl:        vehicle.cover_image_id  ? imageUrls(vehicle.cover_image_id).public      : null,
-      forSale:         owner ? !!owner.for_sale : false,
-      askingPrice:     owner?.asking_price != null ? Number(owner.asking_price) : null,
-      city:            owner?.city          ?? null,
-      country:         owner?.country       ?? null,
-      contactName:     owner?.contact_name  ?? null,
-      contactPhone:    owner?.contact_phone ?? null,
-      contactEmail:    owner?.contact_email ?? null,
+      forSale:         !!vehicle.for_sale,
+      askingPrice:     vehicle.asking_price  != null ? Number(vehicle.asking_price)  : null,
+      city:            vehicle.city          ?? null,
+      country:         vehicle.country       ?? null,
+      contactName:     vehicle.contact_name  ?? null,
+      contactPhone:    vehicle.contact_phone ?? null,
+      contactEmail:    vehicle.contact_email ?? null,
       images: galleryRows.map((r: any) => ({
         id:           r.id,
         url:          imageUrls(r.image_id).public,

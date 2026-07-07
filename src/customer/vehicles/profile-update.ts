@@ -46,14 +46,14 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (sets.length === 0) return validationError('No valid fields provided.')
 
     await db.query(
-      `UPDATE vehicle_owners SET ${sets.join(', ')} WHERE vehicle_id = ? AND customer_id = ? AND is_current = 1`,
-      [...params, vehicleId, ctx.customerId],
+      `UPDATE vehicles SET ${sets.join(', ')} WHERE id = ?`,
+      [...params, vehicleId],
     )
 
     const [[row]] = await db.query<any[]>(
       `SELECT for_sale, asking_price, city, country, contact_name, contact_phone, contact_email
-       FROM vehicle_owners WHERE vehicle_id = ? AND customer_id = ? AND is_current = 1 LIMIT 1`,
-      [vehicleId, ctx.customerId],
+       FROM vehicles WHERE id = ? AND is_active = 1 LIMIT 1`,
+      [vehicleId],
     )
     if (!row) return notFound('Vehicle')
 
