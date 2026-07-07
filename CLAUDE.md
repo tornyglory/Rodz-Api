@@ -22,9 +22,7 @@ Two CDK stacks share the same HTTP API and VPC:
 - **Database:** MySQL (Azure) accessed via `getPool()` from `src/shared/db.ts`
 - **Auth:** `getAuthContext(event)` returns `{ staffId, role, storeId, permissions }`
 - **Roles:** `super_admin` | `store_manager` | `technician`
-- **Deploy (existing endpoints):** `npx cdk deploy RodzApiStack`
-- **Deploy (new endpoints):** `npx cdk deploy RodzApiStack2`
-- **Deploy (both):** `npx cdk deploy RodzApiStack RodzApiStack2`
+- **Deploy:** See the Deploy section below — CDK deploy is broken, use direct Lambda deploy
 
 `RodzApiStack` is at the 500-resource CloudFormation limit. **All new Lambda functions and routes must go in `RodzApiStack2`.** Use `new HttpRoute()` (not `httpApi.addRoutes()`) so that route resources are scoped to `RodzApiStack2`.
 
@@ -136,3 +134,50 @@ if (ctx.role !== 'super_admin') {
 ## Docs
 
 Frontend API briefs live in `docs/`. Keep them updated when endpoints change.
+
+---
+
+## Specialist agents
+
+Four sub-agents are defined in `.claude/agents/`. **Use them automatically** — spawn the right agent via the Agent tool based on the task at hand. Do not do the work yourself when it clearly belongs to a specialist.
+
+| Agent | When to use |
+|-------|-------------|
+| `schema` | Any schema change, new table/column, migration SQL, or SQL query design — or whenever you need to verify column names/types before writing code |
+| `api` | Building a new Lambda handler, registering a CDK route, implementing auth guards, or wiring up a new endpoint end-to-end |
+| `test` | Writing integration tests, setting up test data, reviewing test coverage, validating endpoint behaviour |
+| `docs` | Updating `docs/schema.md` after a migration, writing frontend API briefs in `docs/`, or ensuring endpoint docs match the implementation |
+
+### Automatic delegation rules
+
+- **Schema question or SQL design** → spawn `schema` agent before writing any query
+- **New endpoint** → spawn `schema` agent to verify column names, then `api` agent to build the handler, then `docs` agent to write the brief
+- **Bug fix to existing endpoint** → handle inline, but spawn `test` agent to add a regression test
+- **Docs out of date** → spawn `docs` agent
+- **New feature spanning schema + endpoint + tests + docs** → spawn all four agents in the appropriate sequence
+
+Agents run in isolation (worktree). Brief them with specific file paths and what to do — don't delegate understanding, delegate execution.
+
+---
+
+## Deploy
+
+**CDK deploy is broken** due to a cross-stack VPC dependency validation error in CDK 2.160.0 (`RodzApiStack2` depends on `RodzApiStack`). Use direct Lambda deploy instead:
+
+```bash
+# 1. Bundle the handler
+npx esbuild src/path/to/handler.ts \
+  --bundle --platform=node --target=node20 \
+  "--external:@aws-sdk/*" --outfile=dist/handler.js
+
+# 2. Zip and upload
+zip -j dist/handler.zip dist/handler.js
+aws lambda update-function-code \
+  --function-name <LambdaFunctionName> \
+  --zip-file fileb://dist/handler.zip
+```
+
+The Lambda function name is in the AWS console or findable via:
+```bash
+aws lambda list-functions --query 'Functions[?contains(FunctionName, `<keyword>`)].FunctionName'
+```

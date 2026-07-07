@@ -23,7 +23,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
          v.odometer_unit, v.odometer_current, v.odometer_at_purchase,
          v.service_interval_km, v.service_interval_months,
          v.next_service_due_km, v.next_service_due_date,
-         v.fleet_unit_number, v.internal_notes
+         v.fleet_unit_number, v.internal_notes,
+         v.avatar_image_id, v.cover_image_id
        FROM vehicles v
        JOIN vehicle_owners vo ON vo.vehicle_id = v.id AND vo.is_current = 1
        JOIN customers c       ON c.id = vo.customer_id
@@ -72,6 +73,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         nextServiceDueDate:    row.next_service_due_date   ? String(row.next_service_due_date).slice(0, 10) : null,
         fleetUnitNumber:       row.fleet_unit_number       ?? null,
         internalNotes:         row.internal_notes          ?? null,
+        avatarImageId:         row.avatar_image_id         ?? null,
+        coverImageId:          row.cover_image_id          ?? null,
       },
     })
   } catch (err) {

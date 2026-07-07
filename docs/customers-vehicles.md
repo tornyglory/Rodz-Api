@@ -58,10 +58,13 @@ Total pages = `Math.ceil(total / limit)`. Has next page = `offset + customers.le
       "email": "james@example.com",
       "phone": "0412 345 678",
       "store": "Rodz Somerville",
+      "avatarImageId": "a1b2c3d4-e5f6-...",
+      "isPremium": false,
       "tags": ["VIP"],
       "totalVisits": 12,
       "totalSpend": 4820.50,
       "lastVisit": "28 May 2026",
+      "memberSince": "3 Jan 2024",
       "notes": "Prefers morning slots",
       "dob": "1985-03-15",
       "address": {
@@ -72,7 +75,7 @@ Total pages = `Math.ceil(total / limit)`. Has next page = `offset + customers.le
         "postcode": "3912"
       },
       "vehicles": [
-        { "id": 1, "rego": "ABC123", "year": 2021, "make": "Mazda", "model": "CX-5" }
+        { "id": 1, "rego": "ABC123", "year": 2021, "make": "Mazda", "model": "CX-5", "odometer": 84200 }
       ],
       "jobHistory": []
     }
@@ -123,10 +126,14 @@ Authorization: Bearer <accessToken>
     "email": "james@example.com",
     "phone": "0412 345 678",
     "store": "Rodz Somerville",
+    "avatarImageId": "a1b2c3d4-e5f6-...",
+    "isPremium": false,
     "tags": ["VIP"],
     "totalVisits": 12,
     "totalSpend": 4820.50,
     "lastVisit": "28 May 2026",
+    "memberSince": "3 Jan 2024",
+    "notesCount": 2,
     "notes": "Prefers morning slots",
     "dob": "1985-03-15",
     "address": {
@@ -506,15 +513,32 @@ No body. **Response 204** — no content.
 | `email` | string | |
 | `phone` | string | Mobile number |
 | `store` | string | Store name e.g. `"Rodz Somerville"` |
+| `avatarImageId` | string \| null | Cloudflare image ID. Construct URL using your `CF_ACCOUNT_HASH` env var (see Avatar usage below). `null` if no avatar set — show initials fallback. |
+| `isPremium` | boolean | Whether the customer has a premium subscription |
 | `tags` | `("VIP" \| "Regular" \| "New")[]` | Can have multiple |
 | `totalVisits` | number | Count of completed or invoiced jobs |
 | `totalSpend` | number | Sum of all completed/invoiced job totals |
 | `lastVisit` | string \| null | e.g. `"28 May 2026"` |
+| `memberSince` | string \| null | Account creation date e.g. `"3 Jan 2024"` |
+| `notesCount` | number | Count of customer notes (single GET only — not present on list) |
 | `notes` | string \| null | Internal staff notes |
 | `dob` | string \| null | Date of birth in `YYYY-MM-DD` format e.g. `"1985-03-15"` |
 | `address` | object | `{ line1, line2, suburb, state, postcode }` — all fields `string \| null` |
 | `vehicles` | Vehicle[] | Current vehicles only |
 | `jobHistory` | Job[] | Empty `[]` on list endpoint, populated on single GET |
+
+### Avatar usage
+
+```
+// Has avatar
+url = `https://imagedelivery.net/${CF_ACCOUNT_HASH}/${avatarImageId}/public`
+
+// No avatar → show initials
+avatarImageId = null
+initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+```
+
+`CF_ACCOUNT_HASH` comes from your app's environment config.
 
 ### Vehicle object
 

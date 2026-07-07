@@ -68,12 +68,13 @@ export async function buildCustomerList(db: mysql.Pool, rows: any[]) {
   return rows.map((row: any) => {
     const stats = statsMap.get(row.id)
     return {
-      id:           row.id,
-      name:         `${row.first_name} ${row.last_name}`.trim(),
-      email:        row.email,
-      phone:        row.mobile,
-      store:        row.store_name,
-      isPremium:    !!row.is_premium,
+      id:            row.id,
+      name:          `${row.first_name} ${row.last_name}`.trim(),
+      email:         row.email,
+      phone:         row.mobile,
+      store:         row.store_name,
+      isPremium:     !!row.is_premium,
+      avatarImageId: row.avatar_image_id ?? null,
       tags:         tagsMap.get(row.id) ?? [],
       totalVisits:  stats ? Number(stats.totalVisits) : 0,
       totalSpend:   spendMap.get(row.id) ?? 0,
@@ -98,7 +99,7 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
   const [tags, vehicles, stats, spend, jobs, notesCountRes] = await Promise.all([
     db.query<any[]>('SELECT tag FROM customer_tags WHERE customer_id = ?', [row.id]),
     db.query<any[]>(
-      `SELECT v.id, v.rego, v.year, v.make, v.model,
+      `SELECT v.id, v.rego, v.year, v.make, v.model, v.avatar_image_id, v.cover_image_id,
               (
                 SELECT NULLIF(GREATEST(
                   COALESCE(MAX(sj.odometer_in), 0),
@@ -167,12 +168,13 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
   const [[tagRows], [vehicleRows], [[statsRow]], [[spendRow]], [jobRows], [[notesRow]]] = [tags, vehicles, stats, spend, jobs, notesCountRes]
 
   return {
-    id:          row.id,
-    name:        `${row.first_name} ${row.last_name}`.trim(),
-    email:       row.email,
-    phone:       row.mobile,
-    store:       row.store_name,
-    isPremium:   !!row.is_premium,
+    id:            row.id,
+    name:          `${row.first_name} ${row.last_name}`.trim(),
+    email:         row.email,
+    phone:         row.mobile,
+    store:         row.store_name,
+    isPremium:     !!row.is_premium,
+    avatarImageId: row.avatar_image_id ?? null,
     tags:        tagRows.map((t: any) => t.tag),
     totalVisits: Number(statsRow.totalVisits),
     totalSpend:  Number(Number(spendRow?.totalSpend ?? 0).toFixed(2)),
@@ -188,7 +190,7 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
       state:    row.state ?? null,
       postcode: row.postcode ?? null,
     },
-    vehicles:    vehicleRows.map((v: any) => ({ id: v.id, rego: v.rego, year: v.year, make: v.make, model: v.model, odometer: v.odometer != null ? Number(v.odometer) : null, notesCount: Number(v.notes_count ?? 0) })),
+    vehicles:    vehicleRows.map((v: any) => ({ id: v.id, rego: v.rego, year: v.year, make: v.make, model: v.model, odometer: v.odometer != null ? Number(v.odometer) : null, notesCount: Number(v.notes_count ?? 0), avatarImageId: v.avatar_image_id ?? null, coverImageId: v.cover_image_id ?? null })),
     jobHistory:  jobRows.map((j: any) => ({
       id:      j.id,
       date:    j.completed_at ? formatDate(j.completed_at) : null,

@@ -7,7 +7,12 @@
     "deploy": "cdk deploy",
     "diff": "cdk diff",
     "synth": "cdk synth",
-    "hotswap": "cdk deploy --hotswap"
+    "hotswap": "cdk deploy --hotswap",
+    "agent:schema": "claude --dangerously-skip-permissions --agent schema",
+    "agent:api": "claude --dangerously-skip-permissions --agent api",
+    "agent:test": "claude --dangerously-skip-permissions --agent test",
+    "agent:docs": "claude --dangerously-skip-permissions --agent docs",
+    "claude": "claude --dangerously-skip-permissions"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.147",
