@@ -1230,5 +1230,27 @@ export class RodzApiStack2 extends Stack {
       routeKey: HttpRouteKey.with('/c/vehicles/{id}/gallery/{imageId}', HttpMethod.DELETE),
       authorizer: customerAuthorizer,
     })
+
+    const customerVehicleTransferFn = new LambdaFn(this, 'CustomerVehicleTransfer', {
+      entry: src('customer/vehicles/transfer.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerVehicleTransferRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleTransferInt', customerVehicleTransferFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/transfer', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    const staffVehicleTransferFn = new LambdaFn(this, 'StaffVehicleTransfer', {
+      entry: src('customers/vehicles/transfer.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'StaffVehicleTransferRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('StaffVehicleTransferInt', staffVehicleTransferFn),
+      routeKey: HttpRouteKey.with('/customers/{customerId}/vehicles/{vehicleId}/transfer', HttpMethod.POST),
+      authorizer,
+    })
   }
 }
