@@ -26,6 +26,22 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!vehicle) return notFound('Vehicle')
     if (!vehicle.is_active) return gone('Vehicle')
 
+    // Check if sold within last 90 days (most recent released_date on the vehicle)
+    const [[recentSale]] = await db.query<any[]>(
+      `SELECT released_date FROM vehicle_owners
+       WHERE vehicle_id = ? AND is_current = 0 AND released_date IS NOT NULL
+       ORDER BY released_date DESC LIMIT 1`,
+      [vehicle.id],
+    )
+    const soldAt = recentSale?.released_date
+      ? (recentSale.released_date instanceof Date
+          ? recentSale.released_date.toISOString().slice(0, 10)
+          : String(recentSale.released_date).slice(0, 10))
+      : null
+    const sold = soldAt
+      ? (Date.now() - new Date(soldAt).getTime()) < 90 * 24 * 60 * 60 * 1000
+      : false
+
     // Contact details come from the current owner — auto-updates on ownership transfer
     const [[owner]] = await db.query<any[]>(
       `SELECT CONCAT(c.first_name, ' ', c.last_name) AS contact_name,
@@ -65,6 +81,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       odometerCurrent: vehicle.odometer_current != null ? Number(vehicle.odometer_current) : null,
       avatarUrl:       vehicle.avatar_image_id ? imageUrls(vehicle.avatar_image_id).public : null,
       coverUrl:        vehicle.cover_image_id  ? imageUrls(vehicle.cover_image_id).public  : null,
+      sold,
+      soldAt,
       forSale:         !!vehicle.for_sale,
       askingPrice:     vehicle.asking_price != null ? Number(vehicle.asking_price) : null,
       city:            vehicle.city    ?? null,

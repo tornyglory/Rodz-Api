@@ -81,6 +81,37 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       }
     })
 
+    // Ownership transfer events
+    const [ownershipRows] = await db.query<any[]>(
+      `SELECT vo.released_date, vo.odometer_at_release,
+              CONCAT(c.first_name, ' ', c.last_name) AS from_owner
+       FROM vehicle_owners vo
+       JOIN customers c ON c.id = vo.customer_id
+       WHERE vo.vehicle_id = ? AND vo.is_current = 0 AND vo.released_date IS NOT NULL
+       ORDER BY vo.released_date DESC`,
+      [vehicleId],
+    )
+
+    const ownershipEntries = ownershipRows.map((r: any) => ({
+      id:            `transfer-${toDate(r.released_date)}`,
+      source:        'ownership' as const,
+      date:          toDate(r.released_date),
+      odometerKm:    r.odometer_at_release != null ? Number(r.odometer_at_release) : null,
+      title:         'Vehicle sold — ownership transferred',
+      workshop:      null,
+      workshopSuburb: null,
+      tech:          null,
+      cost:          null,
+      status:        null,
+      invoiceId:     null,
+      invoiceNumber: null,
+      invoiceUrl:    null,
+      aiSummary:     null,
+      imageUrl:      null,
+      photos:        [],
+      lineItems:     [],
+    }))
+
     // Merge in external entries (customer-imported invoices)
     const [extRows] = await db.query<any[]>(
       `SELECT id, image_id, workshop_name, workshop_suburb, service_date,
@@ -112,7 +143,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }))
 
     // Merge and sort by date descending, Rodz jobs first on same date
-    const entries = [...rodzEntries, ...externalEntries].sort((a, b) => {
+    const entries = [...rodzEntries, ...externalEntries, ...ownershipEntries].sort((a, b) => {
       if (!a.date && !b.date) return 0
       if (!a.date) return 1
       if (!b.date) return -1
