@@ -12,7 +12,7 @@ export function classifyIntent(message: string, isPremium: boolean): AgentType {
       return 'fuel'
     }
 
-    if (/\b(expense|how much.{0,20}spent|how much.{0,20}cost|receipt|running cost|annual cost|yearly cost|tax export|business expense|fuel efficiency|litres per|l\/100|cost per km)\b/.test(m)) {
+    if (/\b(expenses?|spending|how much.{0,20}spent|how much.{0,20}cost|receipt|running cost|annual cost|yearly cost|tax export|business expense|fuel efficiency|litres per|l\/100|cost per km|fuel cost|fuel spend|fuel expenses?|tracking costs?|what.{0,10}cost)\b/.test(m)) {
       return 'expense'
     }
 
