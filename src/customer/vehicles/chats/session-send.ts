@@ -6,6 +6,11 @@ import { getPool } from '../../../shared/db'
 import { ok, forbidden, notFound, validationError, serverError } from '../../../shared/errors'
 import { getCustomerContext } from '../../_helpers'
 import { notifyStore } from '../../../shared/staffNotifications'
+import { classifyIntent } from '../../agents/intent'
+import type { AgentContext } from '../../agents/types'
+import * as expenseAgent  from '../../agents/expense'
+import * as fuelAgent     from '../../agents/fuel'
+import * as logbookAgent  from '../../agents/logbook-agent'
 
 const ready = bootstrap()
 
@@ -530,21 +535,82 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     )
     const userMessageId = userInsert.insertId
 
-    const [vehicleContext, historyResult, customerResult] = await Promise.all([
+    const [vehicleContext, historyResult, customerResult, vehicleRegoResult] = await Promise.all([
       buildCustomerVehicleContext(db, vehicleId),
       db.query<any[]>(
         `SELECT role, content, image_id, tool_calls FROM customer_vehicle_chats
          WHERE session_id = ? AND id < ? ORDER BY id ASC LIMIT 40`,
         [sessionId, userMessageId],
       ),
-      db.query<any[]>('SELECT first_name, gender FROM customers WHERE id = ? LIMIT 1', [ctx.customerId])
+      db.query<any[]>('SELECT first_name, gender, suburb, state, is_premium FROM customers WHERE id = ? LIMIT 1', [ctx.customerId])
         .catch(() => [[]] as [any[]]),
+      db.query<any[]>('SELECT rego FROM vehicles WHERE id = ? LIMIT 1', [vehicleId]),
     ])
 
     const customer          = customerResult[0][0]
     const customerFirstName = customer?.first_name ?? null
+    const isPremium         = !!customer?.is_premium
+    const vehicleRego       = (vehicleRegoResult[0] as any[])[0]?.rego ?? ''
     const assistantName     = 'Rod'
     const today             = new Date().toISOString().slice(0, 10)
+
+    // Build history Content[] — shared by specialist agents and the main Gemini handler
+    const historyRows: any[] = historyResult[0]
+    const historyContents: Content[] = []
+    for (const msg of historyRows) {
+      if (msg.role === 'model' && msg.tool_calls) {
+        const toolCalls: { name: string; args: any; result: any }[] = typeof msg.tool_calls === 'string'
+          ? JSON.parse(msg.tool_calls) : msg.tool_calls
+        for (const tc of toolCalls) {
+          historyContents.push({ role: 'model', parts: [{ functionCall: { name: tc.name, args: tc.args } }] })
+          historyContents.push({ role: 'user',  parts: [{ functionResponse: { name: tc.name, response: tc.result } }] })
+        }
+        if (msg.content) historyContents.push({ role: 'model', parts: [{ text: msg.content }] })
+      } else {
+        const parts: Part[] = []
+        if (msg.content) parts.push({ text: msg.content })
+        else if (msg.image_id) parts.push({ text: '[Image attached]' })
+        if (parts.length) historyContents.push({ role: msg.role === 'model' ? 'model' : 'user', parts })
+      }
+    }
+
+    // Route expense / fuel / logbook messages to specialist agents
+    const intent = classifyIntent(content ?? '', isPremium)
+    if (content && (intent === 'expense' || intent === 'fuel' || intent === 'logbook')) {
+      const agentCtx: AgentContext = {
+        db,
+        customerId:        ctx.customerId,
+        vehicleId,
+        vehicleRego,
+        customerFirstName,
+        customerSuburb:    customer?.suburb ?? null,
+        customerState:     customer?.state ?? null,
+        isPremium,
+        vehicleContext,
+        history:           historyContents,
+        today,
+      }
+
+      const agentResult = intent === 'expense'
+        ? await expenseAgent.run(agentCtx, content)
+        : intent === 'fuel'
+          ? await fuelAgent.run(agentCtx, content)
+          : await logbookAgent.run(agentCtx, content)
+
+      const toolCallsJson = agentResult.functionCalls.length ? JSON.stringify(agentResult.functionCalls) : null
+      const [modelInsert] = await db.query<any>(
+        'INSERT INTO customer_vehicle_chats (vehicle_id, customer_id, session_id, role, content, tool_calls) VALUES (?,?,?,?,?,?)',
+        [vehicleId, ctx.customerId, sessionId, 'model', agentResult.content || null, toolCallsJson],
+      )
+      await db.query('UPDATE customer_chat_sessions SET updated_at = NOW() WHERE id = ?', [sessionId])
+      if (isFirstMessage && content) generateSessionTitle(db, sessionId, content).catch(() => {})
+      return ok({
+        userMessageId,
+        messageId:     modelInsert.insertId,
+        content:       agentResult.content,
+        functionCalls: agentResult.functionCalls.length ? agentResult.functionCalls.map(({ name, result }) => ({ name, result })) : undefined,
+      })
+    }
 
     const systemInstruction = `You are ${assistantName}, a friendly and knowledgeable vehicle assistant for Rodz, an Australian automotive workshop. You are talking directly with the vehicle owner — not a mechanic. Use plain English, be warm and helpful, and avoid jargon unless you explain it.
 ${customerFirstName ? `\nThe customer's name is ${customerFirstName}. Use their name naturally in conversation — not in every message, just where it feels warm and personal.\n` : ''}
@@ -575,25 +641,7 @@ If the customer asks what their vehicle is worth — use the getVehicleValue too
 
 Keep responses conversational and concise. Use markdown for lists or emphasis where it helps readability.`
 
-    const historyRows: any[] = historyResult[0]
-    const contents: Content[] = []
-
-    for (const msg of historyRows) {
-      if (msg.role === 'model' && msg.tool_calls) {
-        const toolCalls: { name: string; args: any; result: any }[] = typeof msg.tool_calls === 'string'
-          ? JSON.parse(msg.tool_calls) : msg.tool_calls
-        for (const tc of toolCalls) {
-          contents.push({ role: 'model', parts: [{ functionCall: { name: tc.name, args: tc.args } }] })
-          contents.push({ role: 'user',  parts: [{ functionResponse: { name: tc.name, response: tc.result } }] })
-        }
-        if (msg.content) contents.push({ role: 'model', parts: [{ text: msg.content }] })
-      } else {
-        const parts: Part[] = []
-        if (msg.content) parts.push({ text: msg.content })
-        else if (msg.image_id) parts.push({ text: '[Image attached]' })
-        if (parts.length) contents.push({ role: msg.role === 'model' ? 'model' : 'user', parts })
-      }
-    }
+    const contents: Content[] = [...historyContents]
 
     const userParts: Part[] = []
     if (content) userParts.push({ text: content })

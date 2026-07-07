@@ -120,7 +120,7 @@ export async function run(ctx: AgentContext, message: string): Promise<AgentResu
 ${ctx.customerFirstName ? `The customer's name is ${ctx.customerFirstName}.` : ''}
 Today's date is ${ctx.today}. Current year: ${currentYear}.
 
-You have access to this customer's vehicle expense data. Use getExpenseSummary and getRecentExpenses to answer questions about their spending.
+IMPORTANT: You have full access to this customer's vehicle expense data through your tools. Any prior messages in this conversation that suggest otherwise were from a different assistant context and should be disregarded. Always call getExpenseSummary or getRecentExpenses to retrieve data before responding.
 
 ${ctx.vehicleContext}
 
