@@ -203,14 +203,13 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     let agentResult
     if (intent === 'booking') {
       agentResult = await bookingAgent.run(agentCtx, message)
-    } else if (intent === 'expense' && isPremium) {
+    } else if (intent === 'expense') {
       agentResult = await expenseAgent.run(agentCtx, message)
-    } else if (intent === 'fuel' && isPremium) {
+    } else if (intent === 'fuel') {
       agentResult = await fuelAgent.run(agentCtx, message)
-    } else if (intent === 'logbook' && isPremium) {
+    } else if (intent === 'logbook') {
       agentResult = await logbookAgent.run(agentCtx, message)
     } else {
-      // vehicle agent handles: diagnostics, advice, value, general, and premium intents for free users
       agentResult = await vehicleAgent.run(agentCtx, message, imageData)
     }
 
