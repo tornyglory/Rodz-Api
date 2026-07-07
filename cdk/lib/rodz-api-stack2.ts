@@ -372,6 +372,26 @@ export class RodzApiStack2 extends Stack {
       routeKey: HttpRouteKey.with('/logbook/{token}/profile', HttpMethod.GET),
     })
 
+    const logbookVehicleFn = new LambdaFn(this, 'LogbookVehicle', {
+      entry: src('vehicles/logbook-vehicle.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'LogbookVehicleRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('LogbookVehicleInt', logbookVehicleFn),
+      routeKey: HttpRouteKey.with('/logbook/{token}/vehicle', HttpMethod.GET),
+    })
+
+    const logbookExpensesFn = new LambdaFn(this, 'LogbookExpenses', {
+      entry: src('vehicles/logbook-expenses.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'LogbookExpensesRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('LogbookExpensesInt', logbookExpensesFn),
+      routeKey: HttpRouteKey.with('/logbook/{token}/expenses', HttpMethod.GET),
+    })
+
     // ── Vehicle send logbook ────────────────────────────────────────────────
 
     const vehicleSendLogbookFn = new LambdaFn(this, 'VehicleSendLogbook', {
@@ -1162,6 +1182,52 @@ export class RodzApiStack2 extends Stack {
       httpApi,
       integration: new HttpLambdaIntegration('CustomerBookingCreateInt', customerBookingCreateFn),
       routeKey: HttpRouteKey.with('/c/bookings', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    // ── Vehicle public profile ────────────────────────────────────────────────
+
+    const customerVehicleProfileUpdateFn = new LambdaFn(this, 'CustomerVehicleProfileUpdate', {
+      entry: src('customer/vehicles/profile-update.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerVehicleProfileUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleProfileUpdateInt', customerVehicleProfileUpdateFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/profile', HttpMethod.PATCH),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerVehicleGalleryUploadUrlFn = new LambdaFn(this, 'CustomerVehicleGalleryUploadUrl', {
+      entry: src('customer/vehicles/gallery-upload-url.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerVehicleGalleryUploadUrlRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleGalleryUploadUrlInt', customerVehicleGalleryUploadUrlFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/gallery/upload-url', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerVehicleGalleryCreateFn = new LambdaFn(this, 'CustomerVehicleGalleryCreate', {
+      entry: src('customer/vehicles/gallery-create.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerVehicleGalleryCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleGalleryCreateInt', customerVehicleGalleryCreateFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/gallery', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerVehicleGalleryDeleteFn = new LambdaFn(this, 'CustomerVehicleGalleryDelete', {
+      entry: src('customer/vehicles/gallery-delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerVehicleGalleryDeleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleGalleryDeleteInt', customerVehicleGalleryDeleteFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/gallery/{imageId}', HttpMethod.DELETE),
       authorizer: customerAuthorizer,
     })
   }

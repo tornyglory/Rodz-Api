@@ -22,6 +22,7 @@ export const unauthorized        = (code = 'UNAUTHORIZED', message = 'Unauthoriz
 export const forbidden           = (code = 'FORBIDDEN', message = 'Forbidden.')       => apiError(403, code, message)
 export const notFound            = (resource = 'Resource')     => apiError(404, 'NOT_FOUND',           `${resource} not found.`)
 export const badRequest          = (message: string)           => apiError(400, 'BAD_REQUEST',         message)
+export const gone                = (resource = 'Resource')     => apiError(410, 'GONE',                `${resource} is no longer available.`)
 
 export function serverError(err: unknown): APIGatewayProxyResultV2 {
   console.error('Unhandled error:', err)
