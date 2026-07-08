@@ -59,6 +59,10 @@ export function buildVehicle(row: any) {
     avatarUrl:            row.avatar_image_id ? imageUrls(row.avatar_image_id).thumbnail : null,
     coverUrl:             row.cover_image_id  ? imageUrls(row.cover_image_id).public      : null,
     logbookToken:         row.logbook_token   ?? null,
+    forSale:              !!row.for_sale,
+    askingPrice:          row.asking_price != null ? Number(row.asking_price) : null,
+    city:                 row.city    ?? null,
+    country:              row.country ?? null,
   }
 }
 

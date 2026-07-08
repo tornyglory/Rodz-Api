@@ -46,7 +46,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const [[owner]] = await db.query<any[]>(
       `SELECT CONCAT(c.first_name, ' ', c.last_name) AS contact_name,
               c.mobile AS contact_phone,
-              c.email  AS contact_email
+              c.email  AS contact_email,
+              c.is_premium AS is_premium
        FROM vehicle_owners vo
        JOIN customers c ON c.id = vo.customer_id
        WHERE vo.vehicle_id = ? AND vo.is_current = 1
@@ -90,6 +91,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       contactName:     owner?.contact_name  ?? null,
       contactPhone:    owner?.contact_phone ?? null,
       contactEmail:    owner?.contact_email ?? null,
+      isPremium:       !!owner?.is_premium,
       images: galleryRows.map((r: any) => ({
         id:           r.id,
         url:          imageUrls(r.image_id).public,

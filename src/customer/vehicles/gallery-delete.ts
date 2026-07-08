@@ -11,8 +11,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   await ready
   const db        = getPool()
   const ctx       = getCustomerContext(event)
-  const vehicleId = Number(event.pathParameters?.id)
-  const imageId   = event.pathParameters?.imageId
+  const vehicleId   = Number(event.pathParameters?.id)
+  const galleryRowId = Number(event.pathParameters?.imageId)
 
   try {
     const [[ownership]] = await db.query<any[]>(
@@ -22,8 +22,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!ownership) return forbidden()
 
     const [[row]] = await db.query<any[]>(
-      'SELECT id, image_id FROM vehicle_gallery_images WHERE vehicle_id = ? AND image_id = ? AND deleted_at IS NULL LIMIT 1',
-      [vehicleId, imageId],
+      'SELECT id, image_id FROM vehicle_gallery_images WHERE id = ? AND vehicle_id = ? AND deleted_at IS NULL LIMIT 1',
+      [galleryRowId, vehicleId],
     )
     if (!row) return notFound('Image')
 

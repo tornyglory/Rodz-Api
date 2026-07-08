@@ -66,7 +66,19 @@ Call on mount. Returns everything needed to render the page.
   "serviceIntervalMonths": 6,
   "avatarUrl":            "https://imagedelivery.net/...abc/thumbnail",
   "coverUrl":             "https://imagedelivery.net/...xyz/public",
-  "logbookToken":         null
+  "logbookToken":         "abc123...",
+  "forSale":              true,
+  "askingPrice":          18500,
+  "city":                 "Melbourne",
+  "country":              "Australia",
+  "gallery": [
+    {
+      "id":           12,
+      "url":          "https://imagedelivery.net/.../public",
+      "thumbnailUrl": "https://imagedelivery.net/.../thumbnail",
+      "sortOrder":    0
+    }
+  ]
 }
 ```
 
@@ -86,7 +98,11 @@ Call on mount. Returns everything needed to render the page.
 | `driveType` | One of: `fwd`, `rwd`, `awd`, `4wd` — or `null` |
 | `regoExpiry` | `YYYY-MM-DD` string or `null` |
 | `nextServiceDueDate` | `YYYY-MM-DD` string or `null` |
-| `logbookToken` | Ignore on this screen — used by the logbook share feature |
+| `logbookToken` | Public logbook token — build the share URL as `https://rodz.app/vehicle/{logbookToken}` |
+| `forSale` | `true` if the vehicle is currently listed for sale. Drives the Settings > For Sale toggle state |
+| `askingPrice` | AUD integer or `null` when not listed / no price set |
+| `city`, `country` | Listing location strings or `null` |
+| `gallery` | Photo strip on the Photos tab. Empty array `[]` when no photos. See `vehicle-profile-new-features-brief.md` §2 for the upload/delete flow |
 
 ---
 

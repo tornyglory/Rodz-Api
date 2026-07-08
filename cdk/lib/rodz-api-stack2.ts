@@ -392,6 +392,16 @@ export class RodzApiStack2 extends Stack {
       routeKey: HttpRouteKey.with('/logbook/{token}/expenses', HttpMethod.GET),
     })
 
+    const logbookChatFn = new LambdaFn(this, 'LogbookChat', {
+      entry: src('vehicles/logbook-chat.ts'), vpc, sharedEnv, timeoutSeconds: 30, memorySize: 512,
+    }).fn
+
+    new HttpRoute(this, 'LogbookChatRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('LogbookChatInt', logbookChatFn),
+      routeKey: HttpRouteKey.with('/logbook/{token}/chat', HttpMethod.POST),
+    })
+
     // ── Vehicle send logbook ────────────────────────────────────────────────
 
     const vehicleSendLogbookFn = new LambdaFn(this, 'VehicleSendLogbook', {
