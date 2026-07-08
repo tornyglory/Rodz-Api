@@ -1,15 +1,17 @@
 import type mysql from 'mysql2/promise'
 
 export interface PublicProfileSettings {
-  history: boolean
-  photos:  boolean
-  chat:    boolean
+  history:     boolean
+  photos:      boolean
+  chat:        boolean
+  maintenance: boolean
 }
 
 export const PUBLIC_PROFILE_DEFAULTS: PublicProfileSettings = {
-  history: true,
-  photos:  true,
-  chat:    true,
+  history:     true,
+  photos:      true,
+  chat:        true,
+  maintenance: true,
 }
 
 export function parsePublicProfileSettings(raw: unknown): PublicProfileSettings {
@@ -18,9 +20,10 @@ export function parsePublicProfileSettings(raw: unknown): PublicProfileSettings 
   if (!obj || typeof obj !== 'object') return { ...PUBLIC_PROFILE_DEFAULTS }
   const o = obj as Record<string, unknown>
   return {
-    history: o.history === false ? false : true,
-    photos:  o.photos  === false ? false : true,
-    chat:    o.chat    === false ? false : true,
+    history:     o.history     === false ? false : true,
+    photos:      o.photos      === false ? false : true,
+    chat:        o.chat        === false ? false : true,
+    maintenance: o.maintenance === false ? false : true,
   }
 }
 
@@ -36,9 +39,10 @@ export function sanitiseSettingsPatch(input: unknown): Partial<PublicProfileSett
   if (!input || typeof input !== 'object') return null
   const src = input as Record<string, unknown>
   const out: Partial<PublicProfileSettings> = {}
-  if (typeof src.history === 'boolean') out.history = src.history
-  if (typeof src.photos  === 'boolean') out.photos  = src.photos
-  if (typeof src.chat    === 'boolean') out.chat    = src.chat
+  if (typeof src.history     === 'boolean') out.history     = src.history
+  if (typeof src.photos      === 'boolean') out.photos      = src.photos
+  if (typeof src.chat        === 'boolean') out.chat        = src.chat
+  if (typeof src.maintenance === 'boolean') out.maintenance = src.maintenance
   return Object.keys(out).length ? out : null
 }
 

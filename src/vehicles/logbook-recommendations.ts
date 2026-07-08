@@ -22,7 +22,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!vehicle.is_active) return gone('Vehicle')
 
     const publicSettings = parsePublicProfileSettings(vehicle.public_profile_settings)
-    if (!publicSettings.history) {
+    if (!publicSettings.maintenance) {
       return forbidden('RECOMMENDATIONS_HIDDEN', 'Maintenance schedule is not public for this vehicle.')
     }
 

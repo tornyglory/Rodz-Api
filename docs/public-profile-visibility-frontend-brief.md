@@ -25,6 +25,7 @@ Customer-side endpoints require a customer JWT. Public logbook endpoints are ope
 | `history` | Service history (workshop invoices + external logbook entries) | ✅ visible |
 | `photos` | Gallery photos | ✅ visible |
 | `chat` | Ask AI chat about the vehicle | ✅ visible |
+| `maintenance` | AI-generated maintenance schedule (`ai_recommendations`) | ✅ visible |
 
 **Not toggleable:**
 - **Specs** — always visible (it's the identity of the profile)
@@ -46,9 +47,10 @@ Response now includes:
   "rego": "LWF251",
   ...
   "publicProfileSettings": {
-    "history": true,
-    "photos":  true,
-    "chat":    true
+    "history":     true,
+    "photos":      true,
+    "chat":        true,
+    "maintenance": true
   }
 }
 ```
@@ -124,6 +126,7 @@ The frontend must hide tabs based on `publicSettings`, but even if it doesn't th
 | `photos: false` | `GET /logbook/:token/vehicle` | `images: []` (never leaks the array) |
 | `history: false` | `GET /logbook/:token` (service history) | `403 HISTORY_HIDDEN` |
 | `chat: false` | `POST /logbook/:token/chat` | `403 CHAT_DISABLED` |
+| `maintenance: false` | `GET /logbook/:token/recommendations` | `403 RECOMMENDATIONS_HIDDEN` |
 
 Handle those 403s as "tab shouldn't have been shown" — quietly redirect the user to the Specs tab if they somehow land there.
 
@@ -134,9 +137,10 @@ Handle those 403s as "tab shouldn't have been shown" — quietly redirect the us
 ```ts
 // src/api/customer.ts or wherever your types live
 export interface PublicProfileSettings {
-  history: boolean
-  photos:  boolean
-  chat:    boolean
+  history:     boolean
+  photos:      boolean
+  chat:        boolean
+  maintenance: boolean
 }
 
 // Add to CustomerVehicle
