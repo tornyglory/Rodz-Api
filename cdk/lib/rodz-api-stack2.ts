@@ -1093,6 +1093,17 @@ export class RodzApiStack2 extends Stack {
       authorizer: customerAuthorizer,
     })
 
+    const customerVehicleRecommendationsFn = new LambdaFn(this, 'CustomerVehicleRecommendations', {
+      entry: src('customer/vehicles/recommendations.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerVehicleRecommendationsRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleRecommendationsInt', customerVehicleRecommendationsFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/recommendations', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
     // ── Customer AI chat + booking endpoints ──────────────────────────────
 
     const customerChatHistoryFn = new LambdaFn(this, 'CustomerChatHistory', {

@@ -3,6 +3,7 @@ import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
 import { ok, notFound, gone, serverError } from '../shared/errors'
 import { imageUrls } from '../shared/cloudflare'
+import { parsePublicProfileSettings } from '../shared/publicProfileSettings'
 
 const ready = bootstrap()
 
@@ -17,7 +18,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       `SELECT v.id, v.rego, v.year, v.make, v.model, v.series, v.colour,
               v.fuel_type, v.transmission, v.engine_size_cc, v.vin,
               v.odometer_current, v.avatar_image_id, v.cover_image_id, v.is_active,
-              v.for_sale, v.asking_price, v.city, v.country
+              v.for_sale, v.asking_price, v.city, v.country,
+              v.public_profile_settings
        FROM vehicles v
        WHERE v.logbook_token = ?
        LIMIT 1`,
@@ -68,6 +70,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       ? `${(Number(vehicle.engine_size_cc) / 1000).toFixed(1)}L`
       : null
 
+    const publicSettings = parsePublicProfileSettings(vehicle.public_profile_settings)
+
     return ok({
       rego:            vehicle.rego,
       year:            vehicle.year,
@@ -92,12 +96,15 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       contactPhone:    owner?.contact_phone ?? null,
       contactEmail:    owner?.contact_email ?? null,
       isPremium:       !!owner?.is_premium,
-      images: galleryRows.map((r: any) => ({
-        id:           r.id,
-        url:          imageUrls(r.image_id).public,
-        thumbnailUrl: imageUrls(r.image_id).thumbnail,
-        sortOrder:    r.sort_order,
-      })),
+      publicSettings,
+      images: publicSettings.photos
+        ? galleryRows.map((r: any) => ({
+            id:           r.id,
+            url:          imageUrls(r.image_id).public,
+            thumbnailUrl: imageUrls(r.image_id).thumbnail,
+            sortOrder:    r.sort_order,
+          }))
+        : [],
     })
   } catch (err) {
     return serverError(err)

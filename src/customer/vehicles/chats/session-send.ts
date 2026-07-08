@@ -99,6 +99,49 @@ async function buildCustomerVehicleContext(db: mysql.Pool, vehicleId: number): P
     }
   }
 
+  // Personalised maintenance schedule (from ai_recommendations)
+  // Prioritise: overdue first, then due-soon, ordered by urgency and proximity.
+  const currentKm = v.odometer_current != null ? Number(v.odometer_current) : null
+  const [recs] = await db.query<any[]>(
+    `SELECT title, recommendation_body, urgency, status,
+            estimated_due_odometer, estimated_cost_min, estimated_cost_max
+     FROM ai_recommendations
+     WHERE vehicle_id = ? AND status IN ('active', 'sent', 'acknowledged')
+     ORDER BY
+       CASE urgency
+         WHEN 'urgent'      THEN 1
+         WHEN 'important'   THEN 2
+         WHEN 'recommended' THEN 3
+         WHEN 'advisory'    THEN 4
+       END ASC,
+       CASE WHEN estimated_due_odometer IS NULL THEN 1 ELSE 0 END,
+       estimated_due_odometer ASC
+     LIMIT 10`,
+    [vehicleId],
+  )
+
+  if (recs.length) {
+    lines.push('', '## Upcoming Maintenance (personalised for this vehicle)')
+    lines.push('Ordered by priority. Use these when the customer asks what is due, overdue, or coming up.')
+    for (const r of recs) {
+      const due     = r.estimated_due_odometer != null ? Number(r.estimated_due_odometer) : null
+      const delta   = due != null && currentKm != null ? due - currentKm : null
+      let deltaLabel = ''
+      if (delta != null) {
+        if (delta < 0)      deltaLabel = ` (overdue by ${Math.abs(delta).toLocaleString()} km)`
+        else if (delta === 0) deltaLabel = ' (due now)'
+        else                 deltaLabel = ` (in ${delta.toLocaleString()} km)`
+      } else if (due != null) {
+        deltaLabel = ` (due at ${due.toLocaleString()} km)`
+      }
+      const cost = r.estimated_cost_min && r.estimated_cost_max
+        ? ` — est. $${Number(r.estimated_cost_min)}–$${Number(r.estimated_cost_max)}`
+        : ''
+      const body = r.recommendation_body ? ` — ${String(r.recommendation_body).slice(0, 220)}` : ''
+      lines.push(`- [${r.urgency}] ${r.title}${deltaLabel}${cost}${body}`)
+    }
+  }
+
   return lines.join('\n')
 }
 
@@ -635,7 +678,9 @@ When helping with booking, follow these steps in order:
 9. Show a summary of ALL details and ask the customer to confirm before calling bookAppointment
 10. After booking, confirm with their booking reference, time, and the technician's name if assigned
 
-For vehicle diagnosis: ask them to describe symptoms and give helpful guidance while recommending a professional inspection for anything safety-related.
+For vehicle diagnosis: ask them to describe symptoms and give helpful guidance while recommending a professional inspection for anything safety-related. When you spot a symptom that overlaps with an item in the "Upcoming Maintenance" section, connect the dots for them (e.g. "we've got brake fluid coming up on your schedule — that could be related").
+
+When the customer asks what's due, overdue, or coming up on maintenance, answer from the "Upcoming Maintenance" section above rather than guessing from general model knowledge. Quote real numbers: how far overdue, when it's due, cost estimate.
 
 If the customer asks what their vehicle is worth — use the getVehicleValue tool.
 

@@ -3,6 +3,11 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { ok, forbidden, notFound, validationError, serverError } from '../../shared/errors'
 import { getCustomerContext } from '../_helpers'
+import {
+  sanitiseSettingsPatch,
+  mergePublicProfileSettings,
+  loadPublicProfileSettings,
+} from '../../shared/publicProfileSettings'
 
 const ready = bootstrap()
 
@@ -20,10 +25,15 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!ownership) return forbidden()
 
     const body = JSON.parse(event.body ?? '{}')
-    const { forSale, askingPrice, city, country } = body
+    const { forSale, askingPrice, city, country, publicProfileSettings } = body
 
     if (askingPrice !== undefined && askingPrice !== null && Number(askingPrice) < 0) {
       return validationError('askingPrice must not be negative.')
+    }
+
+    const settingsPatch = publicProfileSettings !== undefined ? sanitiseSettingsPatch(publicProfileSettings) : null
+    if (publicProfileSettings !== undefined && !settingsPatch) {
+      return validationError('publicProfileSettings must be an object of boolean keys (history, photos, chat).')
     }
 
     const sets: string[] = []
@@ -34,12 +44,18 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (city        !== undefined) { sets.push('city = ?');         params.push(city ?? null) }
     if (country     !== undefined) { sets.push('country = ?');      params.push(country ?? null) }
 
-    if (sets.length === 0) return validationError('No valid fields provided.')
+    if (sets.length === 0 && !settingsPatch) return validationError('No valid fields provided.')
 
-    await db.query(
-      `UPDATE vehicles SET ${sets.join(', ')} WHERE id = ?`,
-      [...params, vehicleId],
-    )
+    if (sets.length > 0) {
+      await db.query(
+        `UPDATE vehicles SET ${sets.join(', ')} WHERE id = ?`,
+        [...params, vehicleId],
+      )
+    }
+
+    const publicSettings = settingsPatch
+      ? await mergePublicProfileSettings(db, vehicleId, settingsPatch)
+      : await loadPublicProfileSettings(db, vehicleId)
 
     const [[row]] = await db.query<any[]>(
       `SELECT v.for_sale, v.asking_price, v.city, v.country,
@@ -56,13 +72,14 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!row) return notFound('Vehicle')
 
     return ok({
-      forSale:      !!row.for_sale,
-      askingPrice:  row.asking_price != null ? Number(row.asking_price) : null,
-      city:         row.city         ?? null,
-      country:      row.country      ?? null,
-      contactName:  row.contact_name  ?? null,
-      contactPhone: row.contact_phone ?? null,
-      contactEmail: row.contact_email ?? null,
+      forSale:               !!row.for_sale,
+      askingPrice:           row.asking_price != null ? Number(row.asking_price) : null,
+      city:                  row.city         ?? null,
+      country:               row.country      ?? null,
+      contactName:           row.contact_name  ?? null,
+      contactPhone:          row.contact_phone ?? null,
+      contactEmail:          row.contact_email ?? null,
+      publicProfileSettings: publicSettings,
     })
   } catch (err) {
     return serverError(err)

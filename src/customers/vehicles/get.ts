@@ -3,6 +3,8 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { getAuthContext } from '../../shared/auth'
 import { ok, notFound, serverError } from '../../shared/errors'
+import { imageUrls } from '../../shared/cloudflare'
+import { parsePublicProfileSettings } from '../../shared/publicProfileSettings'
 
 const ready = bootstrap()
 
@@ -24,7 +26,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
          v.service_interval_km, v.service_interval_months,
          v.next_service_due_km, v.next_service_due_date,
          v.fleet_unit_number, v.internal_notes,
-         v.avatar_image_id, v.cover_image_id
+         v.avatar_image_id, v.cover_image_id, v.logbook_token,
+         v.for_sale, v.asking_price, v.city, v.country,
+         v.public_profile_settings
        FROM vehicles v
        JOIN vehicle_owners vo ON vo.vehicle_id = v.id AND vo.is_current = 1
        JOIN customers c       ON c.id = vo.customer_id
@@ -41,6 +45,14 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       )
       if (customer?.store_id !== ctx.storeId) return notFound('Vehicle')
     }
+
+    const [galleryRows] = await db.query<any[]>(
+      `SELECT id, image_id, sort_order
+       FROM vehicle_gallery_images
+       WHERE vehicle_id = ? AND deleted_at IS NULL
+       ORDER BY sort_order ASC, id ASC`,
+      [vehicleId],
+    )
 
     return ok({
       vehicle: {
@@ -75,6 +87,20 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         internalNotes:         row.internal_notes          ?? null,
         avatarImageId:         row.avatar_image_id         ?? null,
         coverImageId:          row.cover_image_id          ?? null,
+        avatarUrl:             row.avatar_image_id ? imageUrls(row.avatar_image_id).thumbnail : null,
+        coverUrl:              row.cover_image_id  ? imageUrls(row.cover_image_id).public      : null,
+        logbookToken:          row.logbook_token           ?? null,
+        forSale:               !!row.for_sale,
+        askingPrice:           row.asking_price != null ? Number(row.asking_price) : null,
+        city:                  row.city                    ?? null,
+        country:               row.country                 ?? null,
+        publicProfileSettings: parsePublicProfileSettings(row.public_profile_settings),
+        gallery: galleryRows.map((g: any) => ({
+          id:           g.id,
+          url:          imageUrls(g.image_id).public,
+          thumbnailUrl: imageUrls(g.image_id).thumbnail,
+          sortOrder:    g.sort_order,
+        })),
       },
     })
   } catch (err) {

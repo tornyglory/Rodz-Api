@@ -1,8 +1,9 @@
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
-import { ok, notFound, serverError } from '../shared/errors'
+import { ok, notFound, forbidden, serverError } from '../shared/errors'
 import { getInvoiceItems } from '../invoices/_helpers'
+import { parsePublicProfileSettings } from '../shared/publicProfileSettings'
 
 const ready = bootstrap()
 const PAGE_SIZE = 25
@@ -18,11 +19,15 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const [[vehicle]] = await db.query<any[]>(
       `SELECT rego,
               CONCAT(ANY_VALUE(year), ' ', ANY_VALUE(make), ' ', ANY_VALUE(model)) AS label,
-              ANY_VALUE(odometer_current) AS odometer_current
+              ANY_VALUE(odometer_current)         AS odometer_current,
+              ANY_VALUE(public_profile_settings)  AS public_profile_settings
        FROM vehicles WHERE logbook_token = ? AND is_active = 1 GROUP BY rego LIMIT 1`,
       [token],
     )
     if (!vehicle) return notFound('Vehicle')
+
+    const publicSettings = parsePublicProfileSettings(vehicle.public_profile_settings)
+    if (!publicSettings.history) return forbidden('HISTORY_HIDDEN', 'Service history is not public for this vehicle.')
 
     const rego = vehicle.rego
 

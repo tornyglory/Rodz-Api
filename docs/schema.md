@@ -977,7 +977,14 @@ Static rules used to trigger AI-generated recommendations (e.g. "60,000 km servi
 
 ### `ai_recommendations`
 
-Generated maintenance recommendations per vehicle, produced by the Gemini-powered recommendation engine. Rebuilt from scratch on each engine run (active records deleted and re-inserted).
+Generated maintenance recommendations per vehicle, produced by the Gemini-powered recommendation engine.
+
+**Regeneration behaviour**: on each engine run the handler deletes rows where `status = 'active'` for that vehicle, then inserts the new Gemini output. Rows in `sent`, `acknowledged`, `dismissed`, `completed`, or `expired` are preserved as history — nothing that has been actioned or emailed is ever destroyed.
+
+**Triggers** (see `docs/ai-maintenance-reminders.md` for the full table):
+- Vehicle creation via any path (customer portal, workshop, public booking)
+- Odometer update with a delta of ≥10,000 km since last generation
+- Booking creation (safety net — only fires if no schedule exists yet)
 
 | Column | Type | Null |
 |--------|------|------|
@@ -1006,11 +1013,9 @@ Generated maintenance recommendations per vehicle, produced by the Gemini-powere
 
 **`urgency` enum:** `advisory`, `recommended`, `important`, `urgent`
 
-**`status` enum:** `active`, `sent`, `acknowledged`, `dismissed`, `completed`
+**`status` enum:** `active`, `sent`, `acknowledged`, `dismissed`, `completed`, `expired`
 
 The reminder dispatcher queries `status = 'active'` records where `estimated_due_odometer` is within 2,000 km of the vehicle's predicted current odometer (using `odometer_current + days_since_recorded × 41 km/day`).
-
-**`status` enum:** `active`, `sent`, `acknowledged`, `dismissed`, `completed`, `expired`
 
 **`urgency` enum:** `advisory`, `recommended`, `important`, `urgent`
 

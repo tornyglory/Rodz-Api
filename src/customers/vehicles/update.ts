@@ -3,6 +3,7 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { getAuthContext } from '../../shared/auth'
 import { ok, forbidden, notFound, validationError, serverError } from '../../shared/errors'
+import { maybeRegenerateSchedule } from '../../shared/aiEngines'
 
 const ready = bootstrap()
 
@@ -115,6 +116,10 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const set    = updates.map(([k]) => `${k} = ?`).join(', ')
     const values = [...updates.map(([, v]) => v), vehicleId]
     await db.query(`UPDATE vehicles SET ${set}, updated_at = NOW() WHERE id = ?`, values)
+
+    if (body.odometerCurrent != null) {
+      void maybeRegenerateSchedule(db, Number(vehicleId), Number(body.odometerCurrent), Number(customerId))
+    }
 
     const [[v]] = await db.query<any[]>(
       `SELECT

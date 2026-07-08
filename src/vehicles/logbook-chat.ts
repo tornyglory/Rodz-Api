@@ -3,8 +3,9 @@ import { GoogleGenerativeAI, Content, Part } from '@google/generative-ai'
 import type mysql from 'mysql2/promise'
 import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
-import { notFound, gone, badRequest, serverError } from '../shared/errors'
+import { notFound, gone, forbidden, badRequest, serverError } from '../shared/errors'
 import { checkAndRecord } from '../shared/rateLimit'
+import { parsePublicProfileSettings } from '../shared/publicProfileSettings'
 
 const ready = bootstrap()
 
@@ -186,11 +187,14 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     // Look up vehicle + is_active in one query to distinguish 404 vs 410
     const [[vehicle]] = await db.query<any[]>(
-      'SELECT id, rego, is_active, for_sale FROM vehicles WHERE logbook_token = ? LIMIT 1',
+      'SELECT id, rego, is_active, for_sale, public_profile_settings FROM vehicles WHERE logbook_token = ? LIMIT 1',
       [token],
     )
     if (!vehicle) return notFound('Vehicle')
     if (!vehicle.is_active) return gone('Vehicle')
+
+    const publicSettings = parsePublicProfileSettings(vehicle.public_profile_settings)
+    if (!publicSettings.chat) return forbidden('CHAT_DISABLED', 'The owner has disabled the assistant for this vehicle.')
 
     const body    = safeParse(event.body ?? '{}') ?? {}
     const message = typeof body.message === 'string' ? body.message.trim() : ''

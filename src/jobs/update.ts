@@ -9,6 +9,7 @@ import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs'
 import { sendWorkCommencedEmail, sendWorkCompleteEmail } from '../shared/emailTemplates'
 import { notifyStore } from '../shared/staffNotifications'
 import { pushToStore } from '../shared/wsPush'
+import { maybeRegenerateSchedule } from '../shared/aiEngines'
 
 const sqsClient = new SQSClient({ region: process.env.REGION ?? 'ap-southeast-2' })
 
@@ -115,6 +116,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         `UPDATE vehicles SET odometer_current = ?, odometer_recorded_at = CURDATE(), updated_at = NOW() WHERE id = ?`,
         [Number(odometerIn), updatedRow.vehicle_id],
       )
+      void maybeRegenerateSchedule(db, Number(updatedRow.vehicle_id), Number(odometerIn))
     }
 
     if (status === 'in_progress') await sendWorkCommencedEmail(db, result)

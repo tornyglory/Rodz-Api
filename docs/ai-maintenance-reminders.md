@@ -2,22 +2,22 @@
 
 ## Overview
 
-When a customer books through the website, the system automatically generates personalised maintenance recommendations for their vehicle using Google Gemini. As the vehicle's odometer approaches each milestone, the customer receives an email reminding them what's due and offering a direct booking link.
+When a vehicle is created or its odometer moves significantly, the system automatically generates a personalised lifetime maintenance schedule using Google Gemini. As the vehicle's odometer approaches each milestone, the customer receives an email reminding them what's due and offering a direct booking link. The customer can also view the full schedule directly in the customer portal.
 
 ---
 
 ## How it works end to end
 
 ```
-Customer submits booking on website (POST /book)
-              ↓
-Vehicle + customer records created or matched
+Vehicle created OR odometer moves ≥10,000 km
               ↓
 AIRecommendationEngine Lambda fires async (fire-and-forget)
               ↓
-Gemini analyses the specific vehicle (make/model/year/engine/odometer)
+Gemini generates a lifetime schedule (0–250,000 km) tailored to make/model/year/engine
               ↓
-Recommendations written to ai_recommendations table
+Active recommendations replaced in ai_recommendations table (history preserved)
+              ↓
+Customer sees the schedule via GET /c/vehicles/:id/recommendations
               ↓
 Daily at 3 PM AEST — ReminderDispatcher Lambda runs
               ↓
@@ -32,21 +32,41 @@ Email sent to customer when within 2,000 km of due milestone
 
 ### AIRecommendationEngine Lambda
 
-**Trigger:** Invoked async from `POST /book` whenever a new vehicle-customer link is created.
+**Triggers (5 write paths + 3 odometer updates):**
 
-**What it does:**
+| Path | File | Behaviour |
+|------|------|-----------|
+| Public booking creates a new vehicle-customer link | `src/public/book.ts` | Fires unconditionally |
+| Customer portal — add vehicle | `src/customer/vehicles/create.ts` | Fires when new `vehicle_owners` link created |
+| Workshop app — add customer's vehicle | `src/customers/vehicles/create.ts` | Fires when a new vehicle is inserted |
+| Workshop app — create customer (with vehicles) | `src/customers/create.ts` | Fires per vehicle inserted |
+| Bookings create (safety net) | `src/bookings/create.ts` | Fires only if no schedule exists yet for the vehicle |
+| Customer portal — PATCH vehicle odometer | `src/customer/vehicles/update.ts` | Fires if new km delta ≥10,000 from last generation |
+| Workshop app — PATCH vehicle odometer | `src/customers/vehicles/update.ts` | Fires if new km delta ≥10,000 from last generation |
+| Technician — job completion with odometer | `src/jobs/update.ts` | Fires if new km delta ≥10,000 from last generation |
+
+**Shared helper**: `src/shared/aiEngines.ts` exposes two entry points used by all writers:
+- `invokeRecommendationEngineIfMissing(db, vehicleId, customerId)` — skips if any row already exists for the vehicle (used by create paths + booking safety net).
+- `maybeRegenerateSchedule(db, vehicleId, newOdometerKm, customerId?)` — fires if no schedule OR odometer moved ≥10,000 km since last `triggered_at_odometer`. Auto-derives `customerId` from `vehicle_owners` if not passed.
+
+**What the engine does:**
 1. Loads the vehicle's make, model, series, year, engine code, engine size, fuel type, transmission, and current odometer from the `vehicles` table
-2. Calls Gemini 2.5 Flash with a structured prompt asking for maintenance recommendations specific to that exact vehicle
-3. Writes each recommendation as a row in `ai_recommendations`
+2. Calls Gemini 2.5 Flash asking for a **complete schedule from current_km to 250,000 km** — every occurrence listed separately (each oil change interval, each spark plug replacement, etc.)
+3. Deletes all `status = 'active'` rows for the vehicle
+4. Writes each recommendation as a row in `ai_recommendations`
 
-**Gemini is asked for:**
-- Items due within the next 15,000 km or overdue
-- Age-related items (battery, tyres, wipers, air conditioning)
-- Known failure points or common issues specific to that make/model/year
-- Australian-specific context (climate, driving conditions, AUD cost estimates)
+Non-active rows (`sent`, `acknowledged`, `dismissed`, `completed`, `expired`) are preserved — history is never destroyed.
+
+**Gemini prompt highlights:**
+- Every individual service occurrence listed separately (not grouped)
+- Manufacturer-specific intervals for this exact vehicle + engine
+- Known real-world failure points, TSBs, common owner-reported issues
+- Australian conditions (heat, UV, dust)
+- Ordered by `estimatedDueKm ASC`, age-based items with no km trigger go last
+- 2–4 sentence customer-facing body (≤500 chars) that teaches the customer something about their specific car
 
 **Example output for a 2008 Suzuki Swift 1.5 M15A:**
-- Oil & filter change (recommended, due at 88,000 km)
+- Oil & filter change (recommended, due at 88,000 km) × repeated at each interval
 - Spark plugs (recommended, due at 100,000 km)
 - Timing chain tensioner inspection (important, due at 100,000 km — Swift M15A known issue)
 - Coolant flush (recommended, due at 110,000 km)
@@ -96,9 +116,12 @@ predicted_km = odometer_current + (days_since_recorded × 41)
 
 **41 km/day** is the Australian national average (~15,000 km/year ÷ 365).
 
-`odometer_recorded_at` is updated in two places:
+`odometer_recorded_at` is updated in three places:
 - When a mechanic records the odometer on a completed job (`PATCH /jobs/:id` with `odometerIn`)
 - When staff manually update the odometer on a vehicle (`PATCH /customers/:customerId/vehicles/:vehicleId` with `odometerCurrent`)
+- When the customer updates it themselves in the portal (`PATCH /c/vehicles/:id` with `odometerKm`)
+
+Each of these paths also invokes `maybeRegenerateSchedule` — so the schedule stays in sync as the km climbs.
 
 The more frequently Rodz services the vehicle, the more accurate the prediction. A fresh job reading resets the reference point.
 
@@ -118,7 +141,7 @@ One row per vehicle per maintenance item.
 | `customer_id` | The current owner |
 | `rule_id` | NULL — not used (rules table approach was dropped in favour of Gemini) |
 | `title` | Short service name, e.g. "Timing chain tensioner inspection" |
-| `recommendation_body` | First 150 chars of Gemini's explanation |
+| `recommendation_body` | Up to 500 chars of Gemini's plain-English explanation |
 | `urgency` | `advisory` / `recommended` / `important` / `urgent` |
 | `status` | `active` → `sent` → `acknowledged` / `dismissed` / `completed` |
 | `triggered_at_odometer` | Odometer when the recommendation was first created |
@@ -153,13 +176,20 @@ expired      — recommendation is no longer relevant
 
 ---
 
-## Re-evaluation (future)
+## Regeneration
 
-Currently recommendations are generated once when a vehicle is first linked to a customer. The next phase will re-evaluate after every completed job:
+Schedules are regenerated automatically when the vehicle's odometer moves by ≥10,000 km since the last generation (measured via `MAX(triggered_at_odometer)` on active rows). The engine deletes only `status = 'active'` rows on each run — sent/completed/dismissed history is untouched.
 
-- Mark completed services as `completed`
-- Create new `active` recommendations for the next interval (e.g. next oil change at current_km + 10,000)
-- Catch any new issues that have emerged based on inspection results
+Still not implemented (future):
+- Match completed workshop jobs back to the recommendation that predicted them (set `status = 'completed'`, `completed_by_job_id`)
+- Auto-expire recommendations that are far in the past (e.g. `estimated_due_odometer < current_km - 50,000`)
+- Manual "Regenerate now" button on the workshop Maintenance tab
+
+---
+
+## Customer-facing endpoint
+
+`GET /c/vehicles/:id/recommendations` returns the vehicle's active + sent + acknowledged + completed items (dismissed/expired filtered out). Customer JWT required, ownership enforced. Full contract: `docs/customer-maintenance-schedule-frontend-brief.md`.
 
 ---
 
@@ -167,23 +197,35 @@ Currently recommendations are generated once when a vehicle is first linked to a
 
 | Resource | Details |
 |----------|---------|
-| `AIRecommendationEngine` | Lambda in `RodzApiStack2`, 60s timeout, VPC, invoked async from `PublicBook` |
+| `AIRecommendationEngine` | Lambda in `RodzApiStack2`, **300s timeout, 512MB memory**, VPC. 1986-era classics can take up to ~90s at Gemini due to long known-issue lists. |
 | `ReminderDispatcher` | Lambda in `RodzApiStack2`, 300s timeout, VPC, SES permissions |
 | `DailyReminderRule` | EventBridge cron `0 5 * * ? *` (05:00 UTC daily) |
 | Gemini model | `gemini-2.5-flash` via `GEMINI_API_KEY` env var |
 | Email from address | Pulled from `email_settings` table at send time |
 
+Each writer Lambda needs:
+- Env var `AI_RECOMMENDATION_FN_ARN` pointing at the engine
+- IAM permission `lambda:InvokeFunction` on that ARN
+
+Both are already configured on `RodzApiStack2` Lambdas via `sharedEnv` + `CustomerFnPolicy`. Stack1 Lambdas (`CustomerCreate`, `BookingCreate`, `VehicleUpdate`, `JobUpdate`) have both the env var and an inline `InvokeAIEngines` policy attached to their execution roles.
+
 ---
 
 ## Deployment
 
-Both Lambdas are in `RodzApiStack2`. Deploy with:
+CDK deploy is broken (cross-stack VPC dependency). Deploy handlers directly:
 
 ```bash
-npx cdk deploy RodzApiStack2
+npx esbuild src/ai/recommendation-engine.ts \
+  --bundle --platform=node --target=node20 \
+  "--external:@aws-sdk/*" --outfile=dist/index.js
+zip -j dist/index.zip dist/index.js
+aws lambda update-function-code \
+  --function-name RodzApiStack2-AIRecommendationEngineFnCBFD1E01-AULH3YEskETD \
+  --zip-file fileb://dist/index.zip
 ```
 
-The `PublicBook` Lambda (also in `RodzApiStack2`) has `lambda:InvokeFunction` permission on `AIRecommendationEngine` and receives its ARN via the `AI_RECOMMENDATION_FN_ARN` environment variable.
+Same pattern for the reminder dispatcher and any writer Lambda.
 
 ---
 

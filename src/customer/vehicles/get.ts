@@ -4,6 +4,7 @@ import { getPool } from '../../shared/db'
 import { ok, notFound, forbidden, serverError } from '../../shared/errors'
 import { getCustomerContext, buildVehicle } from '../_helpers'
 import { imageUrls } from '../../shared/cloudflare'
+import { parsePublicProfileSettings } from '../../shared/publicProfileSettings'
 
 const ready = bootstrap()
 
@@ -28,7 +29,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
               odometer_current, next_service_due_km, next_service_due_date,
               service_interval_km, service_interval_months,
               avatar_image_id, cover_image_id, logbook_token,
-              for_sale, asking_price, city, country
+              for_sale, asking_price, city, country, public_profile_settings
        FROM vehicles WHERE id = ? AND is_active = 1 LIMIT 1`,
       [vehicleId],
     )
@@ -43,6 +44,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     return ok({
       ...buildVehicle(row),
+      publicProfileSettings: parsePublicProfileSettings(row.public_profile_settings),
       gallery: galleryRows.map((g: any) => ({
         id:           g.id,
         url:          imageUrls(g.image_id).public,

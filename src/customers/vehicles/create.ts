@@ -3,6 +3,7 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { getAuthContext } from '../../shared/auth'
 import { created, forbidden, notFound, validationError, serverError } from '../../shared/errors'
+import { invokeRecommendationEngineIfMissing, invokeVehicleProfileEngine } from '../../shared/aiEngines'
 
 const ready = bootstrap()
 
@@ -51,6 +52,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
        VALUES (?, ?, CURDATE(), 1)`,
       [vResult.insertId, customerId],
     )
+
+    void invokeVehicleProfileEngine(vResult.insertId)
+    void invokeRecommendationEngineIfMissing(db, vResult.insertId, Number(customerId))
 
     return created({
       vehicle: { id: vResult.insertId, rego: regoNorm, year: Number(year), make: make.trim(), model: model.trim() },
