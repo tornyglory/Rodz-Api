@@ -109,8 +109,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     // Fetch customer to build response
     const [[customerRow]] = await db.query<any[]>(
-      `SELECT id, first_name, last_name, email, mobile, suburb, state, postcode,
-              date_of_birth, marketing_opt_in, sms_opt_in, avatar_image_id, created_at
+      `SELECT id, first_name, last_name, email, mobile, suburb, state, postcode, description,
+              date_of_birth, marketing_opt_in, sms_opt_in, avatar_image_id, created_at,
+              onboarding_completed_at
        FROM customers WHERE id = ? LIMIT 1`,
       [customerId],
     )

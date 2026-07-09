@@ -18,7 +18,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       `SELECT v.id, v.rego, v.year, v.make, v.model, v.series, v.colour,
               v.fuel_type, v.transmission, v.engine_size_cc, v.vin,
               v.odometer_current, v.avatar_image_id, v.cover_image_id, v.is_active,
-              v.for_sale, v.asking_price, v.city, v.country,
+              v.for_sale, v.asking_price, v.city, v.country, v.description,
               v.public_profile_settings
        FROM vehicles v
        WHERE v.logbook_token = ?
@@ -49,7 +49,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       `SELECT CONCAT(c.first_name, ' ', c.last_name) AS contact_name,
               c.mobile AS contact_phone,
               c.email  AS contact_email,
-              c.is_premium AS is_premium
+              c.is_premium AS is_premium,
+              c.description AS owner_description
        FROM vehicle_owners vo
        JOIN customers c ON c.id = vo.customer_id
        WHERE vo.vehicle_id = ? AND vo.is_current = 1
@@ -92,6 +93,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       askingPrice:     vehicle.asking_price != null ? Number(vehicle.asking_price) : null,
       city:            vehicle.city    ?? null,
       country:         vehicle.country ?? null,
+      description:     vehicle.description ?? null,
+      ownerDescription: owner?.owner_description ?? null,
       contactName:     owner?.contact_name  ?? null,
       contactPhone:    owner?.contact_phone ?? null,
       contactEmail:    owner?.contact_email ?? null,

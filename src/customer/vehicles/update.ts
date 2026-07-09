@@ -21,7 +21,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!ownership) return forbidden()
 
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
-    const { colour, regoExpiry, vin, odometerKm } = body
+    const { colour, regoExpiry, vin, odometerKm, description } = body
 
     if (regoExpiry != null && !/^\d{4}-\d{2}-\d{2}$/.test(String(regoExpiry))) {
       return validationError('regoExpiry must be in YYYY-MM-DD format.')
@@ -29,14 +29,18 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (odometerKm != null && (isNaN(Number(odometerKm)) || Number(odometerKm) < 0)) {
       return validationError('odometerKm must be a non-negative number.')
     }
+    if (description != null && String(description).length > 2000) {
+      return validationError('description must be 2000 characters or fewer.')
+    }
 
     const sets: string[] = ['updated_at = NOW()']
     const params: any[]  = []
 
-    if (colour     != null) { sets.push('colour = ?');           params.push(String(colour).trim() || null) }
-    if (regoExpiry != null) { sets.push('rego_expiry = ?');      params.push(String(regoExpiry)) }
-    if (vin        != null) { sets.push('vin = ?');              params.push(String(vin).trim().toUpperCase() || null) }
-    if (odometerKm != null) { sets.push('odometer_current = ?'); params.push(Number(odometerKm)) }
+    if (colour      != null) { sets.push('colour = ?');           params.push(String(colour).trim() || null) }
+    if (regoExpiry  != null) { sets.push('rego_expiry = ?');      params.push(String(regoExpiry)) }
+    if (vin         != null) { sets.push('vin = ?');              params.push(String(vin).trim().toUpperCase() || null) }
+    if (odometerKm  != null) { sets.push('odometer_current = ?'); params.push(Number(odometerKm)) }
+    if (description != null) { sets.push('description = ?');      params.push(String(description).trim() || null) }
 
     if (params.length > 0) {
       params.push(vehicleId)
@@ -53,7 +57,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
               engine_code, engine_size_cc, cylinders, tyre_size_front, tyre_size_rear,
               odometer_current, next_service_due_km, next_service_due_date,
               service_interval_km, service_interval_months,
-              avatar_image_id, cover_image_id, logbook_token
+              avatar_image_id, cover_image_id, logbook_token,
+              for_sale, asking_price, city, country, description
        FROM vehicles WHERE id = ? AND is_active = 1 LIMIT 1`,
       [vehicleId],
     )

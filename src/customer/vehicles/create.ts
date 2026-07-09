@@ -116,7 +116,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
               engine_code, engine_size_cc, cylinders, tyre_size_front, tyre_size_rear,
               odometer_current, next_service_due_km, next_service_due_date,
               service_interval_km, service_interval_months,
-              avatar_image_id, cover_image_id, logbook_token
+              avatar_image_id, cover_image_id, logbook_token,
+              for_sale, asking_price, city, country, description
        FROM vehicles WHERE id = ? LIMIT 1`,
       [vehicleId],
     )

@@ -2,14 +2,15 @@ import * as path from 'path'
 import { Stack, StackProps, Duration } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as ec2 from 'aws-cdk-lib/aws-ec2'
+import * as iam from 'aws-cdk-lib/aws-iam'
 import * as lambda from 'aws-cdk-lib/aws-lambda'
 import * as events from 'aws-cdk-lib/aws-events'
 import * as targets from 'aws-cdk-lib/aws-events-targets'
 import * as sqs from 'aws-cdk-lib/aws-sqs'
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs'
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources'
-import { HttpApi, HttpRoute, HttpRouteKey, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2'
-import { HttpLambdaAuthorizer, HttpLambdaResponseType } from 'aws-cdk-lib/aws-apigatewayv2-authorizers'
+import { HttpApi, HttpRoute, HttpRouteKey, HttpMethod, HttpAuthorizer, HttpAuthorizerType, AuthorizerPayloadVersion } from 'aws-cdk-lib/aws-apigatewayv2'
+import { HttpLambdaAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers'
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations'
 import { LambdaFn } from './constructs/lambda-fn'
 
@@ -17,14 +18,13 @@ interface RodzApiStack2Props extends StackProps {
   httpApi:      HttpApi
   authorizer:   HttpLambdaAuthorizer
   vpc:          ec2.IVpc
-  jobUpdateFn:  NodejsFunction
 }
 
 export class RodzApiStack2 extends Stack {
   constructor(scope: Construct, id: string, props: RodzApiStack2Props) {
     super(scope, id, props)
 
-    const { httpApi, authorizer, vpc, jobUpdateFn } = props
+    const { httpApi, authorizer, vpc } = props
 
     const sharedEnv: Record<string, string> = {
       NODE_ENV:        'production',
@@ -393,7 +393,7 @@ export class RodzApiStack2 extends Stack {
     })
 
     const logbookChatFn = new LambdaFn(this, 'LogbookChat', {
-      entry: src('vehicles/logbook-chat.ts'), vpc, sharedEnv, timeoutSeconds: 30, memorySize: 512,
+      entry: src('vehicles/logbook-chat.ts'), vpc, sharedEnv, timeout: Duration.seconds(30), memorySize: 512,
     }).fn
 
     new HttpRoute(this, 'LogbookChatRoute', {
@@ -428,6 +428,7 @@ export class RodzApiStack2 extends Stack {
     // ── Logbook notify queue (1-minute delay after job completion) ──────────
 
     const logbookNotifyQueue = new sqs.Queue(this, 'LogbookNotifyQueue', {
+      queueName:         'rodz-logbook-notify',
       deliveryDelay:     Duration.seconds(60),
       visibilityTimeout: Duration.seconds(60),
     })
@@ -437,8 +438,6 @@ export class RodzApiStack2 extends Stack {
     }).fn
 
     logbookNotifyConsumerFn.addEventSource(new SqsEventSource(logbookNotifyQueue, { batchSize: 1 }))
-    logbookNotifyQueue.grantSendMessages(jobUpdateFn)
-    jobUpdateFn.addEnvironment('LOGBOOK_NOTIFY_QUEUE_URL', logbookNotifyQueue.queueUrl)
 
     // ── Vehicle service history ─────────────────────────────────────────────
 
@@ -880,10 +879,33 @@ export class RodzApiStack2 extends Stack {
       entry: src('customer/authorizer/handler.ts'), vpc, sharedEnv,
     }).fn
 
-    const customerAuthorizer = new HttpLambdaAuthorizer('CustomerJwtAuthorizer', customerAuthorizerFn, {
-      responseTypes: [HttpLambdaResponseType.SIMPLE],
+    // Construct the HttpAuthorizer in this stack explicitly. Using
+    // HttpLambdaAuthorizer places the CfnAuthorizer under httpApi's scope
+    // (Stack 1), which forms a cycle with this Lambda in Stack 2.
+    const customerAuthorizerUri = `arn:${this.partition}:apigateway:${this.region}:lambda:path/2015-03-31/functions/${customerAuthorizerFn.functionArn}/invocations`
+    const customerAuthorizerResource = new HttpAuthorizer(this, 'CustomerJwtAuthorizer', {
+      httpApi,
       identitySource: ['$request.header.Authorization'],
+      type: HttpAuthorizerType.LAMBDA,
+      authorizerName: 'CustomerJwtAuthorizer',
+      enableSimpleResponses: true,
+      payloadFormatVersion: AuthorizerPayloadVersion.VERSION_2_0,
+      authorizerUri: customerAuthorizerUri,
       resultsCacheTtl: Duration.seconds(0),
+    })
+
+    customerAuthorizerFn.addPermission('ApiGatewayInvoke', {
+      principal: new iam.ServicePrincipal('apigateway.amazonaws.com'),
+      sourceArn: Stack.of(this).formatArn({
+        service: 'execute-api',
+        resource: httpApi.apiId,
+        resourceName: `authorizers/${customerAuthorizerResource.authorizerId}`,
+      }),
+    })
+
+    const customerAuthorizer = HttpAuthorizer.fromHttpAuthorizerAttributes(this, 'CustomerJwtAuthorizerRef', {
+      authorizerId: customerAuthorizerResource.authorizerId,
+      authorizerType: 'CUSTOM',
     })
 
     // ── Customer auth (public — no authorizer) ──────────────────────────────
@@ -960,6 +982,15 @@ export class RodzApiStack2 extends Stack {
       entry: src('customer/me/avatar-update.ts'), vpc, sharedEnv,
     }).fn
 
+    const customerMeDescriptionEnhanceFn = new LambdaFn(this, 'CustomerMeDescriptionEnhance', {
+      entry: src('customer/me/description-enhance.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(30), memorySize: 512,
+    }).fn
+
+    const customerMeOnboardingCompleteFn = new LambdaFn(this, 'CustomerMeOnboardingComplete', {
+      entry: src('customer/me/onboarding-complete.ts'), vpc, sharedEnv,
+    }).fn
+
     new HttpRoute(this, 'CustomerMeGetRoute', {
       httpApi,
       integration: new HttpLambdaIntegration('CustomerMeGetInt', customerMeGetFn),
@@ -995,6 +1026,20 @@ export class RodzApiStack2 extends Stack {
       authorizer: customerAuthorizer,
     })
 
+    new HttpRoute(this, 'CustomerMeDescriptionEnhanceRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerMeDescriptionEnhanceInt', customerMeDescriptionEnhanceFn),
+      routeKey: HttpRouteKey.with('/c/me/description/enhance', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerMeOnboardingCompleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerMeOnboardingCompleteInt', customerMeOnboardingCompleteFn),
+      routeKey: HttpRouteKey.with('/c/me/onboarding-complete', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
     // ── Customer vehicles (authenticated) ───────────────────────────────────
 
     const customerVehicleListFn = new LambdaFn(this, 'CustomerVehicleList', {
@@ -1012,6 +1057,11 @@ export class RodzApiStack2 extends Stack {
 
     const customerVehicleUpdateFn = new LambdaFn(this, 'CustomerVehicleUpdate', {
       entry: src('customer/vehicles/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    const customerVehicleDescriptionEnhanceFn = new LambdaFn(this, 'CustomerVehicleDescriptionEnhance', {
+      entry: src('customer/vehicles/description-enhance.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(30), memorySize: 512,
     }).fn
 
     const customerVehicleAvatarUploadUrlFn = new LambdaFn(this, 'CustomerVehicleAvatarUploadUrl', {
@@ -1065,6 +1115,13 @@ export class RodzApiStack2 extends Stack {
       httpApi,
       integration: new HttpLambdaIntegration('CustomerVehicleUpdateInt', customerVehicleUpdateFn),
       routeKey: HttpRouteKey.with('/c/vehicles/{id}', HttpMethod.PATCH),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerVehicleDescriptionEnhanceRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleDescriptionEnhanceInt', customerVehicleDescriptionEnhanceFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/description/enhance', HttpMethod.POST),
       authorizer: customerAuthorizer,
     })
 

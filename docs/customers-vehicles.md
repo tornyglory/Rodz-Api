@@ -65,6 +65,7 @@ Total pages = `Math.ceil(total / limit)`. Has next page = `offset + customers.le
       "totalSpend": 4820.50,
       "lastVisit": "28 May 2026",
       "memberSince": "3 Jan 2024",
+      "joined": "Jan 2024",
       "notes": "Prefers morning slots",
       "dob": "1985-03-15",
       "address": {
@@ -133,6 +134,7 @@ Authorization: Bearer <accessToken>
     "totalSpend": 4820.50,
     "lastVisit": "28 May 2026",
     "memberSince": "3 Jan 2024",
+    "joined": "Jan 2024",
     "notesCount": 2,
     "notes": "Prefers morning slots",
     "dob": "1985-03-15",
@@ -520,6 +522,7 @@ No body. **Response 204** — no content.
 | `totalSpend` | number | Sum of all completed/invoiced job totals |
 | `lastVisit` | string \| null | e.g. `"28 May 2026"` |
 | `memberSince` | string \| null | Account creation date e.g. `"3 Jan 2024"` |
+| `joined` | string \| null | Account creation month/year e.g. `"Jan 2024"`. `null` for legacy rows without a `created_at`. |
 | `notesCount` | number | Count of customer notes (single GET only — not present on list) |
 | `notes` | string \| null | Internal staff notes |
 | `dob` | string \| null | Date of birth in `YYYY-MM-DD` format e.g. `"1985-03-15"` |

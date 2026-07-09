@@ -16,7 +16,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   try {
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
     const {
-      firstName, lastName, mobile, suburb, state, postcode, dateOfBirth, gender, marketingOptIn, smsOptIn,
+      firstName, lastName, mobile, suburb, state, postcode, description,
+      dateOfBirth, gender, marketingOptIn, smsOptIn,
     } = body
 
     if (state != null && !VALID_STATES.has(String(state).toUpperCase())) {
@@ -28,6 +29,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (gender != null && !['male', 'female', 'other'].includes(String(gender))) {
       return validationError('gender must be male, female, or other.')
     }
+    if (description != null && String(description).length > 2000) {
+      return validationError('description must be 2000 characters or fewer.')
+    }
 
     const sets: string[] = ['updated_at = NOW()']
     const params: any[]  = []
@@ -38,6 +42,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (suburb        != null) { sets.push('suburb = ?');           params.push(String(suburb).trim() || null) }
     if (state         != null) { sets.push('state = ?');            params.push(String(state).trim().toUpperCase()) }
     if (postcode      != null) { sets.push('postcode = ?');         params.push(String(postcode).trim() || null) }
+    if (description   != null) { sets.push('description = ?');      params.push(String(description).trim() || null) }
     if (dateOfBirth   != null) { sets.push('date_of_birth = ?');    params.push(String(dateOfBirth) || null) }
     if (gender        != null) { sets.push('gender = ?');           params.push(String(gender)) }
     if (marketingOptIn != null) { sets.push('marketing_opt_in = ?'); params.push(marketingOptIn ? 1 : 0) }
@@ -49,7 +54,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     const [[customerRow]] = await db.query<any[]>(
-      `SELECT id, first_name, last_name, email, mobile, suburb, state, postcode,
+      `SELECT id, first_name, last_name, email, mobile, suburb, state, postcode, description,
               date_of_birth, gender, marketing_opt_in, sms_opt_in, avatar_image_id, created_at
        FROM customers WHERE id = ? AND is_active = 1 LIMIT 1`,
       [ctx.customerId],

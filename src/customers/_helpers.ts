@@ -1,9 +1,17 @@
 import mysql from 'mysql2/promise'
 
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
 function formatDate(d: Date | string | null): string | null {
   if (!d) return null
   const date = d instanceof Date ? d : new Date(d)
   return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+function formatJoined(d: Date | string | null): string | null {
+  if (!d) return null
+  const date = d instanceof Date ? d : new Date(d)
+  return `${MONTHS[date.getMonth()]} ${date.getFullYear()}`
 }
 
 export async function buildCustomerList(db: mysql.Pool, rows: any[]) {
@@ -80,6 +88,7 @@ export async function buildCustomerList(db: mysql.Pool, rows: any[]) {
       totalSpend:   spendMap.get(row.id) ?? 0,
       lastVisit:    stats?.lastVisit ? formatDate(stats.lastVisit) : null,
       memberSince:  row.created_at ? formatDate(row.created_at) : null,
+      joined:       formatJoined(row.created_at),
       notes:        row.internal_notes ?? null,
       dob:         row.date_of_birth ? (row.date_of_birth instanceof Date ? row.date_of_birth.toISOString().slice(0, 10) : String(row.date_of_birth).slice(0, 10)) : null,
       address: {
@@ -180,6 +189,7 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
     totalSpend:  Number(Number(spendRow?.totalSpend ?? 0).toFixed(2)),
     lastVisit:   statsRow.lastVisit ? formatDate(statsRow.lastVisit) : null,
     memberSince: row.created_at ? formatDate(row.created_at) : null,
+    joined:      formatJoined(row.created_at),
     notesCount:  Number(notesRow?.count ?? 0),
     notes:       row.internal_notes ?? null,
     dob:         row.date_of_birth ? (row.date_of_birth instanceof Date ? row.date_of_birth.toISOString().slice(0, 10) : String(row.date_of_birth).slice(0, 10)) : null,

@@ -15,6 +15,14 @@ https://fzzrkscwd7.execute-api.ap-southeast-2.amazonaws.com
 - `/logbook/{token}/threads` — **no auth for the profile page itself, but this POST requires a customer JWT**
 - `/c/threads*` — requires a customer JWT
 
+## WebSocket URL
+
+```
+wss://<customer-ws-id>.execute-api.ap-southeast-2.amazonaws.com/prod?token=<customer_jwt>
+```
+
+The exact host is exposed in the customer portal config alongside the HTTP base URL. Connection is JWT-authed on `$connect`; no auth headers are used after that.
+
 ---
 
 ## Endpoints
@@ -197,10 +205,11 @@ GET /c/threads?role=<all|buyer|seller>&limit=25&before=<iso>
 
 Response shape — see `ask-seller-brief.md` §Endpoints.
 
-Cache the response and refetch:
-- on mount
-- on tab focus (`visibilitychange` → `document.visibilityState === 'visible'`)
-- every 60s while the tab is active (interval, clear on unmount)
+Fetch once on mount. Do **not** poll. Live updates arrive via the WebSocket (see §5 below):
+- `message_created` → find the matching thread in the list, update `lastMessage`, bump `unreadCount` (unless the user is currently on `/messages/{threadId}` for that thread), re-sort by `last_message_at`.
+- `thread_created` → prepend the new `ThreadSummary` to the list.
+
+If the WS is disconnected when a frame would have arrived, the next re-connect triggers a single refetch (see §5 reconnect logic) — the list stays consistent.
 
 ### Row rendering
 
@@ -308,12 +317,74 @@ Rate-limit handling identical to compose panel.
 
 ### Refresh strategy
 
-- Refetch the thread on tab focus.
-- Every 30 seconds while the tab is active, refetch (simple polling — real-time is v2).
+No polling. New messages arrive via the WebSocket:
+- `message_created` where `threadId` matches the current view → append the message bubble to the local list. Do **not** re-fetch the whole thread — the payload contains the full message object.
+- Auto-scroll to the new bubble only if the user was already near the bottom (don't yank them away if they've scrolled up to read history).
+
+On WS reconnect (after a drop while this view is open), do one `GET /c/threads/{id}` refetch to backfill anything missed during the disconnect.
 
 ---
 
-## 5. Auth & data types
+## 5. WebSocket connection
+
+A single WS connection powers **all** live updates (inbox rows, unread badge, thread messages). Open it once on customer login, keep it open for the life of the session, close on logout.
+
+### Store
+
+Create `useCustomerRealtimeStore` (Pinia) alongside `useMessagesStore`. Responsibilities:
+- Own the `WebSocket` instance and its lifecycle.
+- Expose a `connectionState` ref (`'connecting' | 'open' | 'closed'`) for optional UI.
+- Emit typed events other stores subscribe to (`message_created`, `thread_created`).
+
+### Connect
+
+```ts
+const url = `${WS_BASE_URL}?token=${encodeURIComponent(customerJwt)}`
+const ws = new WebSocket(url)
+```
+
+- Open the connection immediately after login (once the JWT is in memory).
+- On refresh, open the WS as soon as the JWT is rehydrated from storage.
+
+### Reconnect
+
+- On `close` (any reason other than intentional logout), reconnect with exponential backoff: `1s → 2s → 4s → 8s → 15s cap`. Reset on successful open.
+- After a successful reconnect, dispatch a `wsReconnected` event. The inbox view refetches `GET /c/threads`, and any open thread view refetches `GET /c/threads/{id}`. This backfills messages that landed during the disconnect.
+
+### Message handling
+
+The server sends JSON frames. Parse and route by `type`:
+
+```ts
+ws.onmessage = (event) => {
+  const frame = JSON.parse(event.data)
+  switch (frame.type) {
+    case 'message_created':
+      messagesStore.handleIncoming(frame.threadId, frame.message)
+      break
+    case 'thread_created':
+      messagesStore.handleNewThread(frame.thread)
+      break
+  }
+}
+```
+
+Payload shapes are documented in `ask-seller-brief.md` §Realtime delivery.
+
+### Unread accounting on incoming messages
+
+When `message_created` arrives:
+- If the user is **currently viewing** `/messages/{threadId}` for that thread → append the bubble, do NOT increment unread (the thread detail view auto-marks read).
+- Otherwise → append to the inbox row's `lastMessage`, increment its `unreadCount` and the global badge, and re-sort the inbox.
+
+### Close
+
+- On logout → `ws.close(1000, 'logout')`. Do not reconnect.
+- On JWT refresh → close the old socket, open a new one with the fresh token. (Simpler than trying to re-auth in-place.)
+
+---
+
+## 6. Auth & data types
 
 ### Type additions (`src/api/customer.ts` or equivalent)
 
@@ -359,20 +430,21 @@ customerApi.markRead(threadId: number): Promise<void>
 
 ---
 
-## 6. Global unread badge
+## 7. Global unread badge
 
 The customer sidebar already carries badge counts (see the existing chat feature pattern). For Messages:
 
-- On app mount / after login → call `GET /c/threads` and sum `unreadCount` across all threads. Store in a Pinia store (e.g. `useMessagesStore`).
-- On any inbox refetch → recompute.
-- On thread open → subtract that thread's unread from the global count.
-- Optional: poll `GET /c/threads?limit=100` every 60s while the app is focused.
+- On app mount / after login → call `GET /c/threads?limit=100` and sum `unreadCount` across all threads. Store in `useMessagesStore`.
+- On WS `message_created` where the user isn't currently viewing that thread → increment the global count.
+- On WS `thread_created` → increment by 1 (new threads always start with `unreadCount: 1` for the seller).
+- On thread open (`GET /c/threads/{id}` fires) → subtract that thread's unread from the global count.
+- On WS reconnect → refetch and recompute (see §5).
 
-Show the badge on the rail Messages icon when total > 0.
+No polling. Show the badge on the rail Messages icon when total > 0.
 
 ---
 
-## 7. Behaviour matrix
+## 8. Behaviour matrix
 
 | Situation | Behaviour |
 |-----------|-----------|
@@ -387,25 +459,28 @@ Show the badge on the rail Messages icon when total > 0.
 
 ---
 
-## 8. Out of scope for v1
+## 9. Out of scope for v1
 
 - Attachments (photos, files)
 - Message editing / deleting
 - Blocking users
 - Read receipts (last-read is tracked server-side but not surfaced)
-- Real-time push / websocket updates — polling only
+- Typing indicators / presence
+- Native push (APNs/FCM) — in-app WS + email only
 - Search across threads
 - Group chats
 
 ---
 
-## 9. Testing checklist
+## 10. Testing checklist
 
 - [ ] Anonymous viewer sees the "Ask" button on for-sale listings, gets sent to login → returns and lands in the compose panel
 - [ ] Signed-in customer messages a listing → thread appears in their inbox as `role: 'buyer'`
-- [ ] Seller sees the same thread in their inbox as `role: 'seller'` with unread badge
+- [ ] Seller sees the new thread appear **live** (no refresh) via `thread_created` push, with unread badge incremented
+- [ ] Both parties see replies appear **live** via `message_created` push (no polling, no refresh)
 - [ ] Opening the thread clears the unread badge for the viewer only
-- [ ] Both parties can reply and see each other's messages after refresh
+- [ ] Recipient offline (WS not connected) → they receive an email; recipient online → no email
+- [ ] Kill the WS connection mid-session → on reconnect, missed messages appear via the backfill refetch
 - [ ] Rate limit (send 21 messages in an hour) → 429 handled with countdown
 - [ ] Delist the vehicle → both parties can still read/reply; button hidden on public profile
 - [ ] Transfer the vehicle → new buyer starts a fresh thread with the new owner; old thread untouched

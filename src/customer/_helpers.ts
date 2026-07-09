@@ -63,6 +63,7 @@ export function buildVehicle(row: any) {
     askingPrice:          row.asking_price != null ? Number(row.asking_price) : null,
     city:                 row.city    ?? null,
     country:              row.country ?? null,
+    description:          row.description ?? null,
   }
 }
 
@@ -77,6 +78,7 @@ export function buildCustomer(row: any, vehicles: ReturnType<typeof buildVehicle
     suburb:         row.suburb      ?? null,
     state:          row.state       ?? null,
     postcode:       row.postcode    ?? null,
+    description:    row.description ?? null,
     dateOfBirth:    row.date_of_birth ? toDate(row.date_of_birth) : null,
     gender:         row.gender        ?? null,
     avatarUrl:      avatarUrls?.public    ?? null,
@@ -85,6 +87,7 @@ export function buildCustomer(row: any, vehicles: ReturnType<typeof buildVehicle
     marketingOptIn: Boolean(row.marketing_opt_in),
     smsOptIn:       Boolean(row.sms_opt_in),
     memberSince:    row.created_at ? toDate(row.created_at) : null,
+    onboardingCompletedAt: toIsoDateTime(row.onboarding_completed_at),
     vehicles,
   }
 }
@@ -93,6 +96,12 @@ function toDate(v: any): string {
   if (!v) return ''
   const d = v instanceof Date ? v : new Date(v)
   return d.toISOString().slice(0, 10)
+}
+
+function toIsoDateTime(v: any): string | null {
+  if (!v) return null
+  const d = v instanceof Date ? v : new Date(v)
+  return d.toISOString()
 }
 
 // ── Vehicle parsing ──────────────────────────────────────────────────────────

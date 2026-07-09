@@ -21,5 +21,4 @@ new RodzApiStack2(app, 'RodzApiStack2', {
   httpApi:     coreStack.httpApi,
   authorizer:  coreStack.authorizer,
   vpc:         coreStack.vpc,
-  jobUpdateFn: coreStack.jobUpdateFn,
 })

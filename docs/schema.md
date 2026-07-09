@@ -146,6 +146,7 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | `referral_source` | enum | YES | — |
 | `referral_detail` | varchar(255) | YES | — |
 | `customer_since` | date | YES | — |
+| `onboarding_completed_at` | datetime | YES | — |
 | `loyalty_points` | int unsigned | NO | `0` |
 | `xero_contact_id` | varchar(100) | YES | — |
 | `internal_notes` | text | YES | — |

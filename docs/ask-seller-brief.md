@@ -73,6 +73,25 @@ CREATE TABLE vehicle_thread_messages (
 - No attachments in v1. No message editing / deleting. Content max 2000 chars.
 - Sender must be either buyer OR seller of the thread — validated in the handler, not the DB.
 
+### `ws_customer_connections`
+
+Mirrors the existing `ws_connections` table (staff-side) but keyed to `customer_id`. Kept separate so staff and customer fanout logic don't collide.
+
+```sql
+CREATE TABLE ws_customer_connections (
+  connection_id  VARCHAR(255) NOT NULL PRIMARY KEY,
+  customer_id    INT UNSIGNED NOT NULL,
+  connected_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at     DATETIME     NOT NULL,
+
+  INDEX idx_customer (customer_id, expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+- Row inserted by the customer WS `$connect` handler after the customer JWT verifies.
+- Row deleted by `$disconnect`, or by the push helper on a `410 GONE` from API Gateway (stale connection).
+- `expires_at = NOW() + 2h` matches the staff table's convention.
+
 ### Rate limits
 
 Reuse the `public_chat_rate_limits` table already in place — same shape works for messaging buckets.
@@ -231,15 +250,71 @@ Marks read without loading messages (used by inbox badges, background sync, etc.
 
 ---
 
-## Notifications
+## Realtime delivery (WebSockets)
 
-When a message is sent:
+All in-app delivery is via WebSocket. No polling from the client.
+
+### Customer WS route
+
+Add a new WebSocket route dedicated to customers. Do **not** merge into the existing staff `ws_connections` table.
+
+| Route key | Handler | Purpose |
+|-----------|---------|---------|
+| `$connect` | `src/websocket/customer/connect.ts` | Verify customer JWT (`?token=<jwt>`), insert into `ws_customer_connections` |
+| `$disconnect` | `src/websocket/customer/disconnect.ts` | Delete row from `ws_customer_connections` |
+| `$default` | `src/websocket/customer/default.ts` | No-op (200) — clients don't send frames |
+
+The customer JWT payload has `sub = customer_id`. Verify with the same `JWT_SECRET` used by the customer authorizer.
+
+### Push helper
+
+Add `pushToCustomer(db, customerId, message)` to `src/shared/wsPush.ts`, mirroring `pushToStore`:
+
+```ts
+export async function pushToCustomer(db: mysql.Pool, customerId: number, message: object): Promise<boolean>
+```
+
+- Queries `ws_customer_connections WHERE customer_id = ? AND expires_at > NOW()`.
+- Sends the payload to every connection via `PostToConnectionCommand`.
+- Deletes rows that come back `410 GONE`.
+- **Returns `true` if at least one connection received the frame, `false` if the customer has no live connections.** Callers use this to decide whether to send the offline email.
+
+### Payloads
+
+Two message types are pushed:
+
+```json
+{
+  "type": "message_created",
+  "threadId": 42,
+  "message": {
+    "id": 105,
+    "content": "Yep — I have all the service receipts.",
+    "senderCustomerId": 17,
+    "createdAt": "2026-07-08T09:20:11Z"
+  }
+}
+```
+
+```json
+{
+  "type": "thread_created",
+  "thread": { /* ThreadSummary shape from GET /c/threads */ }
+}
+```
+
+- `message_created` is sent to **the recipient only** (the non-sender party of the thread). Do not echo back to the sender — the sender already has the message locally from the POST response.
+- `thread_created` is sent to the **seller only** when a brand-new thread is opened via `POST /logbook/{token}/threads`. It carries the full `ThreadSummary` so the seller's inbox can prepend the row without a refetch.
+
+### Flow
+
+When a message is sent (or a thread is created):
 1. Insert `vehicle_thread_messages` row.
-2. Update thread: `last_message_at = NOW()`, increment the *other* party's `*_unread_count`.
-3. Fire notifications to the recipient:
-   - **In-app**: reuse the existing customer notification pattern (whatever powers other customer notifications — worth verifying pattern before implementing).
-   - **Email**: SES, one-liner template, deep-link to `/messages/{threadId}` in the customer portal.
-4. Debounce email: don't send more than one email per 15 minutes per (thread, recipient). In-app can be per-message.
+2. Update thread: `last_message_at = NOW()`, increment the recipient's `*_unread_count`.
+3. Call `pushToCustomer(db, recipientCustomerId, payload)`.
+4. **If the push returned `false` (recipient offline), fire the email.** SES, one-liner template, deep-link to `/messages/{threadId}` in the customer portal. If it returned `true`, skip the email — the in-app notification is enough.
+
+No debounce is required: the online/offline gate is the debounce. A user actively reading their inbox will never receive an email for that thread; a user who never opens the app gets one email per new message.
 
 ---
 
@@ -312,21 +387,21 @@ Once a thread exists, it stays readable even if the vehicle is later delisted or
 - Message editing / deleting
 - Blocking / reporting users
 - Read receipts (we track last-read internally but don't expose it)
-- Push notifications (only in-app + email)
+- Native push notifications (in-app WS + email only — no APNs/FCM)
 - Search across threads
 - Multi-party threads / group chat
-- Websocket real-time delivery — inbox refetches on tab focus or on interval
+- Typing indicators / presence
 
 ---
 
 ## Implementation order
 
-1. Migration for `vehicle_threads` + `vehicle_thread_messages`.
-2. `POST /logbook/{token}/threads` handler + route (buyer entry point).
-3. `GET /c/threads` (inbox list).
-4. `GET /c/threads/{id}` (thread detail + auto-mark-read).
-5. `POST /c/threads/{id}/messages` (reply).
-6. `POST /c/threads/{id}/read` (explicit mark-read for badges).
-7. Notification wiring (in-app first, email second).
-8. Frontend brief.
-9. Frontend implementation.
+1. Migration for `vehicle_threads`, `vehicle_thread_messages`, `ws_customer_connections`.
+2. Customer WS route + `$connect`/`$disconnect` handlers.
+3. `pushToCustomer` helper in `src/shared/wsPush.ts`.
+4. `POST /logbook/{token}/threads` handler + route (buyer entry point) → pushes `thread_created` to seller.
+5. `GET /c/threads` (inbox list — single fetch, no polling).
+6. `GET /c/threads/{id}` (thread detail + auto-mark-read).
+7. `POST /c/threads/{id}/messages` (reply) → pushes `message_created` to counterparty; falls back to email if offline.
+8. `POST /c/threads/{id}/read` (explicit mark-read for badges).
+9. Frontend implementation (uses the frontend brief).

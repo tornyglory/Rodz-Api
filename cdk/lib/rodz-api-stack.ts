@@ -2,6 +2,7 @@ import * as path from 'path'
 import { Stack, StackProps, CfnOutput } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as ec2 from 'aws-cdk-lib/aws-ec2'
+import * as iam from 'aws-cdk-lib/aws-iam'
 import { HttpApi, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2'
 import { HttpLambdaAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers'
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations'
@@ -195,6 +196,17 @@ export class RodzApiStack extends Stack {
       entry: src('jobs/update.ts'), vpc, sharedEnv, needsSes: true,
     }).fn
     const jobUpdateFn = this.jobUpdateFn
+
+    // Logbook-notify SQS queue lives in RodzApiStack2. Wire it here via string
+    // ARN/URL to avoid a cross-stack cycle (Stack 2 already depends on Stack 1
+    // for the VPC + this Lambda).
+    const logbookNotifyQueueArn = `arn:aws:sqs:${this.region}:${this.account}:rodz-logbook-notify`
+    const logbookNotifyQueueUrl = `https://sqs.${this.region}.amazonaws.com/${this.account}/rodz-logbook-notify`
+    jobUpdateFn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['sqs:SendMessage'],
+      resources: [logbookNotifyQueueArn],
+    }))
+    jobUpdateFn.addEnvironment('LOGBOOK_NOTIFY_QUEUE_URL', logbookNotifyQueueUrl)
 
     const jobGetFn = new LambdaFn(this, 'JobGet', {
       entry: src('jobs/get.ts'), vpc, sharedEnv,
