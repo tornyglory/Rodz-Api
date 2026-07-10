@@ -147,8 +147,7 @@ export class RodzApiStack2 extends Stack {
       timeout: Duration.seconds(120),
     }).fn
 
-    // Allow the public booking Lambda to invoke it async
-    aiRecommendationFn.grantInvoke(publicBookFn)
+    // Invoke permission comes from the shared role's wildcard policy.
     publicBookFn.addEnvironment('AI_RECOMMENDATION_FN_ARN', aiRecommendationFn.functionArn)
 
     // ── AI — Vehicle Profile Engine ─────────────────────────────────────────
@@ -158,8 +157,6 @@ export class RodzApiStack2 extends Stack {
       timeout: Duration.seconds(60),
     }).fn
 
-    // Invoke from public booking + from profile GET (lazy generation)
-    vehicleProfileFn.grantInvoke(publicBookFn)
     publicBookFn.addEnvironment('VEHICLE_PROFILE_FN_ARN', vehicleProfileFn.functionArn)
 
     // ── Vehicle Profile read endpoint ───────────────────────────────────────
@@ -168,8 +165,6 @@ export class RodzApiStack2 extends Stack {
       entry: src('customers/vehicles/profile.ts'), vpc, sharedEnv,
     }).fn
 
-    // Allow the profile GET to trigger generation if profile is missing
-    vehicleProfileFn.grantInvoke(vehicleProfileGetFn)
     vehicleProfileGetFn.addEnvironment('VEHICLE_PROFILE_FN_ARN', vehicleProfileFn.functionArn)
 
     new HttpRoute(this, 'VehicleProfileGetRoute', {
@@ -473,7 +468,6 @@ export class RodzApiStack2 extends Stack {
       timeout: Duration.seconds(60),
     }).fn
 
-    serviceSummaryFn.grantInvoke(invoiceSendFn)
     invoiceSendFn.addEnvironment('SERVICE_SUMMARY_FN_ARN', serviceSummaryFn.functionArn)
 
     // ── Settings — Bank details ─────────────────────────────────────────────
@@ -1084,9 +1078,6 @@ export class RodzApiStack2 extends Stack {
       entry: src('customer/vehicles/logbook.ts'), vpc, sharedEnv,
     }).fn
 
-    // Allow vehicle create to invoke AI engines
-    aiRecommendationFn.grantInvoke(customerVehicleCreateFn)
-    vehicleProfileFn.grantInvoke(customerVehicleCreateFn)
     customerVehicleCreateFn.addEnvironment('AI_RECOMMENDATION_FN_ARN', aiRecommendationFn.functionArn)
     customerVehicleCreateFn.addEnvironment('VEHICLE_PROFILE_FN_ARN', vehicleProfileFn.functionArn)
 

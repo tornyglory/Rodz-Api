@@ -22,9 +22,11 @@ Two CDK stacks share the same HTTP API and VPC:
 - **Database:** MySQL (Azure) accessed via `getPool()` from `src/shared/db.ts`
 - **Auth:** `getAuthContext(event)` returns `{ staffId, role, storeId, permissions }`
 - **Roles:** `super_admin` | `store_manager` | `technician`
-- **Deploy:** See the Deploy section below — CDK deploy is broken, use direct Lambda deploy
+- **Deploy:** `cdk deploy` works for both stacks (as of 2026-07-10). See the Deploy section below.
 
-`RodzApiStack` is at the 500-resource CloudFormation limit. **All new Lambda functions and routes must go in `RodzApiStack2`.** Use `new HttpRoute()` (not `httpApi.addRoutes()`) so that route resources are scoped to `RodzApiStack2`.
+CloudFormation caps each stack at 500 resources. Current counts (as of 2026-07-10): Stack 1 = 341, Stack 2 = 432. Both have headroom, but **new Lambda functions and routes should go in `RodzApiStack2`** to keep Stack 1 lean. Use `new HttpRoute()` (not `httpApi.addRoutes()`) so route resources are scoped to Stack 2.
+
+Every Lambda in a stack shares one IAM role and one security group (see `cdk/lib/constructs/lambda-fn.ts` — this consolidation is what keeps the count under 500). If you need Lambda-to-Lambda invocation, do NOT use `fn.grantInvoke()` — the shared role covers all Lambdas via a wildcard `lambda:InvokeFunction` policy already. Adding `grantInvoke` creates a circular dependency because caller and callee both use the same shared role.
 
 ## Endpoint structure
 
@@ -162,22 +164,29 @@ Agents run in isolation (worktree). Brief them with specific file paths and what
 
 ## Deploy
 
-**CDK deploy is broken** due to a cross-stack VPC dependency validation error in CDK 2.160.0 (`RodzApiStack2` depends on `RodzApiStack`). Use direct Lambda deploy instead:
+`cdk deploy` works normally as of 2026-07-10.
 
 ```bash
-# 1. Bundle the handler
+# Deploy both stacks
+npx cdk deploy --all --require-approval never
+
+# Deploy just Stack 2 (skips Stack 1 even if it has pending changes)
+npx cdk deploy RodzApiStack2 --exclusively --require-approval never
+
+# Preview changes without deploying
+npx cdk diff
+```
+
+For quick code-only iteration on a single Lambda without redeploying the stack, direct Lambda update still works:
+
+```bash
 npx esbuild src/path/to/handler.ts \
   --bundle --platform=node --target=node20 \
   "--external:@aws-sdk/*" --outfile=dist/handler.js
-
-# 2. Zip and upload
 zip -j dist/handler.zip dist/handler.js
 aws lambda update-function-code \
   --function-name <LambdaFunctionName> \
   --zip-file fileb://dist/handler.zip
 ```
 
-The Lambda function name is in the AWS console or findable via:
-```bash
-aws lambda list-functions --query 'Functions[?contains(FunctionName, `<keyword>`)].FunctionName'
-```
+**27 routes on the shared HttpApi exist outside CDK** (features like customer expenses, chat sessions, fuel prices, logbook external — their Lambdas are also manually managed). `cdk deploy` won't touch them, but new endpoints in those feature areas should get added to `rodz-api-stack2.ts` so IaC eventually catches up.
