@@ -53,8 +53,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [vResult.insertId, customerId],
     )
 
-    void invokeVehicleProfileEngine(vResult.insertId)
-    void invokeRecommendationEngineIfMissing(db, vResult.insertId, Number(customerId))
+    await invokeVehicleProfileEngine(vResult.insertId)
+    await invokeRecommendationEngineIfMissing(db, vResult.insertId, Number(customerId))
 
     return created({
       vehicle: { id: vResult.insertId, rego: regoNorm, year: Number(year), make: make.trim(), model: model.trim() },

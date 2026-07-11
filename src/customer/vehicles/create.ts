@@ -106,8 +106,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
          VALUES (?, ?, CURDATE(), 1, NOW())`,
         [vehicleId, ctx.customerId],
       )
-      void invokeVehicleProfileEngine(vehicleId)
-      void invokeRecommendationEngine(vehicleId, ctx.customerId)
+      await invokeVehicleProfileEngine(vehicleId)
+      await invokeRecommendationEngine(vehicleId, ctx.customerId)
     }
 
     const [[vehicleRow]] = await db.query<any[]>(

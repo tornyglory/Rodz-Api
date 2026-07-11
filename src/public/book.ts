@@ -302,8 +302,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     // ── Fire AI engines for new vehicle-customer links ─────────────────────
     if (isNewOwnerLink) {
-      void invokeRecommendationEngine(existingVehicle.id, customer.id)
-      void invokeVehicleProfileEngine(existingVehicle.id)
+      await invokeRecommendationEngine(existingVehicle.id, customer.id)
+      await invokeVehicleProfileEngine(existingVehicle.id)
     }
 
     // ── Resolve booking time and slot ──────────────────────────────────────

@@ -56,7 +56,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     )
 
     if (!row) {
-      void triggerProfileGeneration(Number(vehicleId))
+      await triggerProfileGeneration(Number(vehicleId))
       return {
         statusCode: 202,
         headers: { 'Content-Type': 'application/json' },

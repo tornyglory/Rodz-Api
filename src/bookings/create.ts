@@ -99,7 +99,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     // ── Insert booking services ────────────────────────────────────────────
     await setBookingServices(db, bookingId, services)
 
-    void invokeRecommendationEngineIfMissing(db, Number(vehicleId), Number(customerId))
+    await invokeRecommendationEngineIfMissing(db, Number(vehicleId), Number(customerId))
 
     const [[row]] = await db.query<any[]>(BOOKING_SELECT_BY_ID, [bookingId])
     const servicesMap = await getBookingServices(db, [bookingId])
