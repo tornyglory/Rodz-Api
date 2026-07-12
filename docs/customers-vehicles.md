@@ -516,7 +516,8 @@ No body. **Response 204** — no content.
 | `phone` | string | Mobile number |
 | `store` | string | Store name e.g. `"Rodz Somerville"` |
 | `avatarImageId` | string \| null | Cloudflare image ID. Construct URL using your `CF_ACCOUNT_HASH` env var (see Avatar usage below). `null` if no avatar set — show initials fallback. |
-| `isPremium` | boolean | Whether the customer has a premium subscription |
+| `tier` | `"free" \| "silver" \| "gold"` | Membership tier. Silver features gate on `tier !== "free"`; Gold features gate on `tier === "gold"`. Set via `PATCH /customers/:id/tier`. |
+| `isPremium` | boolean | Derived: `tier !== "free"`. Kept for compatibility. |
 | `tags` | `("VIP" \| "Regular" \| "New")[]` | Can have multiple |
 | `totalVisits` | number | Count of completed or invoiced jobs |
 | `totalSpend` | number | Sum of all completed/invoiced job totals |

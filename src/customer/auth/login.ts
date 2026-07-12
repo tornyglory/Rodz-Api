@@ -28,7 +28,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
          c.id, c.first_name, c.last_name, c.email, c.mobile,
          c.suburb, c.state, c.postcode, c.description, c.date_of_birth,
          c.marketing_opt_in, c.sms_opt_in, c.avatar_image_id, c.created_at, c.is_active,
-         c.onboarding_completed_at,
+         c.is_premium, c.tier, c.onboarding_completed_at,
          ca.password_hash, ca.failed_login_attempts, ca.locked_until
        FROM customers c
        JOIN customer_auth ca ON ca.customer_id = c.id

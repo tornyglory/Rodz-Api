@@ -461,6 +461,30 @@ export class RodzApiStack2 extends Stack {
       authorizer,
     })
 
+    // ── Customer tier + premium (staff) ────────────────────────────────────
+
+    const customerTierFn = new LambdaFn(this, 'CustomerTier', {
+      entry: src('customers/tier.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerTierRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerTierInt', customerTierFn),
+      routeKey: HttpRouteKey.with('/customers/{id}/tier', HttpMethod.PATCH),
+      authorizer,
+    })
+
+    const customerPremiumFn = new LambdaFn(this, 'CustomerPremium', {
+      entry: src('customers/premium.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerPremiumRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerPremiumInt', customerPremiumFn),
+      routeKey: HttpRouteKey.with('/customers/{id}/premium', HttpMethod.PATCH),
+      authorizer,
+    })
+
     // ── AI — Service Summary Engine ─────────────────────────────────────────
 
     const serviceSummaryFn = new LambdaFn(this, 'ServiceSummaryEngine', {

@@ -17,9 +17,15 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   try {
     const body      = JSON.parse(event.body ?? '{}')
     const isPremium = body.isPremium === true || body.isPremium === 1 ? 1 : 0
+    // Compat: map to the tier column so both endpoints stay in sync during
+    // the migration to /tier. isPremium=true → 'silver' (unless already 'gold'),
+    // isPremium=false → 'free'.
+    const tierClause = isPremium === 0
+      ? "'free'"
+      : "CASE WHEN tier = 'gold' THEN 'gold' ELSE 'silver' END"
 
     const [result] = await db.query<any>(
-      'UPDATE customers SET is_premium = ? WHERE id = ?',
+      `UPDATE customers SET is_premium = ?, tier = ${tierClause}, updated_at = NOW() WHERE id = ?`,
       [isPremium, id],
     )
     if (result.affectedRows === 0) return notFound('Customer')

@@ -138,6 +138,7 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | `state` | char(3) | YES | — |
 | `postcode` | char(4) | YES | — |
 | `is_premium` | tinyint(1) | NO | `0` |
+| `tier` | enum | NO | `free` |
 | `preferred_contact` | enum | NO | `mobile` |
 | `marketing_opt_in` | tinyint(1) | NO | `1` |
 | `sms_opt_in` | tinyint(1) | NO | `1` |
@@ -155,6 +156,8 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | `updated_at` | datetime | NO | `CURRENT_TIMESTAMP` |
 
 **`preferred_contact` enum:** `mobile`, `email`, `sms`, `app`
+
+**`tier` enum:** `free`, `silver`, `gold`. `is_premium` is derived: `(tier != 'free')`.
 
 **`referral_source` enum:** `word_of_mouth`, `google`, `facebook`, `instagram`, `existing_customer`, `signage`, `other`
 
