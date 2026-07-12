@@ -44,6 +44,7 @@ export class RodzApiStack2 extends Stack {
       ZELLER_API_KEY:        process.env.ZELLER_API_KEY        ?? '',
       ZELLER_WEBHOOK_SECRET: process.env.ZELLER_WEBHOOK_SECRET ?? '',
       WS_API_URL:            process.env.WS_API_URL            ?? '',
+      ASSISTANT_CONTEXT_ENABLED: process.env.ASSISTANT_CONTEXT_ENABLED ?? 'false',
     }
 
     const src = (p: string) => path.join(__dirname, '../../src', p)
@@ -1055,6 +1056,20 @@ export class RodzApiStack2 extends Stack {
       httpApi,
       integration: new HttpLambdaIntegration('CustomerMeOnboardingCompleteInt', customerMeOnboardingCompleteFn),
       routeKey: HttpRouteKey.with('/c/me/onboarding-complete', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    // ── Customer chat session greeting (proactive first message) ───────────
+
+    const customerChatGreetingFn = new LambdaFn(this, 'CustomerChatGreeting', {
+      entry: src('customer/vehicles/chats/greeting.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(30), memorySize: 512,
+    }).fn
+
+    new HttpRoute(this, 'CustomerChatGreetingRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerChatGreetingInt', customerChatGreetingFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/chats/{sessionId}/greeting', HttpMethod.POST),
       authorizer: customerAuthorizer,
     })
 

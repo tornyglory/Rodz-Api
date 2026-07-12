@@ -11,6 +11,10 @@ import type { AgentContext } from '../../agents/types'
 import * as expenseAgent  from '../../agents/expense'
 import * as fuelAgent     from '../../agents/fuel'
 import * as logbookAgent  from '../../agents/logbook-agent'
+import {
+  getAssistantMemory, saveAssistantMemory, forgetAssistantMemory,
+  renderMemoryBlock, isMemoryEnabled,
+} from './_shared'
 
 const ready = bootstrap()
 
@@ -536,6 +540,29 @@ const TOOLS: Tool[] = [{
         required: ['storeId', 'date', 'time', 'type', 'serviceTypeIds'],
       },
     },
+    {
+      name: 'remember',
+      description: "Save a short note about this vehicle so you can reference it in future conversations. Use this only for genuinely useful context the customer would appreciate you remembering later — running symptoms, personal preferences (e.g. always books morning slots), things they mentioned they're planning. Do NOT use for facts already in the logbook or vehicle specs.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          note:          { type: SchemaType.STRING,  description: "The note, first-person from the assistant's perspective. Max 500 chars." },
+          expiresInDays: { type: SchemaType.NUMBER, description: 'How long to remember. Default 180. Use 30 for short-term follow-ups, 365 for long-lived preferences.' },
+        },
+        required: ['note'],
+      },
+    },
+    {
+      name: 'forget',
+      description: "Remove a memory note when it's no longer relevant (e.g. the issue was resolved).",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          noteId: { type: SchemaType.NUMBER },
+        },
+        required: ['noteId'],
+      },
+    },
   ],
 }]
 
@@ -578,7 +605,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     )
     const userMessageId = userInsert.insertId
 
-    const [vehicleContext, historyResult, customerResult, vehicleRegoResult] = await Promise.all([
+    const [vehicleContext, historyResult, customerResult, vehicleRegoResult, memory] = await Promise.all([
       buildCustomerVehicleContext(db, vehicleId),
       db.query<any[]>(
         `SELECT role, content, image_id, tool_calls FROM customer_vehicle_chats
@@ -588,6 +615,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       db.query<any[]>('SELECT first_name, gender, suburb, state, is_premium FROM customers WHERE id = ? LIMIT 1', [ctx.customerId])
         .catch(() => [[]] as [any[]]),
       db.query<any[]>('SELECT rego FROM vehicles WHERE id = ? LIMIT 1', [vehicleId]),
+      getAssistantMemory(db, vehicleId),
     ])
 
     const customer          = customerResult[0][0]
@@ -665,7 +693,9 @@ Available Rodz locations:
 - Rodz Somerville (storeId: 1) — Somerville VIC
 
 ${vehicleContext}
-
+${renderMemoryBlock(memory)}
+${isMemoryEnabled() ? `Use \`remember\` sparingly. Save at most one note per conversation, only when the customer says something you'd genuinely benefit from recalling next time. Don't save facts we already have in structured data (odometer, service dates, vehicle specs — those are always available). Never save PII beyond what's already visible to the customer themselves.
+` : ''}
 When helping with booking, follow these steps in order:
 1. Call getServiceTypes to fetch the real service list from the database
 2. Present the actual service names to the customer and ask which one(s) they want — do NOT invent service names or guess IDs
@@ -747,6 +777,10 @@ Keep responses conversational and concise. Use markdown for lists or emphasis wh
           (args.type as any) ?? 'drop_off', (args.serviceTypeIds as number[]) ?? [],
           args.notes ? String(args.notes) : undefined, args.courtesyCarId ? Number(args.courtesyCarId) : undefined,
         )
+      } else if (name === 'remember') {
+        fnResult = await saveAssistantMemory(db, vehicleId, String(args.note ?? ''), Number(args.expiresInDays))
+      } else if (name === 'forget') {
+        fnResult = await forgetAssistantMemory(db, vehicleId, Number(args.noteId))
       } else { fnResult = { error: `Unknown function: ${name}` } }
 
       functionCalls.push({ name, args, result: fnResult })
