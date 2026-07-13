@@ -574,10 +574,22 @@ const TOOLS: Tool[] = [{
     },
     {
       name: 'getDiagnosticHistory',
-      description: 'Fetch summaries of previous chat/diagnostic sessions with this vehicle. Use for "what did we talk about last time" style questions. Returns short summaries — the assistant should not recite them verbatim.',
+      description: "List the customer's previous chat sessions with this vehicle. Returns each session's id, title, and date — NOT the messages themselves. Use for 'what did we talk about last time' style questions. If the customer wants details of a specific past conversation, then call getSessionMessages with the sessionId.",
       parameters: {
         type: SchemaType.OBJECT,
-        properties: { limit: { type: SchemaType.NUMBER, description: 'How many most-recent sessions to return. Default 5, max 10.' } },
+        properties: { limit: { type: SchemaType.NUMBER, description: 'How many most-recent sessions to return. Default 10, max 25.' } },
+      },
+    },
+    {
+      name: 'getSessionMessages',
+      description: 'Fetch the actual messages from a specific past chat session (identified by sessionId returned by getDiagnosticHistory). Use only when the customer asks about a specific past conversation. Returns the last N messages of that session.',
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          sessionId: { type: SchemaType.NUMBER, description: 'The session id from getDiagnosticHistory.' },
+          limit:     { type: SchemaType.NUMBER, description: 'How many most-recent messages of that session to return. Default 20, max 50.' },
+        },
+        required: ['sessionId'],
       },
     },
     {
@@ -874,19 +886,50 @@ ${isHintsEnabled() ? HINTS_INSTRUCTION : ''}`
         const details = await Promise.all(pointers.map((p: any) => readFromDataLake<any>(p.s3_key)))
         fnResult = { expenses: details.filter(d => d != null) }
       } else if (name === 'getDiagnosticHistory') {
-        const limit = Math.min(Math.max(Number(args.limit) || 5, 1), 10)
-        const [pointers] = await db.query<any[]>(
-          `SELECT s3_key, event_date, summary FROM s3_event_index
-           WHERE vehicle_id = ? AND event_type = 'diagnostic-sessions'
-           ORDER BY event_date DESC, id DESC LIMIT ?`,
-          [vehicleId, limit],
+        const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 25)
+        const [sessions] = await db.query<any[]>(
+          `SELECT id, title, created_at, updated_at
+           FROM customer_chat_sessions
+           WHERE vehicle_id = ? AND customer_id = ?
+             AND id != ?
+           ORDER BY updated_at DESC LIMIT ?`,
+          [vehicleId, ctx.customerId, sessionId, limit],
         )
-        // Return summaries only by default — full transcripts blow token limits.
         fnResult = {
-          sessions: pointers.map((p: any) => ({
-            date:    p.event_date instanceof Date ? p.event_date.toISOString().slice(0, 10) : String(p.event_date).slice(0, 10),
-            summary: p.summary,
+          sessions: sessions.map((s: any) => ({
+            sessionId: s.id,
+            title:     s.title ?? '(untitled)',
+            date:      s.created_at instanceof Date ? s.created_at.toISOString().slice(0, 10) : String(s.created_at).slice(0, 10),
+            lastMessageAt: s.updated_at instanceof Date ? s.updated_at.toISOString() : String(s.updated_at),
           })),
+          note: sessions.length ? 'To get messages from a specific session, call getSessionMessages with the sessionId.' : 'No previous sessions with this vehicle.',
+        }
+      } else if (name === 'getSessionMessages') {
+        const targetSid = Number(args.sessionId)
+        const limit     = Math.min(Math.max(Number(args.limit) || 20, 1), 50)
+        // Verify ownership before loading — don't leak another customer's data.
+        const [[owned]] = await db.query<any[]>(
+          `SELECT id, title FROM customer_chat_sessions
+           WHERE id = ? AND vehicle_id = ? AND customer_id = ? LIMIT 1`,
+          [targetSid, vehicleId, ctx.customerId],
+        )
+        if (!owned) {
+          fnResult = { error: 'session not found for this vehicle' }
+        } else {
+          const { blob } = await loadSession(targetSid)
+          const all      = blob?.messages ?? []
+          const tail     = all.slice(-limit)
+          fnResult = {
+            sessionId: targetSid,
+            title:     owned.title,
+            messages:  tail.map(m => ({
+              role:      m.role,
+              content:   m.content,
+              createdAt: m.createdAt,
+            })),
+            truncated: tail.length < all.length,
+            totalMessages: all.length,
+          }
         }
       } else { fnResult = { error: `Unknown function: ${name}` } }
 
