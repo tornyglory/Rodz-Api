@@ -4,10 +4,14 @@ import { getPool } from '../../../shared/db'
 import { ok, forbidden, notFound, serverError } from '../../../shared/errors'
 import { getCustomerContext, isPremium } from '../../_helpers'
 import { deleteCloudflareImage } from '../../../shared/cloudflare'
+import { readFromDataLake, deleteFromDataLake } from '../../../shared/dataLake'
 import { refreshVehicleSummaries } from '../../../shared/summaries'
 
 const ready = bootstrap()
 
+// Delete: identifies the expense by s3_event_index.id, removes the S3 object,
+// drops the index row, deletes the Cloudflare image if any, and refreshes the
+// vehicle's summary aggregates.
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
   const db        = getPool()
@@ -23,18 +27,23 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!ownership) return forbidden()
     if (!await isPremium(db, ctx.customerId)) return forbidden()
 
-    const [[expense]] = await db.query<any[]>(
-      'SELECT id, image_id FROM vehicle_expenses WHERE id = ? AND vehicle_id = ? AND customer_id = ? LIMIT 1',
+    const [[pointer]] = await db.query<any[]>(
+      `SELECT id, s3_key FROM s3_event_index
+       WHERE id = ? AND vehicle_id = ? AND customer_id = ?
+         AND event_type IN ('fuel-fills','expenses') LIMIT 1`,
       [expenseId, vehicleId, ctx.customerId],
     )
-    if (!expense) return notFound('Expense')
+    if (!pointer) return notFound('Expense')
 
-    // Nullify FK in fuel_station_prices before deleting (ON DELETE SET NULL handles this)
-    await db.query('DELETE FROM vehicle_expenses WHERE id = ?', [expenseId])
+    // Fetch first to know about any attached Cloudflare image.
+    const detail = await readFromDataLake<any>(pointer.s3_key)
+
+    await deleteFromDataLake(pointer.s3_key)
+    await db.query('DELETE FROM s3_event_index WHERE id = ?', [expenseId])
     await refreshVehicleSummaries(db, vehicleId)
 
-    if (expense.image_id) {
-      await deleteCloudflareImage(expense.image_id).catch(() => {})
+    if (detail?.imageId) {
+      await deleteCloudflareImage(detail.imageId).catch(() => {})
     }
 
     return ok({ deleted: true })

@@ -9,9 +9,12 @@ import { refreshVehicleSummaries } from '../../../shared/summaries'
 
 const ready = bootstrap()
 
-const VALID_CATEGORIES = ['fuel','ev_charging','workshop','parts','car_wash','parking','tolls','registration','insurance','roadside','other']
-const VALID_FUEL_TYPES = ['unleaded_91','unleaded_95','unleaded_98','diesel','lpg','e10']
+const VALID_CATEGORIES = new Set(['fuel','ev_charging','workshop','parts','car_wash','parking','tolls','registration','insurance','roadside','other'])
+const VALID_FUEL_TYPES = new Set(['unleaded_91','unleaded_95','unleaded_98','diesel','lpg','e10'])
 
+// Create is S3-primary: detail goes to S3, an s3_event_index pointer is
+// inserted (its id is returned as the expense API id), and per-vehicle
+// summary aggregates are refreshed. Nothing goes into vehicle_expenses.
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
   const db        = getPool()
@@ -36,156 +39,108 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       isBusinessExpense, notes,
     } = body
 
-    if (!category || !VALID_CATEGORIES.includes(category)) return validationError('Valid category is required')
+    if (!category || !VALID_CATEGORIES.has(category)) return validationError('Valid category is required')
     if (!expenseDate || !/^\d{4}-\d{2}-\d{2}$/.test(expenseDate)) return validationError('expenseDate must be YYYY-MM-DD')
-    if (fuelType && !VALID_FUEL_TYPES.includes(fuelType)) return validationError('Invalid fuelType')
+    if (fuelType && !VALID_FUEL_TYPES.has(fuelType)) return validationError('Invalid fuelType')
 
-    const status = imageId ? (extractionStatus ?? 'extracted') : 'manual'
+    const isFuel       = category === 'fuel' || category === 'ev_charging'
+    const eventType    = isFuel ? 'fuel-fills' : 'expenses'
+    const extractionSt = imageId ? (extractionStatus ?? 'extracted') : 'manual'
 
-    const [result] = await db.query<any>(
-      `INSERT INTO vehicle_expenses
-         (vehicle_id, customer_id, category, merchant_name, merchant_suburb, merchant_state,
-          amount_aud, expense_date, odometer_km, fuel_type, fuel_litres, price_per_litre,
-          ev_kwh, price_per_kwh, image_id, extraction_status, is_business_expense, notes)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [
-        vehicleId, ctx.customerId, category,
-        merchantName ? String(merchantName).trim() : null,
-        merchantSuburb ? String(merchantSuburb).trim() : null,
-        merchantState ? String(merchantState).trim().toUpperCase() : null,
-        amountAud != null ? Number(amountAud) : null,
-        expenseDate,
-        odometerKm != null ? Number(odometerKm) : null,
-        fuelType ?? null,
-        fuelLitres != null ? Number(fuelLitres) : null,
-        pricePerLitre != null ? Number(pricePerLitre) : null,
-        evKwh != null ? Number(evKwh) : null,
-        pricePerKwh != null ? Number(pricePerKwh) : null,
-        imageId ?? null,
-        status,
-        isBusinessExpense ? 1 : 0,
-        notes ? String(notes).trim() : null,
-      ],
+    const payload = {
+      vehicleId,
+      customerId:        ctx.customerId,
+      category,
+      merchantName:      merchantName ? String(merchantName).trim() : null,
+      merchantSuburb:    merchantSuburb ? String(merchantSuburb).trim() : null,
+      merchantState:     merchantState ? String(merchantState).trim().toUpperCase() : null,
+      amount:            amountAud != null ? Number(amountAud) : null,
+      expenseDate,
+      odometerKm:        odometerKm != null ? Number(odometerKm) : null,
+      fuelType:          fuelType ?? null,
+      litres:            fuelLitres != null ? Number(fuelLitres) : null,
+      pricePerLitre:     pricePerLitre != null ? Number(pricePerLitre) : null,
+      evKwh:             evKwh != null ? Number(evKwh) : null,
+      pricePerKwh:       pricePerKwh != null ? Number(pricePerKwh) : null,
+      imageId:           imageId ?? null,
+      extractionStatus:  extractionSt,
+      isBusinessExpense: !!isBusinessExpense,
+      notes:             notes ? String(notes).trim() : null,
+      allFuelPrices:     Array.isArray(allFuelPrices) ? allFuelPrices : null,
+      createdAt:         new Date().toISOString(),
+    }
+
+    const s3Result = await writeToDataLake(eventType, payload)
+    if (!s3Result) return serverError('Data lake write failed')
+
+    const [ins] = await db.query<any>(
+      `INSERT INTO s3_event_index (vehicle_id, customer_id, event_type, s3_key, event_date, summary, amount_aud, category)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [vehicleId, ctx.customerId, eventType, s3Result.key, expenseDate, s3Result.summary, payload.amount, payload.category],
     )
-    const expenseId = result.insertId
+    const expenseId = ins.insertId as number
 
-    // Contribute to fuel price intelligence when price data is present
+    await refreshVehicleSummaries(db, vehicleId)
+
+    // Fuel-price intelligence side-effect (unchanged behaviour — writes to
+    // fuel_station_prices for the network benchmarking feature). Uses the
+    // s3_event_index.id as the "expense_id" foreign key value.
     const pricesToInsert: any[] = []
-
-    if ((category === 'fuel' || category === 'ev_charging') && pricePerLitre != null && merchantName) {
-      pricesToInsert.push([
-        expenseId, ctx.customerId, merchantName, merchantSuburb ?? null, merchantState ?? null,
-        fuelType ?? 'unleaded_95', Number(pricePerLitre), 'per_litre', imageId ?? null, expenseDate,
-      ])
+    const fpMerchant = payload.merchantName
+    if (fpMerchant && isFuel && pricePerLitre != null) {
+      pricesToInsert.push([expenseId, ctx.customerId, fpMerchant, payload.merchantSuburb, payload.merchantState,
+        fuelType ?? 'unleaded_95', Number(pricePerLitre), 'per_litre', imageId ?? null, expenseDate])
     }
-    if (category === 'ev_charging' && pricePerKwh != null && merchantName) {
-      pricesToInsert.push([
-        expenseId, ctx.customerId, merchantName, merchantSuburb ?? null, merchantState ?? null,
-        'ev_kwh', Number(pricePerKwh), 'per_kwh', imageId ?? null, expenseDate,
-      ])
+    if (fpMerchant && category === 'ev_charging' && pricePerKwh != null) {
+      pricesToInsert.push([expenseId, ctx.customerId, fpMerchant, payload.merchantSuburb, payload.merchantState,
+        'ev_kwh', Number(pricePerKwh), 'per_kwh', imageId ?? null, expenseDate])
     }
-    // Pump photo: multiple fuel types from allFuelPrices
-    if (Array.isArray(allFuelPrices) && merchantName) {
+    if (fpMerchant && Array.isArray(allFuelPrices)) {
       for (const fp of allFuelPrices) {
         if (fp.fuelType && fp.pricePerLitre != null) {
-          pricesToInsert.push([
-            expenseId, ctx.customerId, merchantName, merchantSuburb ?? null, merchantState ?? null,
-            fp.fuelType, Number(fp.pricePerLitre), 'per_litre', imageId ?? null, expenseDate,
-          ])
+          pricesToInsert.push([expenseId, ctx.customerId, fpMerchant, payload.merchantSuburb, payload.merchantState,
+            fp.fuelType, Number(fp.pricePerLitre), 'per_litre', imageId ?? null, expenseDate])
         }
       }
     }
-
     if (pricesToInsert.length) {
       const placeholders = pricesToInsert.map(() => '(?,?,?,?,?,?,?,?,?,?)').join(',')
       await db.query(
         `INSERT INTO fuel_station_prices (expense_id, customer_id, station_name, station_suburb, station_state, fuel_type, price, price_unit, image_id, reported_at) VALUES ${placeholders}`,
         pricesToInsert.flat(),
-      )
+      ).catch(() => {}) // non-fatal
     }
 
-    // If workshop invoice, also write to logbook
     if (category === 'workshop') {
       await db.query(
         `INSERT INTO vehicle_service_log_external
            (vehicle_id, customer_id, image_id, workshop_name, workshop_suburb,
             service_date, odometer_km, services, amount_aud, status)
          VALUES (?,?,?,?,?,?,?,?,?,'extracted')`,
-        [
-          vehicleId, ctx.customerId, imageId ?? null,
-          merchantName ? String(merchantName).trim() : null,
-          merchantSuburb ? String(merchantSuburb).trim() : null,
-          expenseDate,
-          odometerKm != null ? Number(odometerKm) : null,
-          notes ? String(notes).trim() : null,
-          amountAud != null ? Number(amountAud) : null,
-        ],
-      ).catch(() => {}) // non-fatal if logbook table doesn't exist yet
+        [vehicleId, ctx.customerId, imageId ?? null, payload.merchantName, payload.merchantSuburb,
+         expenseDate, payload.odometerKm, payload.notes, payload.amount],
+      ).catch(() => {})
     }
-
-    // Data-lake write + summary refresh + index row. All parallel — none block
-    // the caller because writeToDataLake catches its own errors and returns null.
-    const isFuelEvent  = category === 'fuel' || category === 'ev_charging'
-    const s3EventType  = isFuelEvent ? 'fuel-fills' : 'expenses'
-    const [s3Result]   = await Promise.all([
-      writeToDataLake(s3EventType, {
-        vehicleId,
-        customerId:      ctx.customerId,
-        expenseId,
-        category,
-        merchantName:    merchantName ?? null,
-        merchantSuburb:  merchantSuburb ?? null,
-        merchantState:   merchantState ?? null,
-        amount:          amountAud != null ? Number(amountAud) : null,
-        expenseDate,
-        odometerKm:      odometerKm != null ? Number(odometerKm) : null,
-        fuelType:        fuelType ?? null,
-        litres:          fuelLitres != null ? Number(fuelLitres) : null,
-        pricePerLitre:   pricePerLitre != null ? Number(pricePerLitre) : null,
-        evKwh:           evKwh != null ? Number(evKwh) : null,
-        pricePerKwh:     pricePerKwh != null ? Number(pricePerKwh) : null,
-        imageId:         imageId ?? null,
-        notes:           notes ?? null,
-      }),
-      refreshVehicleSummaries(db, vehicleId),
-    ])
-    if (s3Result) {
-      await db.query(
-        `INSERT INTO s3_event_index (vehicle_id, customer_id, event_type, s3_key, event_date, summary)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [vehicleId, ctx.customerId, s3EventType, s3Result.key, expenseDate, s3Result.summary],
-      )
-    }
-
-    const [[row]] = await db.query<any[]>(
-      `SELECT id, category, merchant_name, merchant_suburb, merchant_state,
-              amount_aud, expense_date, odometer_km,
-              fuel_type, fuel_litres, price_per_litre,
-              ev_kwh, price_per_kwh,
-              image_id, extraction_status, is_business_expense, notes, created_at
-       FROM vehicle_expenses WHERE id = ? LIMIT 1`,
-      [expenseId],
-    )
 
     return created({
-      id:                row.id,
-      category:          row.category,
-      merchantName:      row.merchant_name    ?? null,
-      merchantSuburb:    row.merchant_suburb  ?? null,
-      merchantState:     row.merchant_state   ?? null,
-      amountAud:         row.amount_aud       != null ? Number(row.amount_aud)     : null,
-      expenseDate:       row.expense_date instanceof Date ? row.expense_date.toISOString().slice(0, 10) : String(row.expense_date).slice(0, 10),
-      odometerKm:        row.odometer_km      != null ? Number(row.odometer_km)    : null,
-      fuelType:          row.fuel_type        ?? null,
-      fuelLitres:        row.fuel_litres      != null ? Number(row.fuel_litres)     : null,
-      pricePerLitre:     row.price_per_litre  != null ? Number(row.price_per_litre) : null,
-      evKwh:             row.ev_kwh           != null ? Number(row.ev_kwh)          : null,
-      pricePerKwh:       row.price_per_kwh    != null ? Number(row.price_per_kwh)   : null,
-      imageUrl:          row.image_id ? imageUrls(row.image_id).public : null,
-      extractionStatus:  row.extraction_status,
-      isBusinessExpense: !!row.is_business_expense,
-      notes:             row.notes ?? null,
-      createdAt:         row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+      id:                expenseId,
+      category:          payload.category,
+      merchantName:      payload.merchantName,
+      merchantSuburb:    payload.merchantSuburb,
+      merchantState:     payload.merchantState,
+      amountAud:         payload.amount,
+      expenseDate:       payload.expenseDate,
+      odometerKm:        payload.odometerKm,
+      fuelType:          payload.fuelType,
+      fuelLitres:        payload.litres,
+      pricePerLitre:     payload.pricePerLitre,
+      evKwh:             payload.evKwh,
+      pricePerKwh:       payload.pricePerKwh,
+      imageUrl:          payload.imageId ? imageUrls(payload.imageId).public : null,
+      extractionStatus:  payload.extractionStatus,
+      isBusinessExpense: payload.isBusinessExpense,
+      notes:             payload.notes,
+      createdAt:         payload.createdAt,
     })
   } catch (err) {
     return serverError(err)

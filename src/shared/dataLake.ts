@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3'
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
 import { randomBytes } from 'crypto'
 
 const s3     = new S3Client({ region: process.env.REGION ?? 'ap-southeast-2' })
@@ -61,6 +61,37 @@ export async function readFromDataLake<T = unknown>(key: string): Promise<T | nu
   } catch (err) {
     console.error('[dataLake] read failed', key, (err as Error).message)
     return null
+  }
+}
+
+// Rewrites an existing S3 object with new content at the same key. Used for
+// updates where the row keeps its logical identity (same s3_event_index id).
+export async function overwriteInDataLake(
+  key:       string,
+  eventType: EventType,
+  data:      DataLakeEvent,
+): Promise<{ summary: string } | null> {
+  try {
+    await s3.send(new PutObjectCommand({
+      Bucket:      BUCKET,
+      Key:         key,
+      Body:        JSON.stringify({ eventType, timestamp: new Date().toISOString(), ...data }),
+      ContentType: 'application/json',
+    }))
+    return { summary: shortSummary(eventType, data) }
+  } catch (err) {
+    console.error('[dataLake] overwrite failed', key, (err as Error).message)
+    return null
+  }
+}
+
+export async function deleteFromDataLake(key: string): Promise<boolean> {
+  try {
+    await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }))
+    return true
+  } catch (err) {
+    console.error('[dataLake] delete failed', key, (err as Error).message)
+    return false
   }
 }
 

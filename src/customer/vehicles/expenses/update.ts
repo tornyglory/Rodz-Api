@@ -5,12 +5,16 @@ import { ok, forbidden, notFound, validationError, serverError } from '../../../
 import { getCustomerContext, isPremium } from '../../_helpers'
 import { imageUrls } from '../../../shared/cloudflare'
 import { refreshVehicleSummaries } from '../../../shared/summaries'
+import { readFromDataLake, overwriteInDataLake } from '../../../shared/dataLake'
 
 const ready = bootstrap()
 
-const VALID_CATEGORIES = ['fuel','ev_charging','workshop','parts','car_wash','parking','tolls','registration','insurance','roadside','other']
-const VALID_FUEL_TYPES = ['unleaded_91','unleaded_95','unleaded_98','diesel','lpg','e10']
+const VALID_CATEGORIES = new Set(['fuel','ev_charging','workshop','parts','car_wash','parking','tolls','registration','insurance','roadside','other'])
+const VALID_FUEL_TYPES = new Set(['unleaded_91','unleaded_95','unleaded_98','diesel','lpg','e10'])
 
+// Update: identifies the expense by s3_event_index.id (the API's stable id).
+// Reads the current S3 object, merges patch fields, rewrites at the same key,
+// then refreshes the vehicle's summary aggregates.
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
   const db        = getPool()
@@ -26,79 +30,79 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!ownership) return forbidden()
     if (!await isPremium(db, ctx.customerId)) return forbidden()
 
-    const [[existing]] = await db.query<any[]>(
-      'SELECT id FROM vehicle_expenses WHERE id = ? AND vehicle_id = ? AND customer_id = ? LIMIT 1',
+    const [[pointer]] = await db.query<any[]>(
+      `SELECT id, s3_key, event_date, event_type FROM s3_event_index
+       WHERE id = ? AND vehicle_id = ? AND customer_id = ?
+         AND event_type IN ('fuel-fills','expenses') LIMIT 1`,
       [expenseId, vehicleId, ctx.customerId],
     )
-    if (!existing) return notFound('Expense')
+    if (!pointer) return notFound('Expense')
+
+    const current = await readFromDataLake<any>(pointer.s3_key)
+    if (!current) return notFound('Expense')
 
     const body = JSON.parse(event.body ?? '{}')
-    const {
-      category, merchantName, merchantSuburb, merchantState,
-      amountAud, expenseDate, odometerKm,
-      fuelType, fuelLitres, pricePerLitre,
-      evKwh, pricePerKwh,
-      isBusinessExpense, notes,
-    } = body
+    if (body.category    != null && !VALID_CATEGORIES.has(body.category)) return validationError('Invalid category')
+    if (body.fuelType    != null && !VALID_FUEL_TYPES.has(body.fuelType)) return validationError('Invalid fuelType')
+    if (body.expenseDate != null && !/^\d{4}-\d{2}-\d{2}$/.test(body.expenseDate)) return validationError('expenseDate must be YYYY-MM-DD')
 
-    if (category != null && !VALID_CATEGORIES.includes(category)) return validationError('Invalid category')
-    if (expenseDate != null && !/^\d{4}-\d{2}-\d{2}$/.test(expenseDate)) return validationError('expenseDate must be YYYY-MM-DD')
-    if (fuelType != null && !VALID_FUEL_TYPES.includes(fuelType)) return validationError('Invalid fuelType')
-
-    const sets: string[] = ['updated_at = NOW()']
-    const params: any[]  = []
-
-    if (category        != null) { sets.push('category = ?');          params.push(category) }
-    if (merchantName    != null) { sets.push('merchant_name = ?');     params.push(String(merchantName).trim() || null) }
-    if (merchantSuburb  != null) { sets.push('merchant_suburb = ?');   params.push(String(merchantSuburb).trim() || null) }
-    if (merchantState   != null) { sets.push('merchant_state = ?');    params.push(String(merchantState).trim().toUpperCase() || null) }
-    if (amountAud       != null) { sets.push('amount_aud = ?');        params.push(Number(amountAud)) }
-    if (expenseDate     != null) { sets.push('expense_date = ?');      params.push(expenseDate) }
-    if (odometerKm      != null) { sets.push('odometer_km = ?');       params.push(Number(odometerKm)) }
-    if (fuelType        != null) { sets.push('fuel_type = ?');         params.push(fuelType) }
-    if (fuelLitres      != null) { sets.push('fuel_litres = ?');       params.push(Number(fuelLitres)) }
-    if (pricePerLitre   != null) { sets.push('price_per_litre = ?');   params.push(Number(pricePerLitre)) }
-    if (evKwh           != null) { sets.push('ev_kwh = ?');            params.push(Number(evKwh)) }
-    if (pricePerKwh     != null) { sets.push('price_per_kwh = ?');     params.push(Number(pricePerKwh)) }
-    if (isBusinessExpense != null) { sets.push('is_business_expense = ?'); params.push(isBusinessExpense ? 1 : 0) }
-    if (notes           != null) { sets.push('notes = ?');             params.push(String(notes).trim() || null) }
-
-    if (params.length > 0) {
-      params.push(expenseId)
-      await db.query(`UPDATE vehicle_expenses SET ${sets.join(', ')} WHERE id = ?`, params)
-      await refreshVehicleSummaries(db, vehicleId)
+    // Merge only the patch fields — everything else stays as-is.
+    const merged = { ...current }
+    for (const [inputKey, targetKey] of [
+      ['category',        'category'],
+      ['merchantName',    'merchantName'],
+      ['merchantSuburb',  'merchantSuburb'],
+      ['merchantState',   'merchantState'],
+      ['amountAud',       'amount'],
+      ['expenseDate',     'expenseDate'],
+      ['odometerKm',      'odometerKm'],
+      ['fuelType',        'fuelType'],
+      ['fuelLitres',      'litres'],
+      ['pricePerLitre',   'pricePerLitre'],
+      ['evKwh',           'evKwh'],
+      ['pricePerKwh',     'pricePerKwh'],
+      ['isBusinessExpense','isBusinessExpense'],
+      ['notes',           'notes'],
+    ] as const) {
+      if (body[inputKey] !== undefined) merged[targetKey] = body[inputKey]
     }
+    merged.updatedAt = new Date().toISOString()
 
-    const [[row]] = await db.query<any[]>(
-      `SELECT id, category, merchant_name, merchant_suburb, merchant_state,
-              amount_aud, expense_date, odometer_km,
-              fuel_type, fuel_litres, price_per_litre,
-              ev_kwh, price_per_kwh,
-              image_id, extraction_status, is_business_expense, notes, created_at
-       FROM vehicle_expenses WHERE id = ? LIMIT 1`,
-      [expenseId],
+    // Recompute event_type in case category changed fuel <-> non-fuel.
+    const newIsFuel     = merged.category === 'fuel' || merged.category === 'ev_charging'
+    const newEventType  = newIsFuel ? 'fuel-fills' : 'expenses'
+
+    const write = await overwriteInDataLake(pointer.s3_key, newEventType, merged)
+    if (!write) return serverError('S3 write failed')
+
+    // Update the index row to reflect the new state.
+    await db.query(
+      `UPDATE s3_event_index
+         SET event_type = ?, event_date = ?, summary = ?, amount_aud = ?, category = ?
+       WHERE id = ?`,
+      [newEventType, merged.expenseDate ?? pointer.event_date, write.summary, merged.amount ?? null, merged.category ?? null, expenseId],
     )
-    if (!row) return notFound('Expense')
+    await refreshVehicleSummaries(db, vehicleId)
 
     return ok({
-      id:                row.id,
-      category:          row.category,
-      merchantName:      row.merchant_name    ?? null,
-      merchantSuburb:    row.merchant_suburb  ?? null,
-      merchantState:     row.merchant_state   ?? null,
-      amountAud:         row.amount_aud       != null ? Number(row.amount_aud)     : null,
-      expenseDate:       row.expense_date instanceof Date ? row.expense_date.toISOString().slice(0, 10) : String(row.expense_date).slice(0, 10),
-      odometerKm:        row.odometer_km      != null ? Number(row.odometer_km)    : null,
-      fuelType:          row.fuel_type        ?? null,
-      fuelLitres:        row.fuel_litres      != null ? Number(row.fuel_litres)     : null,
-      pricePerLitre:     row.price_per_litre  != null ? Number(row.price_per_litre) : null,
-      evKwh:             row.ev_kwh           != null ? Number(row.ev_kwh)          : null,
-      pricePerKwh:       row.price_per_kwh    != null ? Number(row.price_per_kwh)   : null,
-      imageUrl:          row.image_id ? imageUrls(row.image_id).public : null,
-      extractionStatus:  row.extraction_status,
-      isBusinessExpense: !!row.is_business_expense,
-      notes:             row.notes ?? null,
-      createdAt:         row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+      id:                expenseId,
+      category:          merged.category,
+      merchantName:      merged.merchantName    ?? null,
+      merchantSuburb:    merged.merchantSuburb  ?? null,
+      merchantState:     merged.merchantState   ?? null,
+      amountAud:         merged.amount          ?? null,
+      expenseDate:       merged.expenseDate,
+      odometerKm:        merged.odometerKm      ?? null,
+      fuelType:          merged.fuelType        ?? null,
+      fuelLitres:        merged.litres          ?? null,
+      pricePerLitre:     merged.pricePerLitre   ?? null,
+      evKwh:             merged.evKwh           ?? null,
+      pricePerKwh:       merged.pricePerKwh     ?? null,
+      imageUrl:          merged.imageId ? imageUrls(merged.imageId).public : null,
+      extractionStatus:  merged.extractionStatus ?? 'manual',
+      isBusinessExpense: !!merged.isBusinessExpense,
+      notes:             merged.notes ?? null,
+      createdAt:         merged.createdAt ?? merged.timestamp ?? null,
     })
   } catch (err) {
     return serverError(err)

@@ -4,11 +4,19 @@ import { getPool } from '../../../shared/db'
 import { ok, forbidden, serverError } from '../../../shared/errors'
 import { getCustomerContext, isPremium } from '../../_helpers'
 import { imageUrls } from '../../../shared/cloudflare'
+import { readFromDataLake } from '../../../shared/dataLake'
 
 const ready = bootstrap()
 
-const VALID_CATEGORIES = ['fuel','ev_charging','workshop','parts','car_wash','parking','tolls','registration','insurance','roadside','other']
+const VALID_CATEGORIES = new Set([
+  'fuel','ev_charging','workshop','parts','car_wash','parking',
+  'tolls','registration','insurance','roadside','other',
+])
 
+// Reads expenses from S3 via s3_event_index. Index lookup filters by vehicle +
+// event_type + date range (all indexed columns); category / businessOnly
+// filters are applied in-memory after fetching S3 detail. At realistic
+// per-vehicle expense counts this is under 200ms end-to-end.
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
   const db        = getPool()
@@ -24,50 +32,54 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!ownership) return forbidden()
     if (!await isPremium(db, ctx.customerId)) return forbidden()
 
-    const conditions: string[] = ['vehicle_id = ?', 'customer_id = ?']
-    const params: any[]        = [vehicleId, ctx.customerId]
+    const conditions: string[] = ['vehicle_id = ?', "event_type IN ('fuel-fills', 'expenses')"]
+    const params: any[]        = [vehicleId]
 
-    if (q.category && VALID_CATEGORIES.includes(q.category)) {
-      conditions.push('category = ?')
-      params.push(q.category)
-    }
-    if (q.from) { conditions.push('expense_date >= ?'); params.push(q.from) }
-    if (q.to)   { conditions.push('expense_date <= ?'); params.push(q.to)   }
-    if (q.businessOnly === 'true') { conditions.push('is_business_expense = 1') }
+    if (q.from) { conditions.push('event_date >= ?'); params.push(q.from) }
+    if (q.to)   { conditions.push('event_date <= ?'); params.push(q.to)   }
 
-    const [rows] = await db.query<any[]>(
-      `SELECT id, category, merchant_name, merchant_suburb, merchant_state,
-              amount_aud, expense_date, odometer_km,
-              fuel_type, fuel_litres, price_per_litre,
-              ev_kwh, price_per_kwh,
-              image_id, extraction_status, is_business_expense, notes, created_at
-       FROM vehicle_expenses
+    const [pointers] = await db.query<any[]>(
+      `SELECT id, s3_key, event_date FROM s3_event_index
        WHERE ${conditions.join(' AND ')}
-       ORDER BY expense_date DESC, id DESC
+       ORDER BY event_date DESC, id DESC
        LIMIT 200`,
       params,
     )
 
-    const expenses = rows.map((r: any) => ({
-      id:                r.id,
-      category:          r.category,
-      merchantName:      r.merchant_name      ?? null,
-      merchantSuburb:    r.merchant_suburb    ?? null,
-      merchantState:     r.merchant_state     ?? null,
-      amountAud:         r.amount_aud         != null ? Number(r.amount_aud)       : null,
-      expenseDate:       r.expense_date instanceof Date ? r.expense_date.toISOString().slice(0, 10) : String(r.expense_date).slice(0, 10),
-      odometerKm:        r.odometer_km        != null ? Number(r.odometer_km)      : null,
-      fuelType:          r.fuel_type          ?? null,
-      fuelLitres:        r.fuel_litres        != null ? Number(r.fuel_litres)       : null,
-      pricePerLitre:     r.price_per_litre    != null ? Number(r.price_per_litre)   : null,
-      evKwh:             r.ev_kwh             != null ? Number(r.ev_kwh)            : null,
-      pricePerKwh:       r.price_per_kwh      != null ? Number(r.price_per_kwh)     : null,
-      imageUrl:          r.image_id ? imageUrls(r.image_id).public : null,
-      extractionStatus:  r.extraction_status,
-      isBusinessExpense: !!r.is_business_expense,
-      notes:             r.notes ?? null,
-      createdAt:         r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
-    }))
+    const details = await Promise.all(pointers.map((p: any) => readFromDataLake<any>(p.s3_key)))
+
+    const wantCategory     = q.category && VALID_CATEGORIES.has(q.category) ? q.category : null
+    const wantBusinessOnly = q.businessOnly === 'true'
+
+    const expenses: any[] = []
+    for (let i = 0; i < pointers.length; i++) {
+      const p = pointers[i]
+      const d = details[i]
+      if (!d) continue                                                   // S3 object missing — skip
+      if (wantCategory     && d.category !== wantCategory)     continue
+      if (wantBusinessOnly && !d.isBusinessExpense)            continue
+
+      expenses.push({
+        id:                p.id,                                         // s3_event_index.id is the stable API id
+        category:          d.category,
+        merchantName:      d.merchantName    ?? null,
+        merchantSuburb:    d.merchantSuburb  ?? null,
+        merchantState:     d.merchantState   ?? null,
+        amountAud:         d.amount          ?? null,
+        expenseDate:       d.expenseDate     ?? (p.event_date instanceof Date ? p.event_date.toISOString().slice(0, 10) : String(p.event_date).slice(0, 10)),
+        odometerKm:        d.odometerKm      ?? null,
+        fuelType:          d.fuelType        ?? null,
+        fuelLitres:        d.litres          ?? null,
+        pricePerLitre:     d.pricePerLitre   ?? null,
+        evKwh:             d.evKwh           ?? null,
+        pricePerKwh:       d.pricePerKwh     ?? null,
+        imageUrl:          d.imageId ? imageUrls(d.imageId).public : null,
+        extractionStatus:  d.extractionStatus ?? 'manual',
+        isBusinessExpense: !!d.isBusinessExpense,
+        notes:             d.notes ?? null,
+        createdAt:         d.createdAt ?? (d.timestamp ?? null),
+      })
+    }
 
     return ok({ expenses, total: expenses.length })
   } catch (err) {

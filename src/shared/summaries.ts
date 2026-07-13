@@ -1,12 +1,12 @@
 import type mysql from 'mysql2/promise'
+import { readFromDataLake } from './dataLake'
 
 // Recomputes vehicle_expense_summary and vehicle_fuel_summary for a vehicle
-// from vehicle_expenses. Called after every expense insert/update/delete.
+// from s3_event_index. Called after every expense create/update/delete.
 //
-// Reasoning: incremental maintenance requires an annual reset job (YTD
-// rollover on Jan 1). Recompute-on-write is one small indexed SUM per bucket,
-// always correct, no scheduled job needed. At realistic per-vehicle expense
-// counts (dozens/year) the extra latency is <10ms.
+// Uses denormalised amount_aud + category on s3_event_index so no S3 fetches
+// are needed for the money-aggregate rollups. Fuel-specific fields (last
+// fill litres/price) require a single S3 fetch of the most recent fuel row.
 export async function refreshVehicleSummaries(db: mysql.Pool, vehicleId: number): Promise<void> {
   await Promise.all([
     refreshExpenseSummary(db, vehicleId),
@@ -17,12 +17,13 @@ export async function refreshVehicleSummaries(db: mysql.Pool, vehicleId: number)
 async function refreshExpenseSummary(db: mysql.Pool, vehicleId: number): Promise<void> {
   const [[agg]] = await db.query<any[]>(
     `SELECT
-       COALESCE(SUM(CASE WHEN YEAR(expense_date) = YEAR(CURDATE()) THEN amount_aud ELSE 0 END), 0) AS total_ytd,
-       COALESCE(SUM(CASE WHEN YEAR(expense_date) = YEAR(CURDATE()) AND expense_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01') THEN amount_aud ELSE 0 END), 0) AS total_mtd,
-       COALESCE(SUM(CASE WHEN YEAR(expense_date) = YEAR(CURDATE()) AND category IN ('fuel','ev_charging') THEN amount_aud ELSE 0 END), 0) AS fuel_ytd,
-       COALESCE(SUM(CASE WHEN YEAR(expense_date) = YEAR(CURDATE()) AND category = 'workshop'              THEN amount_aud ELSE 0 END), 0) AS service_ytd,
-       COALESCE(SUM(CASE WHEN YEAR(expense_date) = YEAR(CURDATE()) AND category NOT IN ('fuel','ev_charging','workshop') THEN amount_aud ELSE 0 END), 0) AS other_ytd
-     FROM vehicle_expenses WHERE vehicle_id = ?`,
+       COALESCE(SUM(CASE WHEN YEAR(event_date) = YEAR(CURDATE())                                                                                 THEN amount_aud ELSE 0 END), 0) AS total_ytd,
+       COALESCE(SUM(CASE WHEN YEAR(event_date) = YEAR(CURDATE()) AND event_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01')                          THEN amount_aud ELSE 0 END), 0) AS total_mtd,
+       COALESCE(SUM(CASE WHEN YEAR(event_date) = YEAR(CURDATE()) AND category IN ('fuel','ev_charging')                                        THEN amount_aud ELSE 0 END), 0) AS fuel_ytd,
+       COALESCE(SUM(CASE WHEN YEAR(event_date) = YEAR(CURDATE()) AND category = 'workshop'                                                     THEN amount_aud ELSE 0 END), 0) AS service_ytd,
+       COALESCE(SUM(CASE WHEN YEAR(event_date) = YEAR(CURDATE()) AND category NOT IN ('fuel','ev_charging','workshop') AND amount_aud IS NOT NULL THEN amount_aud ELSE 0 END), 0) AS other_ytd
+     FROM s3_event_index
+     WHERE vehicle_id = ? AND event_type IN ('fuel-fills','expenses')`,
     [vehicleId],
   )
 
@@ -41,27 +42,36 @@ async function refreshExpenseSummary(db: mysql.Pool, vehicleId: number): Promise
 }
 
 async function refreshFuelSummary(db: mysql.Pool, vehicleId: number): Promise<void> {
-  const [[agg]] = await db.query<any[]>(
-    `SELECT
-       (SELECT expense_date FROM vehicle_expenses
-        WHERE vehicle_id = ? AND category IN ('fuel','ev_charging')
-        ORDER BY expense_date DESC, id DESC LIMIT 1) AS last_fill_date,
-       (SELECT fuel_litres FROM vehicle_expenses
-        WHERE vehicle_id = ? AND category IN ('fuel','ev_charging')
-        ORDER BY expense_date DESC, id DESC LIMIT 1) AS last_fill_litres,
-       (SELECT price_per_litre FROM vehicle_expenses
-        WHERE vehicle_id = ? AND category IN ('fuel','ev_charging')
-        ORDER BY expense_date DESC, id DESC LIMIT 1) AS last_fill_price,
-       COALESCE(SUM(CASE WHEN YEAR(expense_date) = YEAR(CURDATE()) THEN amount_aud   ELSE 0 END), 0) AS total_fuel_spend_ytd,
-       COALESCE(SUM(CASE WHEN YEAR(expense_date) = YEAR(CURDATE()) THEN fuel_litres  ELSE 0 END), 0) AS total_litres_ytd,
-       COALESCE(SUM(CASE WHEN YEAR(expense_date) = YEAR(CURDATE()) THEN 1            ELSE 0 END), 0) AS fill_count_ytd
-     FROM vehicle_expenses
-     WHERE vehicle_id = ? AND category IN ('fuel','ev_charging')`,
-    [vehicleId, vehicleId, vehicleId, vehicleId],
+  const [rows] = await db.query<any[]>(
+    `SELECT id, s3_key, event_date, amount_aud
+     FROM s3_event_index
+     WHERE vehicle_id = ? AND event_type = 'fuel-fills'
+     ORDER BY event_date DESC, id DESC`,
+    [vehicleId],
   )
 
-  // No entries yet — nothing to summarise, and no row required.
-  if (!agg.last_fill_date && !agg.fill_count_ytd) return
+  if (rows.length === 0) {
+    // Wipe the summary row if no fuel fills exist.
+    await db.query('DELETE FROM vehicle_fuel_summary WHERE vehicle_id = ?', [vehicleId])
+    return
+  }
+
+  const currentYear = new Date().getFullYear()
+  const ytdRows     = rows.filter(r => new Date(r.event_date).getFullYear() === currentYear)
+  const totalYtd    = ytdRows.reduce((s, r) => s + Number(r.amount_aud ?? 0), 0)
+  const countYtd    = ytdRows.length
+
+  // Fetch just the most recent fuel object to get litres/price. One S3 GET.
+  const latest = await readFromDataLake<any>(rows[0].s3_key)
+
+  // Sum litres for YTD — needs S3 reads for each row. Bounded (typically <30 fills/year).
+  let totalLitresYtd = 0
+  if (ytdRows.length > 0) {
+    const details = await Promise.all(ytdRows.map(r => readFromDataLake<any>(r.s3_key)))
+    for (const d of details) {
+      if (d && d.litres != null) totalLitresYtd += Number(d.litres)
+    }
+  }
 
   await db.query(
     `INSERT INTO vehicle_fuel_summary
@@ -77,12 +87,12 @@ async function refreshFuelSummary(db: mysql.Pool, vehicleId: number): Promise<vo
        fill_count_ytd       = VALUES(fill_count_ytd)`,
     [
       vehicleId,
-      agg.last_fill_date,
-      agg.last_fill_litres,
-      agg.last_fill_price,
-      agg.total_fuel_spend_ytd,
-      agg.total_litres_ytd,
-      agg.fill_count_ytd,
+      latest?.expenseDate ?? rows[0].event_date,
+      latest?.litres        ?? null,
+      latest?.pricePerLitre ?? null,
+      totalYtd,
+      totalLitresYtd,
+      countYtd,
     ],
   )
 }
