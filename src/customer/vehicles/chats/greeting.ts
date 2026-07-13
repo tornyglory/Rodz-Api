@@ -5,6 +5,7 @@ import { getPool } from '../../../shared/db'
 import { ok, forbidden, notFound, validationError, serverError } from '../../../shared/errors'
 import { getCustomerContext } from '../../_helpers'
 import { buildSituationSnapshot, isMemoryEnabled } from './_shared'
+import { loadSession, appendMessages } from './messagesStore'
 
 const ready = bootstrap()
 
@@ -42,11 +43,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!session) return notFound('Session')
 
     // Session-not-empty guard — don't re-greet an existing conversation.
-    const [[countRow]] = await db.query<any[]>(
-      'SELECT COUNT(*) AS cnt FROM customer_vehicle_chats WHERE session_id = ?',
-      [sessionId],
-    )
-    if (Number(countRow.cnt) > 0) {
+    const { blob: existingBlob } = await loadSession(sessionId)
+    if (existingBlob && existingBlob.messages.length > 0) {
       return {
         statusCode: 409,
         headers:    { 'Content-Type': 'application/json' },
@@ -88,14 +86,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       }
     }
 
-    const [insert] = await db.query<any>(
-      `INSERT INTO customer_vehicle_chats (vehicle_id, customer_id, session_id, role, content)
-       VALUES (?, ?, ?, 'model', ?)`,
-      [vehicleId, ctx.customerId, sessionId, greetingText],
-    )
+    const [savedMsg] = await appendMessages(sessionId, vehicleId, ctx.customerId, [{
+      role: 'model', content: greetingText,
+    }])
     await db.query('UPDATE customer_chat_sessions SET updated_at = NOW() WHERE id = ?', [sessionId])
 
-    return ok({ messageId: Number(insert.insertId), content: greetingText })
+    return ok({ messageId: savedMsg.id, content: greetingText })
   } catch (err) {
     return serverError(err)
   }

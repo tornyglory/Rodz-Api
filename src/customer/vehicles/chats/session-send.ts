@@ -17,6 +17,7 @@ import {
   extractHints, isHintsEnabled, HINTS_INSTRUCTION,
 } from './_shared'
 import { readFromDataLake } from '../../../shared/dataLake'
+import { loadSession, appendMessages } from './messagesStore'
 
 const ready = bootstrap()
 
@@ -631,26 +632,21 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     if (!content && !imageId) return validationError('content or imageId is required')
 
-    // Check if this is the first message in the session for auto-title
-    const [[countRow]] = await db.query<any[]>(
-      'SELECT COUNT(*) AS cnt FROM customer_vehicle_chats WHERE session_id = ?',
-      [sessionId],
-    )
-    const isFirstMessage = Number(countRow.cnt) === 0
+    // Load the session blob from S3 (or empty if new). This gives us the
+    // current message history + whether this is the first user turn.
+    const { blob: existingBlob } = await loadSession(sessionId)
+    const priorMessages = existingBlob?.messages ?? []
+    const isFirstMessage = priorMessages.length === 0
 
-    const [userInsert] = await db.query<any>(
-      'INSERT INTO customer_vehicle_chats (vehicle_id, customer_id, session_id, role, content, image_id) VALUES (?,?,?,?,?,?)',
-      [vehicleId, ctx.customerId, sessionId, 'user', content, imageId],
-    )
-    const userMessageId = userInsert.insertId
+    // Append the user message to S3 up front so if Gemini fails, the user's
+    // input is not lost.
+    const [savedUserMsg] = await appendMessages(sessionId, vehicleId, ctx.customerId, [{
+      role: 'user', content, imageId: imageId ?? null,
+    }])
+    const userMessageId = savedUserMsg.id
 
-    const [vehicleContext, historyResult, customerResult, vehicleRegoResult, memory] = await Promise.all([
+    const [vehicleContext, customerResult, vehicleRegoResult, memory] = await Promise.all([
       buildCustomerVehicleContext(db, vehicleId),
-      db.query<any[]>(
-        `SELECT role, content, image_id, tool_calls FROM customer_vehicle_chats
-         WHERE session_id = ? AND id < ? ORDER BY id ASC LIMIT 40`,
-        [sessionId, userMessageId],
-      ),
       db.query<any[]>('SELECT first_name, gender, suburb, state, is_premium FROM customers WHERE id = ? LIMIT 1', [ctx.customerId])
         .catch(() => [[]] as [any[]]),
       db.query<any[]>('SELECT rego FROM vehicles WHERE id = ? LIMIT 1', [vehicleId]),
@@ -664,13 +660,14 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const assistantName     = 'Rod'
     const today             = new Date().toISOString().slice(0, 10)
 
-    // Build history Content[] — shared by specialist agents and the main Gemini handler
-    const historyRows: any[] = historyResult[0]
+    // Build history Content[] from the S3 blob (last 40 messages before the
+    // one we just appended). Shared by specialist agents and the main
+    // Gemini handler.
+    const historyForContext = priorMessages.slice(-40)
     const historyContents: Content[] = []
-    for (const msg of historyRows) {
-      if (msg.role === 'model' && msg.tool_calls) {
-        const toolCalls: { name: string; args: any; result: any }[] = typeof msg.tool_calls === 'string'
-          ? JSON.parse(msg.tool_calls) : msg.tool_calls
+    for (const msg of historyForContext) {
+      if (msg.role === 'model' && msg.toolCalls) {
+        const toolCalls: Array<{ name: string; args: any; result: any }> = Array.isArray(msg.toolCalls) ? msg.toolCalls : []
         for (const tc of toolCalls) {
           historyContents.push({ role: 'model', parts: [{ functionCall: { name: tc.name, args: tc.args } }] })
           historyContents.push({ role: 'user',  parts: [{ functionResponse: { name: tc.name, response: tc.result } }] })
@@ -679,7 +676,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       } else {
         const parts: Part[] = []
         if (msg.content) parts.push({ text: msg.content })
-        else if (msg.image_id) parts.push({ text: '[Image attached]' })
+        else if (msg.imageId) parts.push({ text: '[Image attached]' })
         if (parts.length) historyContents.push({ role: msg.role === 'model' ? 'model' : 'user', parts })
       }
     }
@@ -708,16 +705,15 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
           : await logbookAgent.run(agentCtx, content)
 
       const { content: agentContent, hints: agentHints } = extractHints(agentResult.content ?? '')
-      const toolCallsJson = agentResult.functionCalls.length ? JSON.stringify(agentResult.functionCalls) : null
-      const [modelInsert] = await db.query<any>(
-        'INSERT INTO customer_vehicle_chats (vehicle_id, customer_id, session_id, role, content, tool_calls) VALUES (?,?,?,?,?,?)',
-        [vehicleId, ctx.customerId, sessionId, 'model', agentContent || null, toolCallsJson],
-      )
+      const [savedModelMsg] = await appendMessages(sessionId, vehicleId, ctx.customerId, [{
+        role: 'model', content: agentContent || null,
+        toolCalls: agentResult.functionCalls.length ? agentResult.functionCalls : null,
+      }])
       await db.query('UPDATE customer_chat_sessions SET updated_at = NOW() WHERE id = ?', [sessionId])
       if (isFirstMessage && content) generateSessionTitle(db, sessionId, content).catch(() => {})
       return ok({
         userMessageId,
-        messageId:     modelInsert.insertId,
+        messageId:     savedModelMsg.id,
         content:       agentContent,
         functionCalls: agentResult.functionCalls.length ? agentResult.functionCalls.map(({ name, result }) => ({ name, result })) : undefined,
         hints:         agentHints,
@@ -902,11 +898,10 @@ ${isHintsEnabled() ? HINTS_INSTRUCTION : ''}`
     }
 
     const { content: cleanContent, hints } = extractHints(fullResponse)
-    const toolCallsJson = functionCalls.length ? JSON.stringify(functionCalls) : null
-    const [modelInsert] = await db.query<any>(
-      'INSERT INTO customer_vehicle_chats (vehicle_id, customer_id, session_id, role, content, tool_calls) VALUES (?,?,?,?,?,?)',
-      [vehicleId, ctx.customerId, sessionId, 'model', cleanContent || null, toolCallsJson],
-    )
+    const [savedModelMsg] = await appendMessages(sessionId, vehicleId, ctx.customerId, [{
+      role: 'model', content: cleanContent || null,
+      toolCalls: functionCalls.length ? functionCalls : null,
+    }])
 
     await db.query('UPDATE customer_chat_sessions SET updated_at = NOW() WHERE id = ?', [sessionId])
 
@@ -916,7 +911,7 @@ ${isHintsEnabled() ? HINTS_INSTRUCTION : ''}`
 
     return ok({
       userMessageId,
-      messageId:     modelInsert.insertId,
+      messageId:     savedModelMsg.id,
       content:       cleanContent,
       functionCalls: functionCalls.length ? functionCalls.map(({ name, result }) => ({ name, result })) : undefined,
       hints,

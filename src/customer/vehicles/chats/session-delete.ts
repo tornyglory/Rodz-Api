@@ -4,10 +4,13 @@ import { getPool } from '../../../shared/db'
 import { ok, forbidden, notFound, serverError } from '../../../shared/errors'
 import { getCustomerContext } from '../../_helpers'
 import { deleteCloudflareImage } from '../../../shared/cloudflare'
-import { writeToDataLake } from '../../../shared/dataLake'
+import { loadSession, deleteSessionBlob } from './messagesStore'
 
 const ready = bootstrap()
 
+// Deletes the S3 session blob and the customer_chat_sessions metadata row.
+// Also fires off any Cloudflare image deletions for images referenced in the
+// session.
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
   const db        = getPool()
@@ -23,61 +26,24 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!ownership) return forbidden()
 
     const [[session]] = await db.query<any[]>(
-      'SELECT id, title, created_at FROM customer_chat_sessions WHERE id = ? AND vehicle_id = ? AND customer_id = ? LIMIT 1',
+      'SELECT id FROM customer_chat_sessions WHERE id = ? AND vehicle_id = ? AND customer_id = ? LIMIT 1',
       [sessionId, vehicleId, ctx.customerId],
     )
     if (!session) return notFound('Session')
 
-    // Grab everything before deletion so we can archive to S3.
-    const [messages] = await db.query<any[]>(
-      `SELECT id, role, content, image_id, tool_calls, created_at
-       FROM customer_vehicle_chats WHERE session_id = ? ORDER BY id ASC`,
-      [sessionId],
-    )
+    // Pull image ids from the blob before wiping it, so we can clean up
+    // Cloudflare Images too. Non-fatal if any of this fails.
+    const { blob } = await loadSession(sessionId)
+    const imageIds = (blob?.messages ?? [])
+      .map(m => m.imageId)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0)
 
-    const images = messages.filter((m: any) => m.image_id).map((m: any) => m.image_id)
-
-    // Archive to S3 as a diagnostic-session document before deletion. Only if
-    // the session has content — no point archiving empty ones.
-    let s3Result: Awaited<ReturnType<typeof writeToDataLake>> = null
-    if (messages.length > 0) {
-      const startedAt = session.created_at instanceof Date ? session.created_at.toISOString() : String(session.created_at)
-      const firstUserMessage = messages.find((m: any) => m.role === 'user')?.content ?? null
-      const title = session.title ?? (firstUserMessage ? firstUserMessage.slice(0, 100) : 'chat session')
-
-      s3Result = await writeToDataLake('diagnostic-sessions', {
-        vehicleId,
-        customerId:  ctx.customerId,
-        sessionId,
-        title,
-        startedAt,
-        closedAt:    new Date().toISOString(),
-        messageCount: messages.length,
-        summary:     title,
-        messages:    messages.map((m: any) => ({
-          role:      m.role,
-          content:   m.content,
-          imageId:   m.image_id ?? null,
-          toolCalls: m.tool_calls ? JSON.parse(m.tool_calls) : null,
-          createdAt: m.created_at instanceof Date ? m.created_at.toISOString() : String(m.created_at),
-        })),
-      })
-
-      if (s3Result) {
-        await db.query(
-          `INSERT INTO s3_event_index (vehicle_id, customer_id, event_type, s3_key, event_date, summary)
-           VALUES (?, ?, 'diagnostic-sessions', ?, ?, ?)`,
-          [vehicleId, ctx.customerId, s3Result.key, startedAt, s3Result.summary],
-        )
-      }
-    }
-
-    await db.query('DELETE FROM customer_vehicle_chats WHERE session_id = ?', [sessionId])
+    await deleteSessionBlob(sessionId)
     await db.query('DELETE FROM customer_chat_sessions WHERE id = ?', [sessionId])
 
-    await Promise.allSettled(images.map((id: string) => deleteCloudflareImage(id)))
+    await Promise.allSettled(imageIds.map(id => deleteCloudflareImage(id)))
 
-    return ok({ deleted: true, archived: s3Result != null })
+    return ok({ deleted: true })
   } catch (err) {
     return serverError(err)
   }

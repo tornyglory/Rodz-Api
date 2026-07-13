@@ -190,19 +190,9 @@ export class RodzApiStack2 extends Stack {
     })
     dailyReminderRule.addTarget(new targets.LambdaFunction(reminderDispatcherFn))
 
-    // ── Nightly chat-session archive ───────────────────────────────────────
-
-    const archiveIdleSessionsFn = new LambdaFn(this, 'ArchiveIdleSessions', {
-      entry: src('scheduled/archive-idle-sessions.ts'), vpc, sharedEnv,
-      timeout: Duration.seconds(300),
-      memorySize: 512,
-    }).fn
-
-    // 3 AM AEST daily (17:00 UTC — off-peak). Archives sessions idle > 30 days.
-    const nightlyArchiveRule = new events.Rule(this, 'NightlyArchiveRule', {
-      schedule: events.Schedule.cron({ hour: '17', minute: '0' }),
-    })
-    nightlyArchiveRule.addTarget(new targets.LambdaFunction(archiveIdleSessionsFn))
+    // (Nightly chat-session archive job removed 2026-07-14 — messages now
+    // live in S3 from the moment they're written; MySQL never accumulates
+    // them, so nothing to archive.)
 
     // ── Job card ────────────────────────────────────────────────────────────
 
