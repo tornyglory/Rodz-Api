@@ -3,6 +3,26 @@ import type { AgentType } from './types'
 export function classifyIntent(message: string, isPremium: boolean): AgentType {
   const m = message.toLowerCase()
 
+  // ── CONVERSATION RECALL: keep in the main handler which has
+  //    getDiagnosticHistory + getSessionMessages. Otherwise a message like
+  //    "Vehicle Expense Tracker Chat- July 13" (referring to a prior session
+  //    by title) would route to the expense agent and fail to recall.
+  if (
+    /\b(previous|past|old|earlier|last).{0,10}(conversation|conversations|chat|chats|session|sessions|discussion|discussions)\b/.test(m) ||
+    /\b(chat|conversation|session|discussion)\s+history\b/.test(m) ||
+    /\b(recall|remember).{0,25}(our|the|previous|earlier|last).{0,15}(conversation|chat|discussion|talk)\b/.test(m) ||
+    /\bwhat.{0,15}(we|you).{0,15}(discuss|discussed|talk|talked|say|said|mention|mentioned)\b/.test(m) ||
+    /\b(all|list).{0,15}(our|my|the).{0,15}(conversation|conversations|chat|chats|session|sessions)\b/.test(m) ||
+    // Session-title reference — user is quoting a title from getDiagnosticHistory.
+    // Titles typically end in "chat/session/support" and may be followed by a
+    // date ("Chat- July 13", "Chat from July 13", "Chat on 2026-07-13").
+    /\b(chat|session|support)\b.{0,25}(-|–|—|from|on|dated|of)\s*.{0,15}(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december|20\d{2})/i.test(m) ||
+    // "tell me about the X chat" / "detail the X chat"
+    /\b(tell|show|detail|open).{0,25}(the|that|our).{0,30}(chat|conversation|session)\b/.test(m)
+  ) {
+    return 'vehicle'
+  }
+
   // ── VEHICLE PRE-CHECKS: safety / diagnostic questions always go to vehicle ──
   // Must run before booking so "safe to drive with worn brake pad" isn't misrouted
   if (
