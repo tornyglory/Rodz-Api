@@ -45,6 +45,7 @@ export class RodzApiStack2 extends Stack {
       ZELLER_WEBHOOK_SECRET: process.env.ZELLER_WEBHOOK_SECRET ?? '',
       WS_API_URL:            process.env.WS_API_URL            ?? '',
       ASSISTANT_CONTEXT_ENABLED: process.env.ASSISTANT_CONTEXT_ENABLED ?? 'false',
+      CHAT_HINTS_ENABLED:        process.env.CHAT_HINTS_ENABLED        ?? 'false',
     }
 
     const src = (p: string) => path.join(__dirname, '../../src', p)

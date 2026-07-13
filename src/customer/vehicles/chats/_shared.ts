@@ -1,5 +1,68 @@
 import type mysql from 'mysql2/promise'
 
+// ── Hint extraction (UI spotlighting cues) ─────────────────────────────────
+
+export const VALID_HINTS = new Set([
+  'chat', 'logbook', 'maintenance', 'profile',
+  'photos', 'expenses', 'share', 'settings',
+])
+
+const HINT_LINE_RE = /^\s*\[HINTS:\s*([^\]]+)\]\s*$/im
+
+export function extractHints(raw: string): { content: string; hints: string[] } {
+  if (!raw) return { content: '', hints: [] }
+  const match = raw.match(HINT_LINE_RE)
+  if (!match) return { content: raw, hints: [] }
+
+  const seen = new Set<string>()
+  const hints: string[] = []
+  for (const s of match[1].split(',')) {
+    const h = s.trim().toLowerCase()
+    if (VALID_HINTS.has(h) && !seen.has(h)) {
+      seen.add(h)
+      hints.push(h)
+      if (hints.length >= 2) break
+    }
+  }
+  const content = raw.replace(HINT_LINE_RE, '').trimEnd()
+  return { content, hints }
+}
+
+export function isHintsEnabled(): boolean {
+  return process.env.CHAT_HINTS_ENABLED === 'true'
+}
+
+export const HINTS_INSTRUCTION = `
+When your reply refers to a specific feature the customer can navigate to in the app, add a hint line at the END of your reply, on its own line, in this exact format:
+
+[HINTS: <comma-separated feature keys>]
+
+Feature keys are drawn ONLY from this list:
+  chat, logbook, maintenance, profile, photos, expenses, share, settings
+
+Rules:
+- Only include a feature you actually referenced in prose.
+- At most 2 features per reply. Usually 1 or 0.
+- Never invent new keys. If a feature doesn't match the list, don't emit it.
+- Don't mention the hints line itself — it's a machine marker the app parses out.
+- If no features are referenced, omit the line entirely.
+
+Feature mapping:
+  chat        → the Rodz Assistant (this chat) — rarely used
+  logbook     → digital logbook, service history, past services, invoice import
+  maintenance → maintenance schedule, upcoming services, service intervals
+  profile     → vehicle profile, specs, description, cover/avatar
+  photos      → photo gallery
+  expenses    → Expense Tracker (receipts, fuel, cost of ownership)
+  share       → shareable public link
+  settings    → privacy, ownership transfer, delete
+
+Example:
+  "You've got a service due in about 2,000 km. Have a look at your Maintenance tab for the full schedule."
+  [HINTS: maintenance]
+`
+
+
 // ── Assistant memory (per-vehicle scratchpad) ──────────────────────────────
 
 export interface MemoryNote {

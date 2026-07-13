@@ -55,6 +55,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       content:   r.content  ?? null,
       imageUrl:  r.image_id ? imageUrls(r.image_id).public : null,
       createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+      hints:     [] as string[], // hints are ephemeral UI cues, never persisted
     }))
 
     return ok({

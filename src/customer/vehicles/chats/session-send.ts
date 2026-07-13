@@ -14,6 +14,7 @@ import * as logbookAgent  from '../../agents/logbook-agent'
 import {
   getAssistantMemory, saveAssistantMemory, forgetAssistantMemory,
   renderMemoryBlock, isMemoryEnabled,
+  extractHints, isHintsEnabled, HINTS_INSTRUCTION,
 } from './_shared'
 
 const ready = bootstrap()
@@ -668,18 +669,20 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
           ? await fuelAgent.run(agentCtx, content)
           : await logbookAgent.run(agentCtx, content)
 
+      const { content: agentContent, hints: agentHints } = extractHints(agentResult.content ?? '')
       const toolCallsJson = agentResult.functionCalls.length ? JSON.stringify(agentResult.functionCalls) : null
       const [modelInsert] = await db.query<any>(
         'INSERT INTO customer_vehicle_chats (vehicle_id, customer_id, session_id, role, content, tool_calls) VALUES (?,?,?,?,?,?)',
-        [vehicleId, ctx.customerId, sessionId, 'model', agentResult.content || null, toolCallsJson],
+        [vehicleId, ctx.customerId, sessionId, 'model', agentContent || null, toolCallsJson],
       )
       await db.query('UPDATE customer_chat_sessions SET updated_at = NOW() WHERE id = ?', [sessionId])
       if (isFirstMessage && content) generateSessionTitle(db, sessionId, content).catch(() => {})
       return ok({
         userMessageId,
         messageId:     modelInsert.insertId,
-        content:       agentResult.content,
+        content:       agentContent,
         functionCalls: agentResult.functionCalls.length ? agentResult.functionCalls.map(({ name, result }) => ({ name, result })) : undefined,
+        hints:         agentHints,
       })
     }
 
@@ -714,7 +717,10 @@ When the customer asks what's due, overdue, or coming up on maintenance, answer 
 
 If the customer asks what their vehicle is worth — use the getVehicleValue tool.
 
-Keep responses conversational and concise. Use markdown for lists or emphasis where it helps readability.`
+If the customer wants to upload a receipt, bill, invoice, rego/registration renewal, insurance renewal, WoF/roadworthy certificate, fuel receipt, or any other paper/PDF/photo document — direct them to the **Expense Tracker** in the customer portal. It scans receipts, extracts the amount and date automatically, and files them under this vehicle so they have a running record. Say something like "Head to the Expense Tracker on your dashboard — you can snap or upload the receipt and it'll pull the details out for you." **Then also call the \`remember\` tool** with a short note about what's coming up (e.g. "rego due around Oct 2026 — remind next time we chat") so you can bring it up proactively next session. The Expense Tracker stores the document; the note lets you follow up.
+
+Keep responses conversational and concise. Use markdown for lists or emphasis where it helps readability.
+${isHintsEnabled() ? HINTS_INSTRUCTION : ''}`
 
     const contents: Content[] = [...historyContents]
 
@@ -790,10 +796,11 @@ Keep responses conversational and concise. Use markdown for lists or emphasis wh
       contents.push({ role: 'user', parts: [{ functionResponse: { name, response: fnResult } }] })
     }
 
+    const { content: cleanContent, hints } = extractHints(fullResponse)
     const toolCallsJson = functionCalls.length ? JSON.stringify(functionCalls) : null
     const [modelInsert] = await db.query<any>(
       'INSERT INTO customer_vehicle_chats (vehicle_id, customer_id, session_id, role, content, tool_calls) VALUES (?,?,?,?,?,?)',
-      [vehicleId, ctx.customerId, sessionId, 'model', fullResponse || null, toolCallsJson],
+      [vehicleId, ctx.customerId, sessionId, 'model', cleanContent || null, toolCallsJson],
     )
 
     await db.query('UPDATE customer_chat_sessions SET updated_at = NOW() WHERE id = ?', [sessionId])
@@ -805,8 +812,9 @@ Keep responses conversational and concise. Use markdown for lists or emphasis wh
     return ok({
       userMessageId,
       messageId:     modelInsert.insertId,
-      content:       fullResponse,
+      content:       cleanContent,
       functionCalls: functionCalls.length ? functionCalls.map(({ name, result }) => ({ name, result })) : undefined,
+      hints,
     })
   } catch (err) {
     return serverError(err)
