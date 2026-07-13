@@ -44,12 +44,20 @@ function getOrCreateSharedRole(stack: Stack): iam.Role {
         })],
       }),
       // Data lake — full detail archive for events that grow unboundedly.
-      // Read-your-own-writes only; no listing (index lives in MySQL).
+      // s3:ListBucket is needed on the bucket (not the objects) so that
+      // GetObject on a non-existent key returns 404 rather than 403 —
+      // required for the "does this session blob exist yet?" check.
       DataLake: new iam.PolicyDocument({
-        statements: [new iam.PolicyStatement({
-          actions:   ['s3:PutObject', 's3:GetObject'],
-          resources: ['arn:aws:s3:::rodz-data-lake/*'],
-        })],
+        statements: [
+          new iam.PolicyStatement({
+            actions:   ['s3:PutObject', 's3:GetObject', 's3:DeleteObject'],
+            resources: ['arn:aws:s3:::rodz-data-lake/*'],
+          }),
+          new iam.PolicyStatement({
+            actions:   ['s3:ListBucket'],
+            resources: ['arn:aws:s3:::rodz-data-lake'],
+          }),
+        ],
       }),
     },
   })

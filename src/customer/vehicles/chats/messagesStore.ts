@@ -31,7 +31,10 @@ export async function loadSession(
     const body = await res.Body!.transformToString()
     return { blob: JSON.parse(body) as SessionBlob, etag: res.ETag ?? null }
   } catch (err: any) {
-    if (err.name === 'NoSuchKey' || err.Code === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404) {
+    const status = err.$metadata?.httpStatusCode
+    // 404 = key doesn't exist. 403 also treated as "no such key" — happens
+    // when s3:ListBucket is missing (S3 hides existence to prevent enumeration).
+    if (err.name === 'NoSuchKey' || err.Code === 'NoSuchKey' || status === 404 || status === 403) {
       return { blob: null, etag: null }
     }
     throw err
