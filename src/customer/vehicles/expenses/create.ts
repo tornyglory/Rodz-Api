@@ -4,6 +4,8 @@ import { getPool } from '../../../shared/db'
 import { created, forbidden, validationError, serverError } from '../../../shared/errors'
 import { getCustomerContext, isPremium } from '../../_helpers'
 import { imageUrls } from '../../../shared/cloudflare'
+import { writeToDataLake } from '../../../shared/dataLake'
+import { refreshVehicleSummaries } from '../../../shared/summaries'
 
 const ready = bootstrap()
 
@@ -119,6 +121,40 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
           amountAud != null ? Number(amountAud) : null,
         ],
       ).catch(() => {}) // non-fatal if logbook table doesn't exist yet
+    }
+
+    // Data-lake write + summary refresh + index row. All parallel — none block
+    // the caller because writeToDataLake catches its own errors and returns null.
+    const isFuelEvent  = category === 'fuel' || category === 'ev_charging'
+    const s3EventType  = isFuelEvent ? 'fuel-fills' : 'expenses'
+    const [s3Result]   = await Promise.all([
+      writeToDataLake(s3EventType, {
+        vehicleId,
+        customerId:      ctx.customerId,
+        expenseId,
+        category,
+        merchantName:    merchantName ?? null,
+        merchantSuburb:  merchantSuburb ?? null,
+        merchantState:   merchantState ?? null,
+        amount:          amountAud != null ? Number(amountAud) : null,
+        expenseDate,
+        odometerKm:      odometerKm != null ? Number(odometerKm) : null,
+        fuelType:        fuelType ?? null,
+        litres:          fuelLitres != null ? Number(fuelLitres) : null,
+        pricePerLitre:   pricePerLitre != null ? Number(pricePerLitre) : null,
+        evKwh:           evKwh != null ? Number(evKwh) : null,
+        pricePerKwh:     pricePerKwh != null ? Number(pricePerKwh) : null,
+        imageId:         imageId ?? null,
+        notes:           notes ?? null,
+      }),
+      refreshVehicleSummaries(db, vehicleId),
+    ])
+    if (s3Result) {
+      await db.query(
+        `INSERT INTO s3_event_index (vehicle_id, customer_id, event_type, s3_key, event_date, summary)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [vehicleId, ctx.customerId, s3EventType, s3Result.key, expenseDate, s3Result.summary],
+      )
     }
 
     const [[row]] = await db.query<any[]>(

@@ -4,6 +4,7 @@ import { getPool } from '../../../shared/db'
 import { ok, forbidden, notFound, serverError } from '../../../shared/errors'
 import { getCustomerContext, isPremium } from '../../_helpers'
 import { deleteCloudflareImage } from '../../../shared/cloudflare'
+import { refreshVehicleSummaries } from '../../../shared/summaries'
 
 const ready = bootstrap()
 
@@ -30,6 +31,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     // Nullify FK in fuel_station_prices before deleting (ON DELETE SET NULL handles this)
     await db.query('DELETE FROM vehicle_expenses WHERE id = ?', [expenseId])
+    await refreshVehicleSummaries(db, vehicleId)
 
     if (expense.image_id) {
       await deleteCloudflareImage(expense.image_id).catch(() => {})

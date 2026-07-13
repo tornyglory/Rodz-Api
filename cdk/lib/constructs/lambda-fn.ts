@@ -43,6 +43,14 @@ function getOrCreateSharedRole(stack: Stack): iam.Role {
           resources: [`arn:aws:lambda:${stack.region}:${stack.account}:function:*`],
         })],
       }),
+      // Data lake — full detail archive for events that grow unboundedly.
+      // Read-your-own-writes only; no listing (index lives in MySQL).
+      DataLake: new iam.PolicyDocument({
+        statements: [new iam.PolicyStatement({
+          actions:   ['s3:PutObject', 's3:GetObject'],
+          resources: ['arn:aws:s3:::rodz-data-lake/*'],
+        })],
+      }),
     },
   })
 }

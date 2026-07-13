@@ -4,6 +4,7 @@ import { getPool } from '../../../shared/db'
 import { ok, forbidden, notFound, validationError, serverError } from '../../../shared/errors'
 import { getCustomerContext, isPremium } from '../../_helpers'
 import { imageUrls } from '../../../shared/cloudflare'
+import { refreshVehicleSummaries } from '../../../shared/summaries'
 
 const ready = bootstrap()
 
@@ -65,6 +66,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (params.length > 0) {
       params.push(expenseId)
       await db.query(`UPDATE vehicle_expenses SET ${sets.join(', ')} WHERE id = ?`, params)
+      await refreshVehicleSummaries(db, vehicleId)
     }
 
     const [[row]] = await db.query<any[]>(

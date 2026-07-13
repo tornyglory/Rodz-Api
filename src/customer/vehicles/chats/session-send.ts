@@ -16,6 +16,7 @@ import {
   renderMemoryBlock, isMemoryEnabled,
   extractHints, isHintsEnabled, HINTS_INSTRUCTION,
 } from './_shared'
+import { readFromDataLake } from '../../../shared/dataLake'
 
 const ready = bootstrap()
 
@@ -542,6 +543,43 @@ const TOOLS: Tool[] = [{
       },
     },
     {
+      name: 'getFuelSummary',
+      description: 'Get pre-computed fuel aggregates for this vehicle (last fill, YTD spend, litres, avg consumption). Use this for questions like "how much have I spent on fuel this year?" — do NOT list every fill.',
+      parameters: { type: SchemaType.OBJECT, properties: {} },
+    },
+    {
+      name: 'getExpenseSummary',
+      description: 'Get pre-computed expense aggregates for this vehicle (MTD, YTD, per-category YTD, cost per km). Use this for "how much have I spent" style questions.',
+      parameters: { type: SchemaType.OBJECT, properties: {} },
+    },
+    {
+      name: 'getFuelHistory',
+      description: 'Fetch detailed recent fuel-fill records (litres, price, station, odometer). Use only when the customer asks for a specific list or breakdown — otherwise prefer getFuelSummary.',
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: { limit: { type: SchemaType.NUMBER, description: 'How many most-recent fills to return. Default 10, max 30.' } },
+      },
+    },
+    {
+      name: 'getExpenseHistory',
+      description: 'Fetch detailed recent expense records (amount, category, merchant, date). Use only for specific list/breakdown requests — otherwise prefer getExpenseSummary.',
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          limit:  { type: SchemaType.NUMBER, description: 'How many most-recent expenses to return. Default 10, max 30.' },
+          months: { type: SchemaType.NUMBER, description: 'Restrict to the last N months. Default 12.' },
+        },
+      },
+    },
+    {
+      name: 'getDiagnosticHistory',
+      description: 'Fetch summaries of previous chat/diagnostic sessions with this vehicle. Use for "what did we talk about last time" style questions. Returns short summaries — the assistant should not recite them verbatim.',
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: { limit: { type: SchemaType.NUMBER, description: 'How many most-recent sessions to return. Default 5, max 10.' } },
+      },
+    },
+    {
       name: 'remember',
       description: "Save a short note about this vehicle so you can reference it in future conversations. Use this only for genuinely useful context the customer would appreciate you remembering later — running symptoms, personal preferences (e.g. always books morning slots), things they mentioned they're planning. Do NOT use for facts already in the logbook or vehicle specs.",
       parameters: {
@@ -787,6 +825,73 @@ ${isHintsEnabled() ? HINTS_INSTRUCTION : ''}`
         fnResult = await saveAssistantMemory(db, vehicleId, String(args.note ?? ''), Number(args.expiresInDays))
       } else if (name === 'forget') {
         fnResult = await forgetAssistantMemory(db, vehicleId, Number(args.noteId))
+      } else if (name === 'getFuelSummary') {
+        const [[row]] = await db.query<any[]>(
+          `SELECT last_fill_date, last_fill_litres, last_fill_price,
+                  avg_consumption_l100km, total_fuel_spend_ytd, total_litres_ytd, fill_count_ytd
+           FROM vehicle_fuel_summary WHERE vehicle_id = ? LIMIT 1`,
+          [vehicleId],
+        )
+        fnResult = row ? {
+          lastFillDate:        row.last_fill_date instanceof Date ? row.last_fill_date.toISOString().slice(0, 10) : row.last_fill_date,
+          lastFillLitres:      row.last_fill_litres != null ? Number(row.last_fill_litres) : null,
+          lastFillPricePerL:   row.last_fill_price  != null ? Number(row.last_fill_price)  : null,
+          avgConsumptionL100:  row.avg_consumption_l100km != null ? Number(row.avg_consumption_l100km) : null,
+          totalFuelSpendYtd:   Number(row.total_fuel_spend_ytd),
+          totalLitresYtd:      Number(row.total_litres_ytd),
+          fillCountYtd:        Number(row.fill_count_ytd),
+        } : { empty: true }
+      } else if (name === 'getExpenseSummary') {
+        const [[row]] = await db.query<any[]>(
+          `SELECT total_spend_mtd, total_spend_ytd, fuel_spend_ytd, service_spend_ytd, other_spend_ytd, cost_per_km
+           FROM vehicle_expense_summary WHERE vehicle_id = ? LIMIT 1`,
+          [vehicleId],
+        )
+        fnResult = row ? {
+          totalSpendMtd:   Number(row.total_spend_mtd),
+          totalSpendYtd:   Number(row.total_spend_ytd),
+          fuelSpendYtd:    Number(row.fuel_spend_ytd),
+          serviceSpendYtd: Number(row.service_spend_ytd),
+          otherSpendYtd:   Number(row.other_spend_ytd),
+          costPerKm:       row.cost_per_km != null ? Number(row.cost_per_km) : null,
+        } : { empty: true }
+      } else if (name === 'getFuelHistory') {
+        const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 30)
+        const [pointers] = await db.query<any[]>(
+          `SELECT s3_key, event_date, summary FROM s3_event_index
+           WHERE vehicle_id = ? AND event_type = 'fuel-fills'
+           ORDER BY event_date DESC, id DESC LIMIT ?`,
+          [vehicleId, limit],
+        )
+        const details = await Promise.all(pointers.map((p: any) => readFromDataLake<any>(p.s3_key)))
+        fnResult = { fills: details.filter(d => d != null) }
+      } else if (name === 'getExpenseHistory') {
+        const limit  = Math.min(Math.max(Number(args.limit)  || 10, 1), 30)
+        const months = Math.min(Math.max(Number(args.months) || 12, 1), 24)
+        const [pointers] = await db.query<any[]>(
+          `SELECT s3_key, event_date, summary FROM s3_event_index
+           WHERE vehicle_id = ? AND event_type IN ('expenses', 'fuel-fills')
+             AND event_date > DATE_SUB(NOW(), INTERVAL ? MONTH)
+           ORDER BY event_date DESC, id DESC LIMIT ?`,
+          [vehicleId, months, limit],
+        )
+        const details = await Promise.all(pointers.map((p: any) => readFromDataLake<any>(p.s3_key)))
+        fnResult = { expenses: details.filter(d => d != null) }
+      } else if (name === 'getDiagnosticHistory') {
+        const limit = Math.min(Math.max(Number(args.limit) || 5, 1), 10)
+        const [pointers] = await db.query<any[]>(
+          `SELECT s3_key, event_date, summary FROM s3_event_index
+           WHERE vehicle_id = ? AND event_type = 'diagnostic-sessions'
+           ORDER BY event_date DESC, id DESC LIMIT ?`,
+          [vehicleId, limit],
+        )
+        // Return summaries only by default — full transcripts blow token limits.
+        fnResult = {
+          sessions: pointers.map((p: any) => ({
+            date:    p.event_date instanceof Date ? p.event_date.toISOString().slice(0, 10) : String(p.event_date).slice(0, 10),
+            summary: p.summary,
+          })),
+        }
       } else { fnResult = { error: `Unknown function: ${name}` } }
 
       functionCalls.push({ name, args, result: fnResult })
