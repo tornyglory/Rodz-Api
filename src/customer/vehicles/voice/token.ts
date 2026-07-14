@@ -145,6 +145,12 @@ Do NOT offer to remember things, look up past sessions, or discuss fuel/expense 
         },
         systemInstruction:  { parts: [{ text: systemPrompt }] },
         tools:              [{ functionDeclarations: BOOKING_TOOL_DECLARATIONS }],
+        // Live text captions — empty objects enable with defaults.
+        // Gemini emits `serverContent.outputTranscription.text` for Rod's
+        // spoken response and `serverContent.inputTranscription.text` for
+        // what it heard the user say. Frontend renders both live.
+        outputAudioTranscription: {},
+        inputAudioTranscription:  {},
       },
     }
 
