@@ -3,14 +3,15 @@ import { bootstrap } from '../../../shared/bootstrap'
 import { getPool } from '../../../shared/db'
 import { ok, forbidden, notFound, serverError } from '../../../shared/errors'
 import { getCustomerContext } from '../../_helpers'
-import { deleteCloudflareImage } from '../../../shared/cloudflare'
-import { loadSession, deleteSessionBlob } from './messagesStore'
+import { archiveSessionBlob } from './messagesStore'
 
 const ready = bootstrap()
 
-// Deletes the S3 session blob and the customer_chat_sessions metadata row.
-// Also fires off any Cloudflare image deletions for images referenced in the
-// session.
+// Soft delete. Moves the S3 blob from diagnostic-sessions/current/ →
+// diagnostic-sessions/archived/, marks the metadata row with deleted_at.
+// Attached Cloudflare images are LEFT intact so the archived record is
+// complete and restorable — cleanup can happen via a separate purge job
+// later if we ever add "delete permanently".
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
   const db        = getPool()
@@ -26,22 +27,17 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!ownership) return forbidden()
 
     const [[session]] = await db.query<any[]>(
-      'SELECT id FROM customer_chat_sessions WHERE id = ? AND vehicle_id = ? AND customer_id = ? LIMIT 1',
+      `SELECT id FROM customer_chat_sessions
+       WHERE id = ? AND vehicle_id = ? AND customer_id = ? AND deleted_at IS NULL LIMIT 1`,
       [sessionId, vehicleId, ctx.customerId],
     )
     if (!session) return notFound('Session')
 
-    // Pull image ids from the blob before wiping it, so we can clean up
-    // Cloudflare Images too. Non-fatal if any of this fails.
-    const { blob } = await loadSession(sessionId)
-    const imageIds = (blob?.messages ?? [])
-      .map(m => m.imageId)
-      .filter((id): id is string => typeof id === 'string' && id.length > 0)
-
-    await deleteSessionBlob(sessionId)
-    await db.query('DELETE FROM customer_chat_sessions WHERE id = ?', [sessionId])
-
-    await Promise.allSettled(imageIds.map(id => deleteCloudflareImage(id)))
+    await archiveSessionBlob(sessionId)
+    await db.query(
+      'UPDATE customer_chat_sessions SET deleted_at = NOW() WHERE id = ?',
+      [sessionId],
+    )
 
     return ok({ deleted: true })
   } catch (err) {

@@ -26,7 +26,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const [rows] = await db.query<any[]>(
       `SELECT id, title, created_at, updated_at
        FROM customer_chat_sessions
-       WHERE vehicle_id = ? AND customer_id = ?
+       WHERE vehicle_id = ? AND customer_id = ? AND deleted_at IS NULL
        ORDER BY updated_at DESC
        LIMIT 50`,
       [vehicleId, ctx.customerId],

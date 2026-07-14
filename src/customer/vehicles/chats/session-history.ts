@@ -28,7 +28,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!ownership) return forbidden()
 
     const [[session]] = await db.query<any[]>(
-      'SELECT id, title FROM customer_chat_sessions WHERE id = ? AND vehicle_id = ? AND customer_id = ? LIMIT 1',
+      `SELECT id, title FROM customer_chat_sessions
+       WHERE id = ? AND vehicle_id = ? AND customer_id = ? AND deleted_at IS NULL LIMIT 1`,
       [sessionId, vehicleId, ctx.customerId],
     )
     if (!session) return notFound('Session')

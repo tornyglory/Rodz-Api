@@ -633,7 +633,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!ownership) return forbidden()
 
     const [[session]] = await db.query<any[]>(
-      'SELECT id FROM customer_chat_sessions WHERE id = ? AND vehicle_id = ? AND customer_id = ? LIMIT 1',
+      `SELECT id FROM customer_chat_sessions
+       WHERE id = ? AND vehicle_id = ? AND customer_id = ? AND deleted_at IS NULL LIMIT 1`,
       [sessionId, vehicleId, ctx.customerId],
     )
     if (!session) return notFound('Session')
@@ -892,6 +893,7 @@ ${isHintsEnabled() ? HINTS_INSTRUCTION : ''}`
            FROM customer_chat_sessions
            WHERE vehicle_id = ? AND customer_id = ?
              AND id != ?
+             AND deleted_at IS NULL
            ORDER BY updated_at DESC LIMIT ?`,
           [vehicleId, ctx.customerId, sessionId, limit],
         )
@@ -910,7 +912,7 @@ ${isHintsEnabled() ? HINTS_INSTRUCTION : ''}`
         // Verify ownership before loading — don't leak another customer's data.
         const [[owned]] = await db.query<any[]>(
           `SELECT id, title FROM customer_chat_sessions
-           WHERE id = ? AND vehicle_id = ? AND customer_id = ? LIMIT 1`,
+           WHERE id = ? AND vehicle_id = ? AND customer_id = ? AND deleted_at IS NULL LIMIT 1`,
           [targetSid, vehicleId, ctx.customerId],
         )
         if (!owned) {

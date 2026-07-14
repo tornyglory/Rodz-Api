@@ -1,4 +1,4 @@
-import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
+import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, CopyObjectCommand } from '@aws-sdk/client-s3'
 import { randomBytes } from 'crypto'
 
 const s3     = new S3Client({ region: process.env.REGION ?? 'ap-southeast-2' })
@@ -21,7 +21,8 @@ export interface SessionBlob {
   updatedAt:  string
 }
 
-const key = (sessionId: number) => `diagnostic-sessions/current/${sessionId}.json`
+const key         = (sessionId: number) => `diagnostic-sessions/current/${sessionId}.json`
+const archivedKey = (sessionId: number) => `diagnostic-sessions/archived/${sessionId}.json`
 
 export async function loadSession(
   sessionId: number,
@@ -47,6 +48,27 @@ export async function deleteSessionBlob(sessionId: number): Promise<void> {
   } catch (err) {
     // 404 is fine — nothing to delete.
     console.warn('[messagesStore] delete failed', (err as Error).message)
+  }
+}
+
+// Soft-delete: copy the current blob to the archived path, then remove the
+// current one. Preserves the data for training + potential restore, while
+// making the session invisible to the read paths (which only look at current/).
+export async function archiveSessionBlob(sessionId: number): Promise<boolean> {
+  try {
+    await s3.send(new CopyObjectCommand({
+      Bucket:     BUCKET,
+      CopySource: `${BUCKET}/${key(sessionId)}`,
+      Key:        archivedKey(sessionId),
+    }))
+    await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key(sessionId) }))
+    return true
+  } catch (err: any) {
+    const status = err.$metadata?.httpStatusCode
+    // 404 means there was no blob to archive (empty session) — treat as success.
+    if (status === 404 || err.name === 'NoSuchKey') return true
+    console.warn('[messagesStore] archive failed', sessionId, (err as Error).message)
+    return false
   }
 }
 
