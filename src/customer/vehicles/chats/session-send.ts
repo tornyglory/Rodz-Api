@@ -4,7 +4,7 @@ import type mysql from 'mysql2/promise'
 import { bootstrap } from '../../../shared/bootstrap'
 import { getPool } from '../../../shared/db'
 import { ok, forbidden, notFound, validationError, serverError } from '../../../shared/errors'
-import { getCustomerContext } from '../../_helpers'
+import { getCustomerContext, getCustomerTier } from '../../_helpers'
 import { notifyStore } from '../../../shared/staffNotifications'
 import { classifyIntent } from '../../agents/intent'
 import type { AgentContext } from '../../agents/types'
@@ -18,6 +18,11 @@ import {
 } from './_shared'
 import { readFromDataLake } from '../../../shared/dataLake'
 import { loadSession, appendMessages } from './messagesStore'
+import { safeGet, safeSetEx, safeIncr } from '../../../shared/redis'
+
+// Rate limit tiers — messages per customer per calendar day.
+const RATE_LIMIT_BY_TIER: Record<string, number> = { free: 20, silver: 100, gold: 100 }
+const RATE_LIMIT_ENABLED = process.env.RATE_LIMIT_ENABLED === 'true'
 
 const ready = bootstrap()
 
@@ -30,6 +35,19 @@ async function fetchImageAsBase64(imageId: string): Promise<{ base64: string; mi
   const mimeType = res.headers.get('content-type') ?? 'image/jpeg'
   const base64   = Buffer.from(await res.arrayBuffer()).toString('base64')
   return { base64, mimeType }
+}
+
+// Cache the assembled context block for 1 hour. The block is used on every
+// chat turn and is expensive to rebuild (4-5 SQL queries + service history +
+// recommendations). Invalidated by any vehicle write, ai_recommendations
+// write, or assistant_memory write (see safeDel calls in those handlers).
+async function getCachedVehicleContext(db: mysql.Pool, vehicleId: number): Promise<string> {
+  const cacheKey = `vehicle:${vehicleId}:context`
+  const cached   = await safeGet<{ context: string }>(cacheKey)
+  if (cached?.context != null) return cached.context
+  const built    = await buildCustomerVehicleContext(db, vehicleId)
+  await safeSetEx(cacheKey, 3600, { context: built })
+  return built
 }
 
 async function buildCustomerVehicleContext(db: mysql.Pool, vehicleId: number): Promise<string> {
@@ -645,6 +663,30 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     if (!content && !imageId) return validationError('content or imageId is required')
 
+    // Rate limit — per-customer per-day counter in Redis. safeIncr returns 0
+    // on Redis failure → fail-open (request goes through).
+    if (RATE_LIMIT_ENABLED) {
+      const today = new Date().toISOString().slice(0, 10)
+      const count = await safeIncr(`ratelimit:${ctx.customerId}:${today}`, 86400)
+      if (count > 0) {
+        const tier   = await getCustomerTier(db, ctx.customerId)
+        const limit  = RATE_LIMIT_BY_TIER[tier] ?? RATE_LIMIT_BY_TIER.free
+        if (count > limit) {
+          const resetsAt = new Date()
+          resetsAt.setUTCHours(24, 0, 0, 0)
+          return {
+            statusCode: 429,
+            headers:    { 'Content-Type': 'application/json' },
+            body:       JSON.stringify({
+              error:    'RATE_LIMIT',
+              message:  `Daily message limit of ${limit} reached.`,
+              resetsAt: resetsAt.toISOString(),
+            }),
+          }
+        }
+      }
+    }
+
     // Load the session blob from S3 (or empty if new). This gives us the
     // current message history + whether this is the first user turn.
     const { blob: existingBlob } = await loadSession(sessionId)
@@ -659,7 +701,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const userMessageId = savedUserMsg.id
 
     const [vehicleContext, customerResult, vehicleRegoResult, memory] = await Promise.all([
-      buildCustomerVehicleContext(db, vehicleId),
+      getCachedVehicleContext(db, vehicleId),
       db.query<any[]>('SELECT first_name, gender, suburb, state, is_premium FROM customers WHERE id = ? LIMIT 1', [ctx.customerId])
         .catch(() => [[]] as [any[]]),
       db.query<any[]>('SELECT rego FROM vehicles WHERE id = ? LIMIT 1', [vehicleId]),

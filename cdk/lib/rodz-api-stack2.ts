@@ -46,6 +46,8 @@ export class RodzApiStack2 extends Stack {
       WS_API_URL:            process.env.WS_API_URL            ?? '',
       ASSISTANT_CONTEXT_ENABLED: process.env.ASSISTANT_CONTEXT_ENABLED ?? 'false',
       CHAT_HINTS_ENABLED:        process.env.CHAT_HINTS_ENABLED        ?? 'false',
+      REDIS_URL:                 process.env.REDIS_URL                 ?? '',
+      RATE_LIMIT_ENABLED:        process.env.RATE_LIMIT_ENABLED        ?? 'false',
     }
 
     const src = (p: string) => path.join(__dirname, '../../src', p)

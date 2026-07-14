@@ -1,4 +1,5 @@
 import type mysql from 'mysql2/promise'
+import { safeDel } from '../../../shared/redis'
 
 // ── Hint extraction (UI spotlighting cues) ─────────────────────────────────
 
@@ -127,6 +128,7 @@ export async function saveAssistantMemory(
      VALUES (?, ?, 'assistant', DATE_ADD(NOW(), INTERVAL ? DAY))`,
     [vehicleId, trimmed, ttl],
   )
+  await safeDel(`vehicle:${vehicleId}:context`)
   return { ok: true, noteId: Number(result.insertId) }
 }
 
@@ -140,6 +142,7 @@ export async function forgetAssistantMemory(
     'UPDATE assistant_memory SET deleted_at = NOW() WHERE id = ? AND vehicle_id = ? AND deleted_at IS NULL',
     [noteId, vehicleId],
   )
+  if (result.affectedRows > 0) await safeDel(`vehicle:${vehicleId}:context`)
   return { ok: result.affectedRows > 0 }
 }
 

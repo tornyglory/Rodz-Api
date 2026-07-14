@@ -4,6 +4,7 @@ import { getPool } from '../../shared/db'
 import { ok, validationError, serverError } from '../../shared/errors'
 import { verifyImage } from '../../shared/cloudflare'
 import { getCustomerContext } from '../_helpers'
+import { safeDel } from '../../shared/redis'
 
 const ready = bootstrap()
 
@@ -23,6 +24,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       'UPDATE customers SET avatar_image_id = ?, updated_at = NOW() WHERE id = ?',
       [body.imageId, ctx.customerId],
     )
+    await safeDel(`customer:${ctx.customerId}:profile`)
 
     return ok({ imageId: body.imageId })
   } catch (err) {

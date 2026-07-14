@@ -1,6 +1,7 @@
 import { APIGatewayProxyEventV2 } from 'aws-lambda'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { imageUrls } from '../shared/cloudflare'
+import { safeGet, safeSetEx, safeDel } from '../shared/redis'
 
 export interface CustomerContext {
   customerId: number
@@ -11,12 +12,32 @@ export function getCustomerContext(event: APIGatewayProxyEventV2): CustomerConte
   return { customerId: Number(ctx.customerId ?? 0) }
 }
 
-export async function isPremium(db: any, customerId: number): Promise<boolean> {
-  const [[cust]] = await db.query<any[]>(
-    'SELECT is_premium FROM customers WHERE id = ? LIMIT 1',
+// Cached tier lookup. Every authenticated request that gates on tier calls
+// this — so it's the highest-leverage cache target. 15-minute TTL because
+// tier changes happen via staff action and it's fine for the customer to
+// wait up to that long for a new grant to take effect.
+export type Tier = 'free' | 'silver' | 'gold'
+const TIER_TTL_SEC = 900
+
+export async function getCustomerTier(db: any, customerId: number): Promise<Tier> {
+  const cached = await safeGet<{ tier: Tier }>(`subscription:${customerId}`)
+  if (cached?.tier) return cached.tier
+  const [[row]] = await db.query<any[]>(
+    'SELECT tier FROM customers WHERE id = ? LIMIT 1',
     [customerId],
   )
-  return !!cust?.is_premium
+  const tier: Tier = (row?.tier ?? 'free') as Tier
+  await safeSetEx(`subscription:${customerId}`, TIER_TTL_SEC, { tier })
+  return tier
+}
+
+export async function invalidateCustomerTier(customerId: number): Promise<void> {
+  await safeDel(`subscription:${customerId}`)
+}
+
+export async function isPremium(db: any, customerId: number): Promise<boolean> {
+  const tier = await getCustomerTier(db, customerId)
+  return tier !== 'free'
 }
 
 export function buildVehicleSummary(row: any) {

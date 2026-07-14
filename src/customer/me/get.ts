@@ -3,8 +3,10 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { ok, notFound, serverError } from '../../shared/errors'
 import { getCustomerContext, buildCustomer, buildVehicleSummary } from '../_helpers'
+import { safeGet, safeSetEx } from '../../shared/redis'
 
 const ready = bootstrap()
+const PROFILE_TTL_SEC = 900 // 15 min — invalidated on every PATCH /c/me
 
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
@@ -12,6 +14,10 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   const ctx = getCustomerContext(event)
 
   try {
+    const cacheKey = `customer:${ctx.customerId}:profile`
+    const cached   = await safeGet<any>(cacheKey)
+    if (cached) return ok(cached)
+
     const [[customerRow]] = await db.query<any[]>(
       `SELECT id, first_name, last_name, email, mobile, suburb, state, postcode, description,
               date_of_birth, gender, marketing_opt_in, sms_opt_in, avatar_image_id, created_at, is_premium, tier,
@@ -30,7 +36,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [ctx.customerId],
     )
 
-    return ok(buildCustomer(customerRow, vehicleRows.map(buildVehicleSummary)))
+    const response = buildCustomer(customerRow, vehicleRows.map(buildVehicleSummary))
+    await safeSetEx(cacheKey, PROFILE_TTL_SEC, response)
+    return ok(response)
   } catch (err) {
     return serverError(err)
   }

@@ -44,6 +44,8 @@ export class RodzApiStack extends Stack {
       CF_ACCOUNT_ID:    process.env.CF_ACCOUNT_ID    ?? '',
       CF_ACCOUNT_HASH:  process.env.CF_ACCOUNT_HASH  ?? '',
       CF_IMAGES_TOKEN:  process.env.CF_IMAGES_TOKEN  ?? '',
+      REDIS_URL:          process.env.REDIS_URL          ?? '',
+      RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED ?? 'false',
     }
 
     const src = (p: string) => path.join(__dirname, '../../src', p)

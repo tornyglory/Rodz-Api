@@ -3,6 +3,7 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { ok, notFound, serverError } from '../../shared/errors'
 import { getCustomerContext } from '../_helpers'
+import { safeDel } from '../../shared/redis'
 
 const ready = bootstrap()
 
@@ -20,6 +21,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
        WHERE id = ? AND is_active = 1`,
       [ctx.customerId],
     )
+    await safeDel(`customer:${ctx.customerId}:profile`)
 
     const [[row]] = await db.query<any[]>(
       'SELECT onboarding_completed_at FROM customers WHERE id = ? LIMIT 1',

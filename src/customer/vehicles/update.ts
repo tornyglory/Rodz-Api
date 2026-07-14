@@ -1,5 +1,6 @@
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { bootstrap } from '../../shared/bootstrap'
+import { safeDel } from '../../shared/redis'
 import { getPool } from '../../shared/db'
 import { ok, validationError, forbidden, notFound, serverError } from '../../shared/errors'
 import { getCustomerContext, buildVehicle } from '../_helpers'
@@ -45,6 +46,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (params.length > 0) {
       params.push(vehicleId)
       await db.query(`UPDATE vehicles SET ${sets.join(', ')} WHERE id = ?`, params)
+      await safeDel(`vehicle:${vehicleId}:context`)
     }
 
     if (odometerKm != null) {

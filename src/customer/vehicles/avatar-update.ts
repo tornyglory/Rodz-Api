@@ -1,5 +1,6 @@
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { bootstrap } from '../../shared/bootstrap'
+import { safeDel } from '../../shared/redis'
 import { getPool } from '../../shared/db'
 import { ok, validationError, forbidden, serverError } from '../../shared/errors'
 import { verifyImage } from '../../shared/cloudflare'
@@ -30,6 +31,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       'UPDATE vehicles SET avatar_image_id = ?, updated_at = NOW() WHERE id = ?',
       [body.imageId, vehicleId],
     )
+    await safeDel(`vehicle:${vehicleId}:context`)
 
     return ok({ imageId: body.imageId })
   } catch (err) {

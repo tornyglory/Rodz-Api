@@ -3,6 +3,7 @@ import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { ok, forbidden, notFound, validationError, serverError } from '../shared/errors'
+import { safeDel } from '../shared/redis'
 
 const ready = bootstrap()
 
@@ -29,6 +30,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [tier, isPremium, id],
     )
     if (result.affectedRows === 0) return notFound('Customer')
+
+    await safeDel([`subscription:${id}`, `customer:${id}:profile`])
 
     return ok({ id: Number(id), tier, isPremium: isPremium === 1 })
   } catch (err) {

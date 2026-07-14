@@ -3,6 +3,7 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { ok, validationError, notFound, serverError } from '../../shared/errors'
 import { getCustomerContext, buildCustomer, buildVehicleSummary } from '../_helpers'
+import { safeDel } from '../../shared/redis'
 
 const ready = bootstrap()
 
@@ -51,6 +52,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (params.length > 0) {
       params.push(ctx.customerId)
       await db.query(`UPDATE customers SET ${sets.join(', ')} WHERE id = ?`, params)
+      await safeDel(`customer:${ctx.customerId}:profile`)
     }
 
     const [[customerRow]] = await db.query<any[]>(

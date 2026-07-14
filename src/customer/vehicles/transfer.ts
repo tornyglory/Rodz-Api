@@ -1,5 +1,6 @@
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { bootstrap } from '../../shared/bootstrap'
+import { safeDel } from '../../shared/redis'
 import { getPool } from '../../shared/db'
 import { ok, forbidden, notFound, validationError, serverError } from '../../shared/errors'
 import { getCustomerContext } from '../_helpers'
@@ -63,6 +64,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     } finally {
       conn.release()
     }
+
+    await safeDel(`vehicle:${vehicleId}:context`)
 
     return ok({ transferred: true, vehicleId, newOwnerId: buyer.id })
   } catch (err) {
