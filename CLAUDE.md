@@ -205,7 +205,7 @@ aws lambda update-function-code \
   --zip-file fileb://dist/index.zip
 ```
 
-**~23 orphan Lambdas** exist outside CDK (customer expenses, chats, fuel prices, logbook external). They share `RodzApiStack2-CustomerFnServiceRole`. `cdk deploy` won't touch them — direct-Lambda-deploy is the way. Environment variables (`REDIS_URL`, `RATE_LIMIT_ENABLED`, `ASSISTANT_CONTEXT_ENABLED`, `CHAT_HINTS_ENABLED`) are set per-Lambda via `aws lambda update-function-configuration` — the CDK `sharedEnv` doesn't reach them.
+**~16 orphan Lambdas** remain outside CDK (customer expenses, fuel prices, logbook external, misc). They share `RodzApiStack2-CustomerFnServiceRole`. `cdk deploy` won't touch them — direct-Lambda-deploy is the way. Env vars (`REDIS_URL`, `RATE_LIMIT_ENABLED`, `ASSISTANT_CONTEXT_ENABLED`, `CHAT_HINTS_ENABLED`) on orphans must be set per-Lambda via `aws lambda update-function-configuration`. **CDK-managed Lambdas get these from `sharedEnv` automatically** — no manual step needed. Chat handlers (6) + `CustomerAuthorizer` were migrated into CDK on 2026-07-14.
 
 ## Runtime env flags
 

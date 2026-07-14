@@ -1080,6 +1080,66 @@ export class RodzApiStack2 extends Stack {
       authorizer: customerAuthorizer,
     })
 
+    // ── Customer chat sessions (migrated from orphan Lambdas 2026-07-14) ───
+
+    const customerChatCreateFn = new LambdaFn(this, 'CustomerChatCreateSession', {
+      entry: src('customer/vehicles/chats/create-session.ts'), vpc, sharedEnv,
+    }).fn
+    const customerChatListFn = new LambdaFn(this, 'CustomerChatListSessions', {
+      entry: src('customer/vehicles/chats/list-sessions.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(15),
+    }).fn
+    const customerChatSessionHistoryFn = new LambdaFn(this, 'CustomerChatSessionHistory', {
+      entry: src('customer/vehicles/chats/session-history.ts'), vpc, sharedEnv,
+    }).fn
+    const customerChatSendFn = new LambdaFn(this, 'CustomerChatSessionSend', {
+      entry: src('customer/vehicles/chats/session-send.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(60), memorySize: 512,
+    }).fn
+    const customerChatDeleteFn = new LambdaFn(this, 'CustomerChatSessionDelete', {
+      entry: src('customer/vehicles/chats/session-delete.ts'), vpc, sharedEnv,
+    }).fn
+    const customerChatSessionUploadUrlFn = new LambdaFn(this, 'CustomerChatSessionUploadUrl', {
+      entry: src('customer/vehicles/chats/session-upload-url.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerChatSessionCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerChatSessionCreateInt', customerChatCreateFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/chats', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+    new HttpRoute(this, 'CustomerChatSessionListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerChatSessionListInt', customerChatListFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/chats', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+    new HttpRoute(this, 'CustomerChatSessionHistoryRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerChatSessionHistoryInt', customerChatSessionHistoryFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/chats/{sessionId}', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+    new HttpRoute(this, 'CustomerChatSessionSendRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerChatSessionSendInt', customerChatSendFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/chats/{sessionId}/messages', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+    new HttpRoute(this, 'CustomerChatSessionDeleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerChatSessionDeleteInt', customerChatDeleteFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/chats/{sessionId}', HttpMethod.DELETE),
+      authorizer: customerAuthorizer,
+    })
+    new HttpRoute(this, 'CustomerChatSessionUploadUrlRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerChatSessionUploadUrlInt', customerChatSessionUploadUrlFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/chats/{sessionId}/upload-url', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
     // ── Customer vehicles (authenticated) ───────────────────────────────────
 
     const customerVehicleListFn = new LambdaFn(this, 'CustomerVehicleList', {
@@ -1249,7 +1309,7 @@ export class RodzApiStack2 extends Stack {
 
     new HttpRoute(this, 'CustomerChatHistoryRoute', {
       httpApi,
-      integration: new HttpLambdaIntegration('CustomerChatHistoryInt', customerChatHistoryFn),
+      integration: new HttpLambdaIntegration('CustomerChatHistoryInt', customerChatSessionHistoryFn),
       routeKey: HttpRouteKey.with('/c/vehicles/{id}/chat', HttpMethod.GET),
       authorizer: customerAuthorizer,
     })
