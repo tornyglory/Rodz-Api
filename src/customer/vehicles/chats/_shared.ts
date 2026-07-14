@@ -170,7 +170,15 @@ export interface SituationSnapshot {
   mostRecentServiceDate:  string | null
   mostRecentServiceStore: string | null
   unreadRecommendations:  number
-  outstandingIssues:      string[]        // from assistant memory notes
+  // All active memory notes with recency — used to prompt specific callbacks
+  // ("did that clicking clear up?" / "still planning to sell before Xmas?").
+  memoryNotes:            { note: string; createdDaysAgo: number }[]
+  // Prior chat sessions — lets the greeting say "welcome back" and reference
+  // last topic. lastSessionTopic is the title of the most recent prior
+  // session (null if never chatted before or title not yet generated).
+  priorSessionCount:      number
+  lastSessionTopic:       string | null
+  lastSessionEndedDaysAgo: number | null
 }
 
 function toIsoDate(v: any): string | null {
@@ -218,21 +226,40 @@ export async function buildSituationSnapshot(
   }
 
   const memory = await getAssistantMemory(db, vehicleId)
-  const outstanding = memory
-    .filter(m => /noise|issue|clicking|leak|smell|vibration|problem|wait|see if|clear up|follow up/i.test(m.note))
-    .slice(0, 3)
-    .map(m => m.note)
+  const memoryNotes = memory.slice(0, 5).map(m => ({ note: m.note, createdDaysAgo: m.createdDaysAgo }))
+
+  // Prior sessions — for "welcome back" openers and last-topic callbacks.
+  // Excludes the current session (which is empty at greeting time).
+  const [prior] = await db.query<any[]>(
+    `SELECT title, updated_at
+     FROM customer_chat_sessions
+     WHERE vehicle_id = ? AND customer_id = ? AND deleted_at IS NULL
+     ORDER BY updated_at DESC LIMIT 20`,
+    [vehicleId, customerId],
+  )
+  // Filter out any session with no messages (like the just-created one).
+  // A session with a title is guaranteed to have had a first user message.
+  const withTitle = (prior as any[]).filter(s => s.title)
+  const priorSessionCount = withTitle.length
+  const last = withTitle[0]
+  const lastSessionTopic = last?.title ?? null
+  const lastSessionEndedDaysAgo = last?.updated_at
+    ? Math.round((Date.now() - new Date(last.updated_at).getTime()) / (1000 * 60 * 60 * 24))
+    : null
 
   return {
-    firstName:              customer?.first_name ?? null,
-    vehicleShort:           `${v.year} ${v.make} ${v.model}`,
-    odometerKm:             v.odometer_current != null ? Number(v.odometer_current) : null,
-    nextServiceDueKm:       v.next_service_due_km != null ? Number(v.next_service_due_km) : null,
-    nextServiceDueDate:     toIsoDate(v.next_service_due_date),
+    firstName:               customer?.first_name ?? null,
+    vehicleShort:            `${v.year} ${v.make} ${v.model}`,
+    odometerKm:              v.odometer_current != null ? Number(v.odometer_current) : null,
+    nextServiceDueKm:        v.next_service_due_km != null ? Number(v.next_service_due_km) : null,
+    nextServiceDueDate:      toIsoDate(v.next_service_due_date),
     regoExpiry,
-    mostRecentServiceDate:  toIsoDate(recent?.service_date),
-    mostRecentServiceStore: recent?.store ?? null,
-    unreadRecommendations:  Number((recCount as any)?.n ?? 0),
-    outstandingIssues:      outstanding,
+    mostRecentServiceDate:   toIsoDate(recent?.service_date),
+    mostRecentServiceStore:  recent?.store ?? null,
+    unreadRecommendations:   Number((recCount as any)?.n ?? 0),
+    memoryNotes,
+    priorSessionCount,
+    lastSessionTopic,
+    lastSessionEndedDaysAgo,
   }
 }

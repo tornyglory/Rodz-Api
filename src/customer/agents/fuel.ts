@@ -118,7 +118,7 @@ export async function run(ctx: AgentContext, message: string): Promise<AgentResu
   const homeSuburb = ctx.customerSuburb ?? 'your area'
   const homeState  = ctx.customerState ?? null
 
-  const systemInstruction = `You are Rod, a fuel price intelligence assistant for Rodz.
+  const systemInstruction = `You are Rodz, a fuel price intelligence assistant for Rodz workshop.
 ${ctx.customerFirstName ? `The customer's name is ${ctx.customerFirstName}.` : ''}
 Today's date is ${ctx.today}.
 

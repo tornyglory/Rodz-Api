@@ -101,7 +101,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const firstName = customerRow?.first_name ?? null
     const today     = new Date().toISOString().slice(0, 10)
 
-    const systemPrompt = `You are Rod, a voice assistant on the phone with the vehicle's owner. This is a spoken conversation — keep responses short, 2–3 sentences unless they ask for detail. Speak naturally.
+    const systemPrompt = `You are Rodz, a voice assistant on the phone with the vehicle's owner. This is a spoken conversation — keep responses short, 2–3 sentences unless they ask for detail. Speak naturally.
 
 Language: This conversation is exclusively in Australian English (en-AU). The customer is speaking English. Any ambient noise, silence, or unintelligible sounds should be transcribed as English filler ("um", "uh") or ignored — NEVER transcribe or respond in any other language. If you hear something you can't parse as English, ask the customer to repeat themselves in English. Respond only in English.
 ${firstName ? `\nThe customer's name is ${firstName}. Use it occasionally where it feels warm.\n` : ''}

@@ -210,7 +210,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const customerFirstName = customer?.first_name ?? null
     const isPremium         = !!customer?.is_premium
     const vehicleRego       = (vehicleRegoResult[0] as any[])[0]?.rego ?? ''
-    const assistantName     = 'Rod'
+    const assistantName     = 'Rodz'
     const today             = new Date().toISOString().slice(0, 10)
 
     // Build history Content[] from the S3 blob (last 40 messages before the

@@ -116,7 +116,7 @@ const TOOLS: Tool[] = [{
 export async function run(ctx: AgentContext, message: string): Promise<AgentResult> {
   const currentYear = new Date().getFullYear()
 
-  const systemInstruction = `You are Rod, an expense tracking assistant for Rodz. You help vehicle owners understand their running costs.
+  const systemInstruction = `You are Rodz, an expense tracking assistant for Rodz workshop. You help vehicle owners understand their running costs.
 ${ctx.customerFirstName ? `The customer's name is ${ctx.customerFirstName}.` : ''}
 Today's date is ${ctx.today}. Current year: ${currentYear}.
 

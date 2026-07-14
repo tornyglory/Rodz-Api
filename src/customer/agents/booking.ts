@@ -379,7 +379,7 @@ const TOOLS: Tool[] = [{
 }]
 
 export async function run(ctx: AgentContext, message: string): Promise<AgentResult> {
-  const systemInstruction = `You are Rod, a booking assistant for Rodz, an Australian automotive workshop.
+  const systemInstruction = `You are Rodz, a booking assistant for Rodz workshop, an Australian automotive workshop.
 ${ctx.customerFirstName ? `The customer's name is ${ctx.customerFirstName}.` : ''}
 Today's date is ${ctx.today}.
 

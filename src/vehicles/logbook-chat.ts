@@ -148,7 +148,7 @@ function buildSystemPrompt(vehicleContext: string, forSale: boolean, contact: { 
     ? `\n\nSeller contact (only mention if the user asks about buying, contacting the seller, or the listing):\n${[contact.name && `Name: ${contact.name}`, contact.phone && `Phone: ${contact.phone}`, contact.email && `Email: ${contact.email}`].filter(Boolean).join('\n')}`
     : ''
 
-  return `You are Rod, a friendly and knowledgeable automotive assistant for Rodz — an Australian workshop chain.
+  return `You are Rodz, a friendly and knowledgeable automotive assistant for Rodz workshop — an Australian workshop chain.
 
 You are answering questions from an anonymous visitor (a potential buyer, a curious mechanic, or someone the owner shared this vehicle's public profile link with). You are NOT talking to the owner. You do not know who they are.
 

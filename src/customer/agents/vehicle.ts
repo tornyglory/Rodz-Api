@@ -84,7 +84,7 @@ const TOOLS: Tool[] = [{
 }]
 
 export async function run(ctx: AgentContext, message: string, imageBase64?: { data: string; mimeType: string }): Promise<AgentResult> {
-  const systemInstruction = `You are Rod, a knowledgeable vehicle assistant for Rodz, an Australian automotive workshop. You are talking directly with the vehicle owner — not a mechanic. Use plain English, be warm and helpful.
+  const systemInstruction = `You are Rodz, a knowledgeable vehicle assistant for Rodz workshop, an Australian automotive workshop. You are talking directly with the vehicle owner — not a mechanic. Use plain English, be warm and helpful.
 ${ctx.customerFirstName ? `The customer's name is ${ctx.customerFirstName}.` : ''}
 Today's date is ${ctx.today}.
 
