@@ -1030,6 +1030,10 @@ export class RodzApiStack2 extends Stack {
       entry: src('customer/me/preferences.ts'), vpc, sharedEnv,
     }).fn
 
+    const customerMeTierFn = new LambdaFn(this, 'CustomerMeTier', {
+      entry: src('customer/me/tier.ts'), vpc, sharedEnv,
+    }).fn
+
     new HttpRoute(this, 'CustomerMeGetRoute', {
       httpApi,
       integration: new HttpLambdaIntegration('CustomerMeGetInt', customerMeGetFn),
@@ -1083,6 +1087,13 @@ export class RodzApiStack2 extends Stack {
       httpApi,
       integration: new HttpLambdaIntegration('CustomerMePreferencesInt', customerMePreferencesFn),
       routeKey: HttpRouteKey.with('/c/me/preferences', HttpMethod.PATCH),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerMeTierRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerMeTierInt', customerMeTierFn),
+      routeKey: HttpRouteKey.with('/c/me/tier', HttpMethod.PATCH),
       authorizer: customerAuthorizer,
     })
 
