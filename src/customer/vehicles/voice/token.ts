@@ -102,6 +102,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const today     = new Date().toISOString().slice(0, 10)
 
     const systemPrompt = `You are Rod, a voice assistant on the phone with the vehicle's owner. This is a spoken conversation — keep responses short, 2–3 sentences unless they ask for detail. Speak naturally.
+
+Language: This conversation is exclusively in Australian English (en-AU). The customer is speaking English. Any ambient noise, silence, or unintelligible sounds should be transcribed as English filler ("um", "uh") or ignored — NEVER transcribe or respond in any other language. If you hear something you can't parse as English, ask the customer to repeat themselves in English. Respond only in English.
 ${firstName ? `\nThe customer's name is ${firstName}. Use it occasionally where it feels warm.\n` : ''}
 Today's date is ${today}. Always use this when reasoning about availability, service due dates, or anything time-related.
 
@@ -145,10 +147,11 @@ Do NOT offer to remember things, look up past sessions, or discuss fuel/expense 
         },
         systemInstruction:  { parts: [{ text: systemPrompt }] },
         tools:              [{ functionDeclarations: BOOKING_TOOL_DECLARATIONS }],
-        // Live text captions — empty objects enable with defaults.
-        // Gemini emits `serverContent.outputTranscription.text` for Rod's
-        // spoken response and `serverContent.inputTranscription.text` for
-        // what it heard the user say. Frontend renders both live.
+        // Live text captions. `AudioTranscriptionConfig` is an empty proto
+        // — no fields accepted (Google's v1alpha rejects languageCode). Per
+        // Google's docs, native-audio models don't support explicit input
+        // language config. The ONLY lever is the system instruction, which
+        // pins English/en-AU below in `systemPrompt`.
         outputAudioTranscription: {},
         inputAudioTranscription:  {},
       },
