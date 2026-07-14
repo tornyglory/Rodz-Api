@@ -110,6 +110,8 @@ export function buildCustomer(row: any, vehicles: ReturnType<typeof buildVehicle
     smsOptIn:       Boolean(row.sms_opt_in),
     memberSince:    row.created_at ? toDate(row.created_at) : null,
     onboardingCompletedAt: toIsoDateTime(row.onboarding_completed_at),
+    voicePreference:   (row.voice_preference ?? null) as 'female' | 'male' | null,
+    voiceSpecificName: row.voice_specific_name ?? null,
     vehicles,
   }
 }

@@ -1026,6 +1026,10 @@ export class RodzApiStack2 extends Stack {
       entry: src('customer/me/onboarding-complete.ts'), vpc, sharedEnv,
     }).fn
 
+    const customerMePreferencesFn = new LambdaFn(this, 'CustomerMePreferences', {
+      entry: src('customer/me/preferences.ts'), vpc, sharedEnv,
+    }).fn
+
     new HttpRoute(this, 'CustomerMeGetRoute', {
       httpApi,
       integration: new HttpLambdaIntegration('CustomerMeGetInt', customerMeGetFn),
@@ -1072,6 +1076,13 @@ export class RodzApiStack2 extends Stack {
       httpApi,
       integration: new HttpLambdaIntegration('CustomerMeOnboardingCompleteInt', customerMeOnboardingCompleteFn),
       routeKey: HttpRouteKey.with('/c/me/onboarding-complete', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    new HttpRoute(this, 'CustomerMePreferencesRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerMePreferencesInt', customerMePreferencesFn),
+      routeKey: HttpRouteKey.with('/c/me/preferences', HttpMethod.PATCH),
       authorizer: customerAuthorizer,
     })
 
