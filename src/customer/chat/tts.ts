@@ -15,10 +15,15 @@ const MAX_CHARS        = 3000
 // (ap-southeast-2 in the shared env) which puts synthesis close to AU users.
 const polly = new PollyClient({ region: process.env.REGION ?? 'ap-southeast-2' })
 
-// Australian voices — Olivia is neural + natural. Nicole is the legacy
-// standard voice; fall back to it only if Olivia synthesis fails.
-const ALLOWED_VOICES = new Set<VoiceId>(['Olivia', 'Nicole'])
-const DEFAULT_VOICE: VoiceId = 'Olivia'
+// Australian voices — Nicole (standard) is default at $4/1M chars.
+// Olivia (neural, $16/1M) is opt-in via the `voice` request param when we
+// want higher-quality synthesis on a specific reply. Engine follows voice.
+const ALLOWED_VOICES = new Set<VoiceId>(['Nicole', 'Olivia'])
+const DEFAULT_VOICE: VoiceId = 'Nicole'
+
+function engineFor(voice: VoiceId): Engine {
+  return voice === 'Olivia' ? 'neural' : 'standard'
+}
 
 function errBody(code: string, message: string, extra: object = {}): APIGatewayProxyResultV2 {
   const status = code === 'UNAUTHORIZED'    ? 401
@@ -78,13 +83,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     // Synthesize
     let audio: Uint8Array
-    let engine: Engine = 'neural'
     try {
       const res = await polly.send(new SynthesizeSpeechCommand({
         Text:         text,
         TextType:     textType,
         VoiceId:      voice,
-        Engine:       engine,
+        Engine:       engineFor(voice),
         OutputFormat: 'mp3',
         SampleRate:   '24000',
         LanguageCode: 'en-AU',
@@ -92,29 +96,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       if (!res.AudioStream) throw new Error('empty AudioStream')
       audio = await (res.AudioStream as any).transformToByteArray()
     } catch (err: any) {
-      // Olivia neural may not exist in every region — fall back to Nicole standard once.
-      if (voice === 'Olivia') {
-        try {
-          engine = 'standard'
-          const res = await polly.send(new SynthesizeSpeechCommand({
-            Text:         text,
-            TextType:     textType,
-            VoiceId:      'Nicole',
-            Engine:       'standard',
-            OutputFormat: 'mp3',
-            SampleRate:   '24000',
-            LanguageCode: 'en-AU',
-          }))
-          if (!res.AudioStream) throw new Error('empty AudioStream')
-          audio = await (res.AudioStream as any).transformToByteArray()
-        } catch (fallbackErr: any) {
-          console.error('[chat/tts] Polly failed (Olivia + Nicole fallback):', fallbackErr?.message)
-          return errBody('UPSTREAM', 'TTS provider unavailable.')
-        }
-      } else {
-        console.error('[chat/tts] Polly failed:', err?.message)
-        return errBody('UPSTREAM', 'TTS provider unavailable.')
-      }
+      console.error('[chat/tts] Polly failed:', err?.message)
+      return errBody('UPSTREAM', 'TTS provider unavailable.')
     }
 
     // Rough MP3 duration estimate: ~64 kbps ≈ 8000 bytes/sec at 24 kHz mono.
