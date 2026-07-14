@@ -52,7 +52,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         `UPDATE vehicles SET ${sets.join(', ')} WHERE id = ?`,
         [...params, vehicleId],
       )
-      await safeDel(`vehicle:${vehicleId}:context`)
+      await safeDel([`vehicle:${vehicleId}:context`, `customer:${ctx.customerId}:profile`])
     }
 
     const publicSettings = settingsPatch

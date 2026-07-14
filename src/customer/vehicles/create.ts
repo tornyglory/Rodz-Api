@@ -5,6 +5,7 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { created, validationError, serverError } from '../../shared/errors'
 import { getCustomerContext, parseVehicle, buildVehicle } from '../_helpers'
+import { safeDel } from '../../shared/redis'
 
 const ready       = bootstrap()
 const lambdaClient = new LambdaClient({ region: process.env.REGION ?? 'ap-southeast-2' })
@@ -106,6 +107,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
          VALUES (?, ?, CURDATE(), 1, NOW())`,
         [vehicleId, ctx.customerId],
       )
+      await safeDel(`customer:${ctx.customerId}:profile`)
       await invokeVehicleProfileEngine(vehicleId)
       await invokeRecommendationEngine(vehicleId, ctx.customerId)
     }

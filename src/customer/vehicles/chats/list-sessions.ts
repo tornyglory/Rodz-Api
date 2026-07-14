@@ -3,6 +3,7 @@ import { bootstrap } from '../../../shared/bootstrap'
 import { getPool } from '../../../shared/db'
 import { ok, forbidden, serverError } from '../../../shared/errors'
 import { getCustomerContext } from '../../_helpers'
+import { loadSession } from './messagesStore'
 
 const ready = bootstrap()
 
@@ -32,17 +33,25 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [vehicleId, ctx.customerId],
     )
 
-    const sessions = rows.map((r: any) => ({
-      id:            r.id,
-      title:         r.title ?? null,
-      preview:       null,                 // per-session preview would require an S3 GET each; drop for now
-      lastMessageAt: r.updated_at instanceof Date
-        ? r.updated_at.toISOString()
-        : r.updated_at ? String(r.updated_at) : null,
-      createdAt:     r.created_at instanceof Date
-        ? r.created_at.toISOString()
-        : String(r.created_at),
-    }))
+    // Fetch preview snippets (last assistant message per session) in parallel.
+    // At ≤50 sessions this is ~50 parallel S3 GETs → 40–80ms total.
+    const blobs = await Promise.all(rows.map((r: any) => loadSession(r.id).then(x => x.blob)))
+
+    const sessions = rows.map((r: any, i: number) => {
+      const blob = blobs[i]
+      const lastAssistant = blob?.messages ? [...blob.messages].reverse().find(m => m.role === 'model' && m.content) : null
+      return {
+        id:            r.id,
+        title:         r.title ?? null,
+        preview:       lastAssistant?.content ? String(lastAssistant.content).slice(0, 120) : null,
+        lastMessageAt: r.updated_at instanceof Date
+          ? r.updated_at.toISOString()
+          : r.updated_at ? String(r.updated_at) : null,
+        createdAt:     r.created_at instanceof Date
+          ? r.created_at.toISOString()
+          : String(r.created_at),
+      }
+    })
 
     return ok({ sessions })
   } catch (err) {

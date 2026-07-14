@@ -31,7 +31,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       'UPDATE vehicles SET cover_image_id = ?, updated_at = NOW() WHERE id = ?',
       [body.imageId, vehicleId],
     )
-    await safeDel(`vehicle:${vehicleId}:context`)
+    await safeDel([`vehicle:${vehicleId}:context`, `customer:${ctx.customerId}:profile`])
 
     return ok({ imageId: body.imageId })
   } catch (err) {

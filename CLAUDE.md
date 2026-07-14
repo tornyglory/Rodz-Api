@@ -1,5 +1,20 @@
 # RodzAPI — Project Instructions
 
+## Data stores — where each thing lives
+
+Three stores. Each with a specific role. Never mix.
+
+| Store | Role | Examples |
+|-------|------|----------|
+| **MySQL (Azure)** | Operational data + summary aggregates + S3 pointers | Customers, vehicles, sessions metadata, `s3_event_index`, `vehicle_fuel_summary`, `vehicle_expense_summary` |
+| **S3 (`rodz-data-lake`)** | Full detail for anything that grows unboundedly | Chat messages (`diagnostic-sessions/current/{id}.json`), expenses, fuel fills |
+| **Redis (Upstash)** | Hot cache — 1-5ms reads | `subscription:{id}`, `customer:{id}:profile`, `vehicle:{id}:context`, `ratelimit:{id}:{date}` |
+
+Rules:
+- **Detail data**: goes to S3, indexed by `s3_event_index` (pointer table in MySQL). Never store detail directly in MySQL for growth-bound tables.
+- **Aggregates**: computed from `s3_event_index` (denormalised `amount_aud + category`), stored in `vehicle_*_summary` tables. Refreshed via `src/shared/summaries.ts:refreshVehicleSummaries()`.
+- **Redis caches**: all reads via `safeGet`/`safeSetEx`/`safeDel`/`safeIncr` in `src/shared/redis.ts`. Fail-open — if Redis is down, everything still works, just slower. Every write handler that mutates cached data must call `safeDel(cacheKey)`.
+
 ## Database schema
 
 The full database schema lives at `docs/schema.md`. **Always read this file before writing any new endpoint or SQL query.** It contains every table, column name, type, nullability, and enum values for the rodz database.
@@ -177,16 +192,33 @@ npx cdk deploy RodzApiStack2 --exclusively --require-approval never
 npx cdk diff
 ```
 
-For quick code-only iteration on a single Lambda without redeploying the stack, direct Lambda update still works:
+For quick code-only iteration on a single Lambda without redeploying the stack, direct Lambda update still works. **Critical:** the zipped file must be called `index.js` (not the source file name) or Lambda will fail with `Cannot find module 'index'`.
 
 ```bash
+# Bundle to dist/index.js, zip, upload
 npx esbuild src/path/to/handler.ts \
   --bundle --platform=node --target=node20 \
-  "--external:@aws-sdk/*" --outfile=dist/handler.js
-zip -j dist/handler.zip dist/handler.js
+  "--external:@aws-sdk/*" --outfile=dist/index.js
+(cd dist && zip -q index.zip index.js)
 aws lambda update-function-code \
   --function-name <LambdaFunctionName> \
-  --zip-file fileb://dist/handler.zip
+  --zip-file fileb://dist/index.zip
 ```
 
-**27 routes on the shared HttpApi exist outside CDK** (features like customer expenses, chat sessions, fuel prices, logbook external — their Lambdas are also manually managed). `cdk deploy` won't touch them, but new endpoints in those feature areas should get added to `rodz-api-stack2.ts` so IaC eventually catches up.
+**~23 orphan Lambdas** exist outside CDK (customer expenses, chats, fuel prices, logbook external). They share `RodzApiStack2-CustomerFnServiceRole`. `cdk deploy` won't touch them — direct-Lambda-deploy is the way. Environment variables (`REDIS_URL`, `RATE_LIMIT_ENABLED`, `ASSISTANT_CONTEXT_ENABLED`, `CHAT_HINTS_ENABLED`) are set per-Lambda via `aws lambda update-function-configuration` — the CDK `sharedEnv` doesn't reach them.
+
+## Runtime env flags
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `REDIS_URL` | *(empty = disabled)* | Upstash `rediss://…` URL. Missing = every Redis call falls through to MySQL, no errors. |
+| `RATE_LIMIT_ENABLED` | `false` | If `true`, `POST /c/vehicles/:id/chats/:sid/messages` enforces per-customer daily caps (Free 20, Silver/Gold 100). |
+| `ASSISTANT_CONTEXT_ENABLED` | `false` | If `true`, the greeting endpoint runs and the assistant can use `remember`/`forget` tools + memory injection. |
+| `CHAT_HINTS_ENABLED` | `false` | If `true`, chat responses parse `[HINTS: …]` markers into `hints[]` for UI spotlighting. |
+
+## Chat sessions — S3-primary, soft-delete
+
+- Messages live at `s3://rodz-data-lake/diagnostic-sessions/current/{sessionId}.json` (one JSON blob per session). See `src/customer/vehicles/chats/messagesStore.ts` for the helper (`loadSession`, `appendMessages`, `deleteSessionBlob`, `archiveSessionBlob`).
+- **Concurrency**: `appendMessages` uses S3 `IfMatch` etag with one retry on 412.
+- **Delete**: soft. `customer_chat_sessions.deleted_at` is stamped, S3 blob moves to `diagnostic-sessions/archived/{sessionId}.json`. Filter `deleted_at IS NULL` on every read path.
+- **Message ids**: strings like `"1783985109460-0-c04979"` — not integers. Never `Number()` them.

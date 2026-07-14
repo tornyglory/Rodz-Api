@@ -65,7 +65,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       conn.release()
     }
 
-    await safeDel(`vehicle:${vehicleId}:context`)
+    await safeDel([
+      `vehicle:${vehicleId}:context`,
+      `customer:${ctx.customerId}:profile`,   // seller loses the vehicle from their list
+      `customer:${buyer.id}:profile`,         // buyer gains it in their list
+    ])
 
     return ok({ transferred: true, vehicleId, newOwnerId: buyer.id })
   } catch (err) {

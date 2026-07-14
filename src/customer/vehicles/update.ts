@@ -46,7 +46,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (params.length > 0) {
       params.push(vehicleId)
       await db.query(`UPDATE vehicles SET ${sets.join(', ')} WHERE id = ?`, params)
-      await safeDel(`vehicle:${vehicleId}:context`)
+      await safeDel([`vehicle:${vehicleId}:context`, `customer:${ctx.customerId}:profile`])
     }
 
     if (odometerKm != null) {
