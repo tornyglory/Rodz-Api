@@ -1,5 +1,6 @@
 import type mysql from 'mysql2/promise'
 import { safeDel } from '../../../shared/redis'
+import { getCustomerWeather, summariseForecast } from '../../../shared/weather'
 
 // ── Hint extraction (UI spotlighting cues) ─────────────────────────────────
 
@@ -179,6 +180,9 @@ export interface SituationSnapshot {
   priorSessionCount:      number
   lastSessionTopic:       string | null
   lastSessionEndedDaysAgo: number | null
+  // One-line weather headline for the customer's suburb (next 3 days).
+  // null if no suburb on file or geocoding failed — treat as absent.
+  weatherHeadline:        string | null
 }
 
 function toIsoDate(v: any): string | null {
@@ -228,6 +232,10 @@ export async function buildSituationSnapshot(
   const memory = await getAssistantMemory(db, vehicleId)
   const memoryNotes = memory.slice(0, 5).map(m => ({ note: m.note, createdDaysAgo: m.createdDaysAgo }))
 
+  // Weather headline for the customer's suburb (next 3 days).
+  const wx = await getCustomerWeather(db, customerId, 3).catch(() => null)
+  const weatherHeadline = wx ? summariseForecast(wx.location, wx.forecast) : null
+
   // Prior sessions — for "welcome back" openers and last-topic callbacks.
   // Excludes the current session (which is empty at greeting time).
   const [prior] = await db.query<any[]>(
@@ -261,5 +269,6 @@ export async function buildSituationSnapshot(
     priorSessionCount,
     lastSessionTopic,
     lastSessionEndedDaysAgo,
+    weatherHeadline,
   }
 }

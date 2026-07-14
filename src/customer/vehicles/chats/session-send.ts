@@ -23,6 +23,7 @@ import {
   checkAvailability, checkTimeSlots, checkCourtesyCars,
   getVehicleValue, getServiceTypes, createBooking,
 } from './_tools'
+import { getCustomerWeather } from '../../../shared/weather'
 import type mysql from 'mysql2/promise'
 
 // Rate limit tiers — messages per customer per calendar day.
@@ -129,6 +130,16 @@ const TOOLS: Tool[] = [{
           noteId: { type: SchemaType.NUMBER },
         },
         required: ['noteId'],
+      },
+    },
+    {
+      name: 'getWeather',
+      description: "Get the weather forecast for the customer's home suburb. Use ONLY when weather is directly relevant: (1) they're picking a booking date and want to avoid bad weather, (2) they described a symptom that might be weather-related (wet-weather squeal, hard-start cold mornings, overheating on hot days), (3) they ask about it. Do NOT call it unprompted.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          daysAhead: { type: SchemaType.NUMBER, description: 'How many days ahead to forecast. Default 3, max 7.' },
+        },
       },
     },
   ],
@@ -371,6 +382,10 @@ ${isHintsEnabled() ? HINTS_INSTRUCTION : ''}`
         fnResult = await saveAssistantMemory(db, vehicleId, String(args.note ?? ''), Number(args.expiresInDays))
       } else if (name === 'forget') {
         fnResult = await forgetAssistantMemory(db, vehicleId, Number(args.noteId))
+      } else if (name === 'getWeather') {
+        const days = Math.min(Math.max(Number(args.daysAhead) || 3, 1), 7)
+        const wx   = await getCustomerWeather(db, ctx.customerId, days)
+        fnResult   = wx ?? { error: 'No location on file for this customer.' }
       } else if (name === 'getFuelSummary') {
         const [[row]] = await db.query<any[]>(
           `SELECT last_fill_date, last_fill_litres, last_fill_price,
