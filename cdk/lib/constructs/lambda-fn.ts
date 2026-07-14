@@ -59,6 +59,13 @@ function getOrCreateSharedRole(stack: Stack): iam.Role {
           }),
         ],
       }),
+      // Polly — chat TTS for Gold-tier customers (Olivia neural en-AU).
+      Polly: new iam.PolicyDocument({
+        statements: [new iam.PolicyStatement({
+          actions:   ['polly:SynthesizeSpeech'],
+          resources: ['*'],
+        })],
+      }),
     },
   })
 }

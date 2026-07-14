@@ -49,6 +49,7 @@ export class RodzApiStack2 extends Stack {
       REDIS_URL:                 process.env.REDIS_URL                 ?? '',
       RATE_LIMIT_ENABLED:        process.env.RATE_LIMIT_ENABLED        ?? 'false',
       VOICE_MODE_ENABLED:        process.env.VOICE_MODE_ENABLED        ?? 'false',
+      CHAT_TTS_ENABLED:          process.env.CHAT_TTS_ENABLED          ?? 'false',
       VOICE_MODEL:               process.env.VOICE_MODEL               ?? 'gemini-2.5-flash-native-audio-preview-09-2025',
       VOICE_VOICE_NAME:          process.env.VOICE_VOICE_NAME          ?? 'Aoede',
       VOICE_SESSION_TTL_SECONDS: process.env.VOICE_SESSION_TTL_SECONDS ?? '900',
@@ -1187,6 +1188,20 @@ export class RodzApiStack2 extends Stack {
       httpApi,
       integration: new HttpLambdaIntegration('VoiceTranscriptInt', voiceTranscriptFn),
       routeKey: HttpRouteKey.with('/c/vehicles/{id}/voice/transcript', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    // ── Chat TTS — Amazon Polly (Olivia neural en-AU) — Gold tier ──────────
+
+    const chatTtsFn = new LambdaFn(this, 'ChatTts', {
+      entry: src('customer/chat/tts.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(30), memorySize: 512,
+    }).fn
+
+    new HttpRoute(this, 'ChatTtsRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('ChatTtsInt', chatTtsFn),
+      routeKey: HttpRouteKey.with('/c/chat/tts', HttpMethod.POST),
       authorizer: customerAuthorizer,
     })
 
