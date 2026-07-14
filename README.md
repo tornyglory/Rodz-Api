@@ -10,21 +10,35 @@ Backend API for the Rodz platform — a workshop management system and customer 
 |-----------|--------|
 | Runtime | Node.js 20 Lambda (TypeScript → esbuild bundle) |
 | API | AWS API Gateway HTTP API (`fzzrkscwd7`) |
-| Database | MySQL 8 on Azure (`rodz-workshop.mysql.database.azure.com`) |
+| Database (operational) | MySQL 8 on Azure (`rodz-workshop.mysql.database.azure.com`) |
+| Data lake (detail) | AWS S3 — bucket `rodz-data-lake` in `ap-southeast-2` (lifecycle: 90d → IA, 365d → Glacier) |
+| Cache | Redis — Upstash (`REDIS_URL`) with fail-open null-fallback wrappers |
 | Images | Cloudflare Images (direct upload via signed URLs) |
 | Email | AWS SES |
 | AI | Google Gemini 2.5 Flash |
 | Real-time | AWS API Gateway WebSocket API |
 | Region | `ap-southeast-2` (Sydney) |
 
+### Three-store model
+
+- **MySQL** — operational data (customers, vehicles, bookings, session metadata) + aggregate summaries + pointers to S3 (`s3_event_index`)
+- **S3** — full detail for growth-unbounded event types (chat messages, expenses, fuel fills). One JSON object per event; chat sessions are one blob per session.
+- **Redis** — hot cache (subscription tier, customer profile, vehicle context) + rate-limit counters. Never a source of truth — outages degrade to slower reads, never broken features.
+
+Detailed briefs: `docs/s3-data-lake-backend-brief.md`, `docs/redis-cache-backend-brief.md`.
+
+### CDK stacks
+
 Two CloudFormation stacks share the same HTTP API and VPC:
 
-| Stack | Purpose |
-|-------|---------|
-| `RodzApiStack` | Original Lambda functions — at CloudFormation 500-resource limit |
-| `RodzApiStack2` | All new Lambda functions and routes — add everything here |
+| Stack | Purpose | Resource count |
+|-------|---------|----------------|
+| `RodzApiStack` | Original staff-facing Lambdas | 341 |
+| `RodzApiStack2` | Newer Lambdas — customer portal, AI, S3-related, chat, expenses, etc. | 432 |
 
-**All new Lambdas must go in `RodzApiStack2`.** Use `new HttpRoute()` (not `httpApi.addRoutes()`) to keep resources scoped to the new stack.
+Every Lambda in a stack shares one IAM role + one security group (see `cdk/lib/constructs/lambda-fn.ts`) — that consolidation is what keeps the count under CloudFormation's 500-resource cap. Lambda-to-Lambda invocation uses a wildcard `lambda:InvokeFunction` policy on the shared role rather than `grantInvoke` (which would create a circular dependency).
+
+**New Lambdas → `RodzApiStack2`.** Use `new HttpRoute()` (not `httpApi.addRoutes()`) to keep resources scoped to the new stack.
 
 ---
 
@@ -38,57 +52,39 @@ https://fzzrkscwd7.execute-api.ap-southeast-2.amazonaws.com
 
 ## Deployment
 
-CDK deploy is unreliable at the CloudFormation resource limit. All new endpoints are deployed directly:
+`cdk deploy` works normally as of 2026-07-10:
 
 ```bash
-# 1. Build
-npx esbuild src/path/to/handler.ts --bundle --platform=node --target=node20 --outfile=dist/handler.js
+# Deploy both stacks
+npx cdk deploy --all --require-approval never
 
-# 2. Zip
-cd dist && zip handler.zip handler.js
+# Deploy just Stack 2 (skips Stack 1 even if it has pending changes)
+npx cdk deploy RodzApiStack2 --exclusively --require-approval never
 
-# 3. Create Lambda (first time)
-aws lambda create-function \
-  --function-name RodzApiStack2-MyHandler \
-  --runtime nodejs20.x \
-  --role arn:aws:iam::436600169861:role/RodzApiStack2-CustomerFnServiceRole \
-  --handler handler.handler \
-  --zip-file fileb://dist/handler.zip \
-  --environment file://env.json \
-  --timeout 15 --memory-size 256
-
-# 3b. Update existing Lambda
-aws lambda update-function-code \
-  --function-name RodzApiStack2-MyHandler \
-  --zip-file fileb://dist/handler.zip
-
-# 4. Create API Gateway integration + route
-aws apigatewayv2 create-integration \
-  --api-id fzzrkscwd7 \
-  --integration-type AWS_PROXY \
-  --integration-uri arn:aws:apigateway:ap-southeast-2:lambda:path/2015-03-31/functions/arn:aws:lambda:ap-southeast-2:436600169861:function:RodzApiStack2-MyHandler/invocations \
-  --payload-format-version 2.0
-
-aws apigatewayv2 create-route \
-  --api-id fzzrkscwd7 \
-  --route-key "GET /my-path" \
-  --target integrations/<IntegrationId> \
-  --authorization-type CUSTOM \
-  --authorizer-id lx4s21        # staff authorizer
-  # --authorizer-id 9qrwwx      # customer authorizer
-
-# 5. Grant invoke permission
-aws lambda add-permission \
-  --function-name RodzApiStack2-MyHandler \
-  --statement-id apigw-invoke \
-  --action lambda:InvokeFunction \
-  --principal apigateway.amazonaws.com \
-  --source-arn "arn:aws:execute-api:ap-southeast-2:436600169861:fzzrkscwd7/*/*/*"
+# Preview changes without deploying
+npx cdk diff
 ```
+
+### Direct Lambda deploy (for orphan handlers)
+
+~23 orphan Lambdas exist outside CDK (customer expenses, chats, fuel prices, logbook external) — they share `RodzApiStack2-CustomerFnServiceRole` and aren't refreshed by `cdk deploy`. For code changes to those, direct-Lambda-deploy is the way:
+
+```bash
+# Bundle to dist/index.js — filename MUST be index.js or Lambda errors with "Cannot find module 'index'"
+npx esbuild src/path/to/handler.ts \
+  --bundle --platform=node --target=node20 \
+  "--external:@aws-sdk/*" --outfile=dist/index.js
+(cd dist && zip -q index.zip index.js)
+aws lambda update-function-code \
+  --function-name <LambdaFunctionName> \
+  --zip-file fileb://dist/index.zip
+```
+
+Environment variables (`REDIS_URL`, `RATE_LIMIT_ENABLED`, `ASSISTANT_CONTEXT_ENABLED`, `CHAT_HINTS_ENABLED`) are set per-Lambda via `aws lambda update-function-configuration` on orphans — CDK `sharedEnv` doesn't reach them.
 
 **Authorizer IDs:**
 - `lx4s21` — Staff JWT (Cognito)
-- `9qrwwx` — Customer JWT (custom Lambda authorizer)
+- Customer JWT — created by CDK (`RodzApiStack2/CustomerJwtAuthorizer`); look up the current ID via `aws apigatewayv2 get-authorizers --api-id fzzrkscwd7` before referencing in a new route
 
 ---
 
@@ -126,6 +122,8 @@ Customer paths are prefixed `/c/`. All customer endpoints verify vehicle ownersh
 | `GET`    | `/customers/:id/notes` | List notes |
 | `POST`   | `/customers/:id/notes` | Add note |
 | `DELETE` | `/customers/:id/notes/:noteId` | Delete note |
+| `PATCH`  | `/customers/:id/tier` | Set tier (`"free" \| "silver" \| "gold"`) — three-way selector replaces old two-button Premium |
+| `PATCH`  | `/customers/:id/premium` | Compat wrapper — `isPremium: true → silver`, `false → free` |
 
 ### Vehicles
 | Method | Path | Description |
@@ -262,11 +260,15 @@ All customer endpoints require a customer JWT. Vehicle ownership is always verif
 ### Profile
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET`   | `/c/me` | Get profile + vehicles |
+| `GET`   | `/c/me` | Get profile + vehicles (cached via Redis, invalidated on any customer or vehicle mutation) |
 | `PATCH` | `/c/me` | Update profile |
 | `PATCH` | `/c/me/password` | Change password |
+| `PATCH` | `/c/me/description/enhance` | AI-polish customer bio |
+| `POST`  | `/c/me/onboarding-complete` | Mark first-time onboarding wizard done — idempotent |
 | `GET`   | `/c/me/avatar-upload-url` | Get Cloudflare upload URL for avatar |
 | `PATCH` | `/c/me/avatar` | Save avatar after upload |
+
+**Response fields**: `tier` (`"free" | "silver" | "gold"`) and `isPremium` (derived, `tier !== "free"`) are returned on every customer response. `onboardingCompletedAt` is present as ISO timestamp or `null`.
 
 ### Vehicles
 | Method | Path | Description |
@@ -293,14 +295,19 @@ All customer endpoints require a customer JWT. Vehicle ownership is always verif
 ### AI Chat (multi-session)
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET`    | `/c/vehicles/:id/chats` | List chat sessions |
-| `POST`   | `/c/vehicles/:id/chats` | Create new session |
-| `DELETE` | `/c/vehicles/:id/chats/:sessionId` | Delete session + messages + images |
-| `GET`    | `/c/vehicles/:id/chats/:sessionId` | Load session message history |
-| `POST`   | `/c/vehicles/:id/chats/:sessionId/messages` | Send message (AI responds) |
+| `GET`    | `/c/vehicles/:id/chats` | List chat sessions (returns metadata + preview snippet from S3) |
+| `POST`   | `/c/vehicles/:id/chats` | Create new session (metadata row only) |
+| `POST`   | `/c/vehicles/:id/chats/:sessionId/greeting` | Proactive opening message — Rod greets with vehicle context (feature-flagged) |
+| `DELETE` | `/c/vehicles/:id/chats/:sessionId` | **Soft delete** — session hidden, S3 blob moved to archived path |
+| `GET`    | `/c/vehicles/:id/chats/:sessionId` | Load session message history (paginated via `before=messageId`) |
+| `POST`   | `/c/vehicles/:id/chats/:sessionId/messages` | Send message. Rate-limited when `RATE_LIMIT_ENABLED=true` — 20/day Free, 100/day Silver+Gold. Returns `429 RATE_LIMIT` with `resetsAt` when exceeded. |
 | `POST`   | `/c/vehicles/:id/chats/:sessionId/upload-url` | Upload URL for message image |
 
-The AI assistant is named **Rod**. It has full context of the vehicle's service history, specs, and upcoming costs before the first message. Rod can also book a service on behalf of the customer.
+The AI assistant is named **Rod**. It has full context of the vehicle's service history, specs, upcoming costs, and prior-conversation summaries. Rod can also book a service, save cross-session memory notes via a `remember` tool, and reference previous conversations via `getDiagnosticHistory` / `getSessionMessages` tools.
+
+**Messages live in S3**, not MySQL. One JSON blob per session at `s3://rodz-data-lake/diagnostic-sessions/current/{sessionId}.json`. Message ids are strings (`"1783985109460-0-c04979"`), never numbers.
+
+**Response also includes `hints[]`** — an array of feature-name keys (`"maintenance"`, `"expenses"`, `"logbook"`, etc.) so the frontend can spotlight the rail item the assistant mentioned.
 
 ### Expense tracker (Premium)
 | Method | Path | Description |
@@ -351,6 +358,12 @@ All frontend implementation briefs live in `docs/`:
 | Brief | Description |
 |-------|-------------|
 | `docs/schema.md` | Full database schema reference — read before writing any SQL |
+| `docs/s3-data-lake-backend-brief.md` | S3 data lake — bucket setup, `s3_event_index`, write/read patterns |
+| `docs/redis-cache-backend-brief.md` | Redis cache — Upstash setup, helpers, key patterns, rate limiting |
+| `docs/voice-sessions-backend-brief.md` | Voice mode (Gemini Live) session tracking + per-customer quotas |
+| `docs/assistant-context-frontend-brief.md` | Greeting endpoint + cross-session memory (`remember`/`forget` tools) |
+| `docs/customer-tier-frontend-brief.md` | Membership tier system — Free / Silver / Gold selector |
+| `docs/customer-joined-frontend-brief.md` | Staff drawer "Member since" — pre-formatted `joined` field |
 | `docs/customer-logbook-frontend-brief.md` | Logbook page — merged timeline + invoice import |
 | `docs/customer-expense-tracker-frontend-brief.md` | Expense tracker — scan receipts, CRUD, summary, CSV |
 | `docs/customer-fuel-prices-frontend-brief.md` | Fuel & EV price intelligence |
@@ -368,11 +381,14 @@ All frontend implementation briefs live in `docs/`:
 ## Key conventions
 
 - **Ownership check** — always verify `vehicle_owners WHERE vehicle_id = ? AND customer_id = ? AND is_current = 1` before reading or writing vehicle data
-- **Soft deletes** — customers/vehicles/staff use `is_active = 0`; bookings use `cancelled_at = NOW()`
+- **Soft deletes** — customers/vehicles/staff use `is_active = 0`; bookings use `cancelled_at = NOW()`; **chat sessions** use `deleted_at IS NOT NULL` (S3 blob moves to archived path)
 - **Response helpers** — use `ok()`, `created()`, `forbidden()`, `notFound()`, `validationError()`, `serverError()` from `src/shared/errors.ts`
 - **Images** — upload via Cloudflare direct upload (3-step: get URL → PUT file → save imageId); use `imageUrls(imageId)` for `.public` and `.thumbnail` variants
 - **Dates** — store as `YYYY-MM-DD`, return as `YYYY-MM-DD` strings; datetimes as ISO-8601 UTC
 - **Amounts** — store as `decimal`, return as `number` (never string)
+- **Message ids** — chat message ids are STRINGS like `"1783985109460-0-c04979"` (not integers). Never `Number()` them.
+- **Redis writes must invalidate** — any handler that mutates cached data (customer/vehicle/tier/assistant_memory) must `safeDel(cacheKey)` alongside the write. TTLs are safety nets, not the invalidation strategy.
+- **S3 write pattern** — for growth-unbounded events (expenses, chat sessions), write JSON to S3, insert an `s3_event_index` pointer row, and refresh the relevant summary aggregate via `refreshVehicleSummaries()`
 
 ---
 
@@ -393,3 +409,10 @@ All frontend implementation briefs live in `docs/`:
 | `FRONTEND_URL` | Workshop portal URL (for invoice links) |
 | `REGION` | AWS region (`ap-southeast-2`) |
 | `BOOKING_API_KEY` | Internal booking API key |
+| `REDIS_URL` | Upstash Redis URL (`rediss://…`). Empty = cache disabled, fall through to MySQL for every read. |
+| `RATE_LIMIT_ENABLED` | `true` to enforce per-customer daily chat caps (Free 20, Silver/Gold 100). Default `false`. |
+| `ASSISTANT_CONTEXT_ENABLED` | `true` to enable the greeting endpoint + assistant `remember`/`forget` tools + memory injection. Default `false`. |
+| `CHAT_HINTS_ENABLED` | `true` to parse `[HINTS: …]` markers from Gemini into the response's `hints[]` array. Default `false`. |
+| `DATA_LAKE_BUCKET` | S3 bucket name for the data lake. Default `rodz-data-lake`. |
+| `ZELLER_API_KEY` / `ZELLER_WEBHOOK_SECRET` | Zeller payments |
+| `WS_API_URL` | API Gateway WebSocket API URL |

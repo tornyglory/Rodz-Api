@@ -1,6 +1,18 @@
 # Database Schema Reference
 
-Use this when building endpoints. Covers all tables, key columns, enum values, and relationships.
+Use this when building endpoints. Covers all MySQL tables, key columns, enum values, and relationships. Also documents which data lives outside MySQL (S3 detail, Redis cache) for tables where that split matters.
+
+---
+
+## Three-store model
+
+| Store | What lives there |
+|-------|------------------|
+| **MySQL** (this file) | Operational data (customers, vehicles, bookings, sessions), aggregate summary tables, and pointers to S3 objects via `s3_event_index` |
+| **S3** (`rodz-data-lake` bucket) | Full detail for anything that grows unboundedly — chat messages (`diagnostic-sessions/current/{sessionId}.json`), expense/fuel-fill JSON objects (referenced by `s3_event_index.s3_key`) |
+| **Redis** (Upstash) | Hot cache — `subscription:{customerId}`, `customer:{id}:profile`, `vehicle:{id}:context`, rate-limit counters. Never a source of truth. |
+
+Rules: **detail** goes to S3, **aggregates** into summary tables, **pointers** into `s3_event_index`. See `docs/s3-data-lake-backend-brief.md` + `docs/redis-cache-backend-brief.md` for the patterns.
 
 ---
 
@@ -45,9 +57,9 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | [Inspections](#inspections) | `job_inspections`, `job_inspection_results`, `inspection_checklist_items`, `job_documents` |
 | [Customers — extended](#customers--extended) | `customer_tags`, `customer_communications`, `loyalty_transactions` |
 | [Vehicles — extended](#vehicles--extended) | `vehicle_service_history`, `vehicle_service_log` |
-| [Reminders & AI](#reminders--ai) | `reminders`, `vehicle_model_profiles`, `ai_milestone_rules`, `ai_recommendations` |
+| [Reminders & AI](#reminders--ai) | `reminders`, `vehicle_model_profiles`, `ai_milestone_rules`, `ai_recommendations`, `assistant_memory` |
 | [Vehicle chats](#vehicle-chats) | `vehicle_chats`, `vehicle_chat_messages` |
-| [Customer AI chat](#customer-ai-chat) | `customer_chat_sessions`, `customer_vehicle_chats` |
+| [Customer AI chat](#customer-ai-chat) | `customer_chat_sessions` (`customer_vehicle_chats` **dropped** — messages now in S3) |
 | [Notifications](#notifications) | `notifications`, `notification_templates`, `customer_pickup_notifications` |
 | [Loan vehicles](#loan-vehicles) | `loan_vehicles`, `loan_vehicle_bookings`, `courtesy_cars` |
 | [Operations](#operations) | `hoists`, `business_hours`, `staff_roster`, `daily_kpi_snapshots` |
@@ -59,9 +71,11 @@ Use this when building endpoints. Covers all tables, key columns, enum values, a
 | [Reviews](#reviews) | `reviews` |
 | [Warranty](#warranty) | `warranty_claims` |
 | [Photos](#photos) | `photos` |
-| [Premium — Expense tracker](#premium--expense-tracker) | `vehicle_expenses` |
+| [Premium — Expense tracker](#premium--expense-tracker) | `vehicle_expenses` (**empty** — details now in S3), `vehicle_expense_summary`, `vehicle_fuel_summary` |
 | [Premium — Fuel price intelligence](#premium--fuel-price-intelligence) | `fuel_station_prices` |
 | [Premium — Logbook import](#premium--logbook-import) | `vehicle_service_log_external` |
+| [Data lake index](#data-lake-index) | `s3_event_index` |
+| [Vehicle health & maintenance](#vehicle-health--maintenance) | `vehicle_health_scores`, `maintenance_schedule` |
 
 ---
 
@@ -1067,7 +1081,7 @@ Individual messages within a vehicle chat. Role is `user` (mechanic) or `model` 
 
 ### `customer_chat_sessions`
 
-Groups chat messages into named sessions. A customer can have multiple sessions per vehicle — each gets an auto-generated title from the first message via Gemini. Separate from the staff-side chat tables.
+Groups chat messages into named sessions. Each customer can have multiple sessions per vehicle — the title is auto-generated from the first message via Gemini. **Session METADATA only; messages themselves live in S3** — see below.
 
 | Column | Type | Null | Notes |
 |--------|------|------|-------|
@@ -1077,32 +1091,46 @@ Groups chat messages into named sessions. A customer can have multiple sessions 
 | `title` | varchar(255) | YES | AI-generated title — null until first message processed |
 | `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
 | `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` — bumped on every new message |
+| `deleted_at` | datetime | YES | Soft delete. When set, session is hidden from user and AI recall tools. S3 blob is moved to `diagnostic-sessions/archived/{sessionId}.json`. |
 
+- Filter `deleted_at IS NULL` on every read path (list, history, greeting, `getDiagnosticHistory`)
 - `updated_at` is used to sort sessions newest-first in the session list
-- Index: `(vehicle_id, customer_id)`
+- Indexes: `(vehicle_id, customer_id)`, `(vehicle_id, deleted_at)`
 
 ---
 
-### `customer_vehicle_chats`
+### `customer_vehicle_chats` — **DROPPED**
 
-Individual messages within a customer chat session. One row per message (user or AI). Separate from the staff-side `vehicle_chats`/`vehicle_chat_messages` tables.
+Message rows previously lived here. As of 2026-07-14 the table is dropped; messages now live in S3 as one JSON blob per session at:
 
-| Column | Type | Null | Notes |
-|--------|------|------|-------|
-| `id` | bigint unsigned | NO | Auto increment |
-| `vehicle_id` | bigint unsigned | NO | FK → `vehicles.id` |
-| `customer_id` | bigint unsigned | NO | FK → `customers.id` |
-| `session_id` | bigint unsigned | NO | FK → `customer_chat_sessions.id` |
-| `role` | enum(`user`, `model`) | NO | `user` = customer message, `model` = AI response |
-| `content` | text | YES | Null for image-only messages or tool-call-only turns |
-| `image_id` | varchar(255) | YES | Cloudflare Images ID — use `imageUrls(imageId)` for URLs |
-| `tool_calls` | json | YES | Gemini function call history for multi-turn tool use |
-| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+```
+s3://rodz-data-lake/diagnostic-sessions/current/{sessionId}.json
+```
 
-- Always filter by `vehicle_id`, `customer_id`, AND `session_id` — never query cross-session
-- Ownership verified via `vehicle_owners` and `customer_chat_sessions` before reading or writing
-- History returned ordered by `id ASC`
-- Index: `(vehicle_id, customer_id)`
+Blob shape:
+
+```json
+{
+  "sessionId":  1,
+  "vehicleId":  42,
+  "customerId": 3,
+  "updatedAt":  "2026-07-14T01:23:45.678Z",
+  "messages": [
+    {
+      "id":        "1783985109460-0-c04979",
+      "role":      "user" | "model",
+      "content":   "…" | null,
+      "imageId":   "cloudflare-uuid" | null,
+      "toolCalls": [ { name, args, result }, … ] | null,
+      "createdAt": "2026-07-14T01:23:45.000Z"
+    }
+  ]
+}
+```
+
+Access via `src/customer/vehicles/chats/messagesStore.ts` — `loadSession`, `appendMessages` (uses S3 `IfMatch` etag with retry on 412 for concurrency), `deleteSessionBlob`, `archiveSessionBlob`.
+
+**Message id is a string** — `${timestampMs}-${index}-${hex}`. Never `Number()` it.
 
 ---
 
@@ -1513,9 +1541,18 @@ Free-text staff notes against a vehicle record. Append-only — no editing after
 
 ## Premium — Expense tracker
 
-### `vehicle_expenses`
+### `vehicle_expenses` — **empty; S3 is source of truth**
 
-Every cost associated with a vehicle — fuel, servicing, registration, insurance, tolls, parts, etc. Customers log expenses manually or by scanning a receipt via AI. Workshop entries are dual-written to `vehicle_service_log_external`.
+As of 2026-07-14 the table exists (for the `fuel_station_prices` FK) but holds no rows. Expense detail lives in S3 at:
+
+```
+s3://rodz-data-lake/expenses/year=YYYY/month=MM/{id}.json    # non-fuel
+s3://rodz-data-lake/fuel-fills/year=YYYY/month=MM/{id}.json  # fuel + ev_charging
+```
+
+Discoverable via `s3_event_index` where `event_type IN ('expenses', 'fuel-fills')`. The `s3_event_index.id` is the expense's stable API id. Aggregates live in `vehicle_expense_summary` + `vehicle_fuel_summary`.
+
+The column definitions below are kept for reference — the S3 JSON payload follows the same shape (camelCase field names instead of snake_case).
 
 | Column | Type | Null | Default |
 |--------|------|------|---------|
@@ -1618,5 +1655,143 @@ Also populated automatically when a customer logs a `workshop` category expense 
 `services` is a plain-English summary of work done, AI-generated from the invoice. `ai_raw` stores the full Gemini response for debugging.
 
 **Indexes:** `(vehicle_id)`, `(service_date)`
+
+---
+
+## Data lake index
+
+### `s3_event_index`
+
+Pointer table that makes S3 objects queryable by vehicle + event type + date without listing the bucket. Every fuel-fill, expense, chat session, etc. gets a row here alongside its S3 object. `amount_aud` and `category` are denormalised so per-vehicle aggregates can be computed without S3 fetches.
+
+| Column | Type | Null | Default |
+|--------|------|------|---------|
+| `id` | bigint unsigned | NO | Auto increment — used as the API's stable id for expenses |
+| `vehicle_id` | bigint unsigned | YES | FK → `vehicles.id` (ON DELETE SET NULL) |
+| `customer_id` | bigint unsigned | YES | FK → `customers.id` (ON DELETE SET NULL) |
+| `event_type` | enum | NO | See below |
+| `s3_key` | varchar(500) | NO | Full S3 key — read via `readFromDataLake(key)` |
+| `event_date` | datetime | NO | Business-relevant date (expense_date for expenses, session start for chats) |
+| `summary` | varchar(500) | YES | Short one-liner for eyeballing the index |
+| `amount_aud` | decimal(10,2) | YES | Denormalised for financial-event rollups (null for non-financial) |
+| `category` | varchar(30) | YES | Denormalised for grouped queries (null for non-categorised) |
+| `key_topics` | json | YES | Optional structured metadata |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+**`event_type` enum:** `diagnostic-sessions`, `jobs-detail`, `fuel-fills`, `expenses`, `assistant-questions`, `warning-lights`, `diagnostic-outcomes`
+
+**Indexes:**
+- `(vehicle_id, event_type, event_date)` — most common per-vehicle history query
+- `(customer_id, event_type, event_date)` — cross-vehicle customer views
+- `(event_type, event_date)` — cross-fleet analytics
+- `(vehicle_id, event_type, event_date, amount_aud)` — summary aggregation
+
+`ON DELETE SET NULL` on both FKs — if a vehicle or customer is removed, the pointer rows survive so we don't orphan S3 objects.
+
+---
+
+## Vehicle health & maintenance
+
+### `vehicle_health_scores`
+
+Per-vehicle rollup used by the customer portal's health-summary widget. Updated on every job completion.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `vehicle_id` | bigint unsigned | NO | PRIMARY KEY, FK → `vehicles.id` |
+| `overall_score` | tinyint unsigned | YES | 0–100 |
+| `engine_score` | tinyint unsigned | YES | 0–100 |
+| `brakes_score` | tinyint unsigned | YES | 0–100 |
+| `tyres_score` | tinyint unsigned | YES | 0–100 |
+| `service_compliance` | tinyint unsigned | YES | 0–100 |
+| `last_service_date` | date | YES | — |
+| `next_service_due` | date | YES | — |
+| `overdue_items_count` | tinyint unsigned | NO | Default `0` |
+| `calculated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+
+One row per vehicle max. Bounded forever.
+
+---
+
+### `maintenance_schedule`
+
+Per-vehicle per-item next-service schedule (oil, brake fluid, timing belt, etc.). Populated + updated by the AI recommendation engine on every service completion.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | Auto increment |
+| `vehicle_id` | bigint unsigned | NO | FK → `vehicles.id` |
+| `item_name` | varchar(100) | NO | e.g. `oil_service`, `brake_fluid`, `timing_belt` |
+| `last_done_date` | date | YES | — |
+| `last_done_km` | int unsigned | YES | — |
+| `next_due_date` | date | YES | — |
+| `next_due_km` | int unsigned | YES | — |
+| `status` | enum(`ok`, `due_soon`, `overdue`) | NO | Default `ok` |
+| `urgency` | enum(`low`, `medium`, `high`) | NO | Default `low` |
+| `estimated_cost` | decimal(8,2) | YES | AUD |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+
+**Unique key:** `(vehicle_id, item_name)` — one row per item per vehicle.
+
+---
+
+## Assistant memory
+
+### `assistant_memory`
+
+Per-vehicle scratchpad the AI can write to via the `remember` tool. Notes are re-injected into future chat sessions so the assistant appears to remember prior conversations. Scoped to `vehicle_id` (not `customer_id`) so memories transfer with the vehicle on sale.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | Auto increment |
+| `vehicle_id` | bigint unsigned | NO | FK → `vehicles.id` ON DELETE CASCADE |
+| `note` | varchar(500) | NO | Max 500 chars — AI writes short factual notes |
+| `source` | enum(`assistant`, `customer`, `system`) | NO | Default `assistant` |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `expires_at` | datetime | YES | Default: 180 days from creation. Filtered out when in the past. |
+| `deleted_at` | datetime | YES | Soft delete — user or `forget` tool can remove |
+
+- **Cap: 20 active notes per vehicle.** When writing a 21st, the oldest active note is soft-deleted.
+- Read path filters `deleted_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())`
+- Index: `(vehicle_id, deleted_at, expires_at)`
+
+---
+
+## Summary tables (aggregates)
+
+These tables are **recomputed on every write** to the underlying data (via `refreshVehicleSummaries` in `src/shared/summaries.ts`). One row per vehicle max. Bounded forever.
+
+### `vehicle_fuel_summary`
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `vehicle_id` | bigint unsigned | NO | PRIMARY KEY, FK → `vehicles.id` |
+| `last_fill_date` | date | YES | — |
+| `last_fill_litres` | decimal(6,2) | YES | — |
+| `last_fill_price` | decimal(6,2) | YES | c/L |
+| `avg_consumption_l100km` | decimal(5,2) | YES | Computed across YTD fills |
+| `total_fuel_spend_ytd` | decimal(10,2) | NO | Default `0` |
+| `total_litres_ytd` | decimal(10,2) | NO | Default `0` |
+| `fill_count_ytd` | int unsigned | NO | Default `0` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+
+Populated from `s3_event_index` rows where `event_type = 'fuel-fills'`, plus one S3 GET per fill for `litres` (not in the index).
+
+---
+
+### `vehicle_expense_summary`
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `vehicle_id` | bigint unsigned | NO | PRIMARY KEY, FK → `vehicles.id` |
+| `total_spend_mtd` | decimal(10,2) | NO | Default `0` — this calendar month |
+| `total_spend_ytd` | decimal(10,2) | NO | Default `0` — this calendar year |
+| `fuel_spend_ytd` | decimal(10,2) | NO | Default `0` |
+| `service_spend_ytd` | decimal(10,2) | NO | Default `0` |
+| `other_spend_ytd` | decimal(10,2) | NO | Default `0` |
+| `cost_per_km` | decimal(6,2) | YES | Approx cost per km driven |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+
+Computed entirely from `s3_event_index` (uses denormalised `amount_aud + category` columns — zero S3 fetches).
 
 **Foreign keys:** `vehicle_id → vehicles(id)`, `customer_id → customers(id)`
