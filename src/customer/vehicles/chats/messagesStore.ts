@@ -11,6 +11,8 @@ export interface SessionMessage {
   imageId?:   string | null
   toolCalls?: any | null
   createdAt:  string
+  // Undefined on legacy rows — reader treats missing as 'text'.
+  mode?:      'text' | 'voice'
 }
 
 export interface SessionBlob {
@@ -93,6 +95,7 @@ export async function appendMessages(
       imageId:   m.imageId ?? null,
       toolCalls: m.toolCalls ?? null,
       createdAt: nowIso,
+      mode:      m.mode ?? 'text',
     }))
 
     const next: SessionBlob = {

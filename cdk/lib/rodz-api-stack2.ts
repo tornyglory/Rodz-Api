@@ -48,6 +48,14 @@ export class RodzApiStack2 extends Stack {
       CHAT_HINTS_ENABLED:        process.env.CHAT_HINTS_ENABLED        ?? 'false',
       REDIS_URL:                 process.env.REDIS_URL                 ?? '',
       RATE_LIMIT_ENABLED:        process.env.RATE_LIMIT_ENABLED        ?? 'false',
+      VOICE_MODE_ENABLED:        process.env.VOICE_MODE_ENABLED        ?? 'false',
+      VOICE_MODEL:               process.env.VOICE_MODEL               ?? 'gemini-2.5-flash-native-audio-preview-09-2025',
+      VOICE_VOICE_NAME:          process.env.VOICE_VOICE_NAME          ?? 'Aoede',
+      VOICE_SESSION_TTL_SECONDS: process.env.VOICE_SESSION_TTL_SECONDS ?? '900',
+      VOICE_DAILY_LIMIT_SECONDS: process.env.VOICE_DAILY_LIMIT_SECONDS ?? '1800',
+      // GEMINI_VOICE_API_KEY is set per-Lambda after deploy via
+      // `aws lambda update-function-configuration` — it's a secret and
+      // shouldn't live in the CDK env stanza.
     }
 
     const src = (p: string) => path.join(__dirname, '../../src', p)
@@ -1137,6 +1145,48 @@ export class RodzApiStack2 extends Stack {
       httpApi,
       integration: new HttpLambdaIntegration('CustomerChatSessionUploadUrlInt', customerChatSessionUploadUrlFn),
       routeKey: HttpRouteKey.with('/c/vehicles/{id}/chats/{sessionId}/upload-url', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    // ── Voice mode — Gemini Live for Gold-tier customers (2026-07-14) ──────
+
+    const voiceTokenFn = new LambdaFn(this, 'VoiceToken', {
+      entry: src('customer/vehicles/voice/token.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(15),
+    }).fn
+    const voiceToolFn = new LambdaFn(this, 'VoiceTool', {
+      entry: src('customer/vehicles/voice/tool.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(30), memorySize: 512,
+    }).fn
+    const voiceUsageFn = new LambdaFn(this, 'VoiceUsage', {
+      entry: src('customer/vehicles/voice/usage.ts'), vpc, sharedEnv,
+    }).fn
+    const voiceTranscriptFn = new LambdaFn(this, 'VoiceTranscript', {
+      entry: src('customer/vehicles/voice/transcript.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'VoiceTokenRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VoiceTokenInt', voiceTokenFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/voice/token', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+    new HttpRoute(this, 'VoiceToolRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VoiceToolInt', voiceToolFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/voice/tool', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+    new HttpRoute(this, 'VoiceUsageRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VoiceUsageInt', voiceUsageFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/voice/usage', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+    new HttpRoute(this, 'VoiceTranscriptRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VoiceTranscriptInt', voiceTranscriptFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/voice/transcript', HttpMethod.POST),
       authorizer: customerAuthorizer,
     })
 
