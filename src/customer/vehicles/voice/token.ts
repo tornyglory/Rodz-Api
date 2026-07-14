@@ -15,7 +15,10 @@ const VOICE_SESSION_TTL_SEC    = Number(process.env.VOICE_SESSION_TTL_SECONDS  ?
 const VOICE_DAILY_LIMIT_SEC    = Number(process.env.VOICE_DAILY_LIMIT_SECONDS ?? 1800)
 const GEMINI_VOICE_API_KEY     = process.env.GEMINI_VOICE_API_KEY ?? ''
 
-const WS_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent'
+// Ephemeral tokens live on v1alpha only. The WS method must be
+// BidiGenerateContentConstrained (not BidiGenerateContent) — the plain
+// method rejects ephemeral tokens with 1008 "unregistered callers".
+const WS_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained'
 
 function errBody(code: string, message: string, extra: object = {}): APIGatewayProxyResultV2 {
   const status = code === 'UNAUTHORIZED' ? 401
@@ -138,15 +141,15 @@ Do NOT offer to remember things, look up past sessions, or discuss fuel/expense 
         model: `models/${VOICE_MODEL}`,
         generationConfig: {
           responseModalities: ['AUDIO'],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_VOICE_NAME } } },
+          speechConfig:       { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_VOICE_NAME } } },
         },
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        tools: [{ functionDeclarations: BOOKING_TOOL_DECLARATIONS }],
+        systemInstruction:  { parts: [{ text: systemPrompt }] },
+        tools:              [{ functionDeclarations: BOOKING_TOOL_DECLARATIONS }],
       },
     }
 
     const upstream = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/auth_tokens?key=${GEMINI_VOICE_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1alpha/auth_tokens?key=${GEMINI_VOICE_API_KEY}`,
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(tokenReqBody) },
     )
     if (!upstream.ok) {
