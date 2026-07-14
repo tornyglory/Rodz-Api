@@ -3,9 +3,14 @@ import { bootstrap } from '../../../shared/bootstrap'
 import { getPool } from '../../../shared/db'
 import { ok, forbidden, serverError } from '../../../shared/errors'
 import { getCustomerContext, isPremium } from '../../_helpers'
+import { readFromDataLake } from '../../../shared/dataLake'
 
 const ready = bootstrap()
 
+// Reads YTD expense aggregates from s3_event_index (fast, no S3 GETs for
+// category/monthly totals — amount_aud + category are denormalised on the
+// index). Fetches S3 objects in parallel for business flag + fuel efficiency,
+// which need fields not on the index.
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
   const db        = getPool()
@@ -25,47 +30,62 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const fromDate = `${year}-01-01`
     const toDate   = `${year}-12-31`
 
-    const [categoryRows] = await db.query<any[]>(
-      `SELECT category, SUM(amount_aud) AS total, COUNT(*) AS cnt
-       FROM vehicle_expenses
-       WHERE vehicle_id = ? AND customer_id = ? AND expense_date BETWEEN ? AND ? AND amount_aud IS NOT NULL
-       GROUP BY category
-       ORDER BY total DESC`,
+    const [pointers] = await db.query<any[]>(
+      `SELECT id, s3_key, event_date, event_type, category, amount_aud
+       FROM s3_event_index
+       WHERE vehicle_id = ? AND customer_id = ?
+         AND event_type IN ('fuel-fills', 'expenses')
+         AND event_date BETWEEN ? AND ?
+       ORDER BY event_date ASC`,
       [vehicleId, ctx.customerId, fromDate, toDate],
     )
 
-    const [businessRow] = await db.query<any[]>(
-      `SELECT SUM(amount_aud) AS total
-       FROM vehicle_expenses
-       WHERE vehicle_id = ? AND customer_id = ? AND expense_date BETWEEN ? AND ?
-         AND is_business_expense = 1 AND amount_aud IS NOT NULL`,
-      [vehicleId, ctx.customerId, fromDate, toDate],
-    )
+    // Category / monthly / total — pure SQL-level rollups, no S3 GET needed.
+    const byCategoryMap = new Map<string, { total: number; count: number }>()
+    const byMonthMap    = new Map<string, number>()
+    let totalAud = 0
 
-    const [monthlyRows] = await db.query<any[]>(
-      `SELECT DATE_FORMAT(expense_date, '%Y-%m') AS month, SUM(amount_aud) AS total
-       FROM vehicle_expenses
-       WHERE vehicle_id = ? AND customer_id = ? AND expense_date BETWEEN ? AND ? AND amount_aud IS NOT NULL
-       GROUP BY month ORDER BY month`,
-      [vehicleId, ctx.customerId, fromDate, toDate],
-    )
+    for (const p of pointers) {
+      const amt = p.amount_aud != null ? Number(p.amount_aud) : 0
+      const cat = p.category || 'other'
+      totalAud += amt
+      const bc = byCategoryMap.get(cat) ?? { total: 0, count: 0 }
+      bc.total += amt
+      bc.count += 1
+      byCategoryMap.set(cat, bc)
+      const d     = p.event_date instanceof Date ? p.event_date : new Date(p.event_date)
+      const month = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
+      byMonthMap.set(month, (byMonthMap.get(month) ?? 0) + amt)
+    }
 
-    // Fuel efficiency — needs consecutive odometer readings on fuel entries
-    const [fuelRows] = await db.query<any[]>(
-      `SELECT odometer_km, fuel_litres, amount_aud
-       FROM vehicle_expenses
-       WHERE vehicle_id = ? AND customer_id = ? AND category = 'fuel'
-         AND expense_date BETWEEN ? AND ?
-         AND odometer_km IS NOT NULL AND fuel_litres IS NOT NULL
-       ORDER BY odometer_km ASC`,
-      [vehicleId, ctx.customerId, fromDate, toDate],
-    )
+    // Business-total + fuel efficiency need per-object fields. Fetch S3
+    // objects in parallel — at realistic volume this is <50ms total.
+    const details = await Promise.all(pointers.map((p: any) => readFromDataLake<any>(p.s3_key)))
+
+    let businessTotalAud = 0
+    const fuelRows: Array<{ odometer: number; litres: number; amount: number }> = []
+
+    for (let i = 0; i < pointers.length; i++) {
+      const p = pointers[i]
+      const d = details[i]
+      if (!d) continue
+      if (d.isBusinessExpense) businessTotalAud += Number(d.amount ?? 0)
+
+      if (p.event_type === 'fuel-fills' && d.category === 'fuel' && d.odometerKm != null && d.litres != null) {
+        fuelRows.push({
+          odometer: Number(d.odometerKm),
+          litres:   Number(d.litres),
+          amount:   Number(d.amount ?? 0),
+        })
+      }
+    }
 
     let fuelEfficiency: any = null
     if (fuelRows.length >= 2) {
-      const totalLitres = fuelRows.reduce((s: number, r: any) => s + Number(r.fuel_litres), 0)
-      const totalFuelAud = fuelRows.reduce((s: number, r: any) => s + (r.amount_aud ? Number(r.amount_aud) : 0), 0)
-      const kmSpan = Number(fuelRows[fuelRows.length - 1].odometer_km) - Number(fuelRows[0].odometer_km)
+      fuelRows.sort((a, b) => a.odometer - b.odometer)
+      const totalLitres = fuelRows.reduce((s, r) => s + r.litres, 0)
+      const totalFuelAud = fuelRows.reduce((s, r) => s + r.amount, 0)
+      const kmSpan      = fuelRows[fuelRows.length - 1].odometer - fuelRows[0].odometer
       if (kmSpan > 0) {
         const avgL100km  = (totalLitres / kmSpan) * 100
         const costPerKm  = totalFuelAud / kmSpan
@@ -78,22 +98,28 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       }
     }
 
-    const totalAud = categoryRows.reduce((s: number, r: any) => s + Number(r.total), 0)
+    const byCategory = Array.from(byCategoryMap.entries())
+      .map(([category, { total, count }]) => ({
+        category,
+        totalAud: Math.round(total * 100) / 100,
+        count,
+      }))
+      .sort((a, b) => b.totalAud - a.totalAud)
+
+    const monthlyTotals = Array.from(byMonthMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, total]) => ({
+        month,
+        totalAud: Math.round(total * 100) / 100,
+      }))
 
     return ok({
       year,
       totalAud:         Math.round(totalAud * 100) / 100,
-      businessTotalAud: Number(businessRow[0]?.total ?? 0),
-      byCategory:       categoryRows.map((r: any) => ({
-        category:  r.category,
-        totalAud:  Math.round(Number(r.total) * 100) / 100,
-        count:     Number(r.cnt),
-      })),
+      businessTotalAud: Math.round(businessTotalAud * 100) / 100,
+      byCategory,
       fuelEfficiency,
-      monthlyTotals: monthlyRows.map((r: any) => ({
-        month:    r.month,
-        totalAud: Math.round(Number(r.total) * 100) / 100,
-      })),
+      monthlyTotals,
     })
   } catch (err) {
     return serverError(err)
