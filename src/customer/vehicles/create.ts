@@ -47,7 +47,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
-    const { rego, regoState, vehicle } = body
+    const { rego, regoState, vehicle, regoExpiry } = body
 
     if (!rego || !regoState || !vehicle) {
       return validationError('rego, regoState and vehicle description are required.')
@@ -59,6 +59,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!VALID_STATES.has(stateStr)) {
       return validationError('Invalid regoState.')
     }
+
+    if (regoExpiry != null && regoExpiry !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(String(regoExpiry))) {
+      return validationError('regoExpiry must be in YYYY-MM-DD format.')
+    }
+    const regoExpiryVal = regoExpiry ? String(regoExpiry) : null
 
     const parsed = await parseVehicle(String(vehicle))
     if ('error' in parsed) return validationError(parsed.error)
@@ -73,17 +78,26 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     if (existing) {
       vehicleId = existing.id
+      // Vehicle existed already — patch in the expiry if it was passed and
+      // the existing record doesn't have one. Never overwrite an existing
+      // value from the create flow (that's the update endpoint's job).
+      if (regoExpiryVal) {
+        await db.query(
+          'UPDATE vehicles SET rego_expiry = ? WHERE id = ? AND rego_expiry IS NULL',
+          [regoExpiryVal, vehicleId],
+        )
+      }
     } else {
       const logbookToken = crypto.randomBytes(32).toString('hex')
       const [ins] = await db.query<any>(
         `INSERT INTO vehicles
-           (rego, rego_state, make, model, series, year, fuel_type, transmission,
+           (rego, rego_state, rego_expiry, make, model, series, year, fuel_type, transmission,
             body_type, engine_code, engine_size_cc, cylinders, drive_type,
             colour, tyre_size_front, tyre_size_rear, spare_tyre_size,
             service_interval_km, service_interval_months, logbook_token, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
         [
-          regoStr, stateStr, parsed.make, parsed.model, parsed.series, parsed.year,
+          regoStr, stateStr, regoExpiryVal, parsed.make, parsed.model, parsed.series, parsed.year,
           parsed.fuelType ?? 'petrol', parsed.transmission ?? 'automatic', parsed.bodyType ?? null,
           parsed.engineCode ?? null, parsed.engineSizeCC ?? null, parsed.cylinders ?? null,
           parsed.driveType ?? null, parsed.colour ?? null, parsed.tyreSizeFront ?? null,

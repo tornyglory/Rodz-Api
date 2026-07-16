@@ -58,5 +58,18 @@ export class RodzApiStack3 extends Stack {
       routeKey: HttpRouteKey.with('/c/invoices', HttpMethod.GET),
       authorizer: customerAuthorizer,
     })
+
+    // ── Vehicle health dashboard — one-shot aggregate for /account/vehicles/:id/health ──
+
+    const customerVehicleHealthFn = new LambdaFn(this, 'CustomerVehicleHealth', {
+      entry: src('customer/vehicles/health.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerVehicleHealthRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleHealthInt', customerVehicleHealthFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/health', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
   }
 }

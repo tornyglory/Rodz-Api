@@ -15,7 +15,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   try {
     // Look up vehicle by token — no is_active filter so we can distinguish 404 vs 410
     const [[vehicle]] = await db.query<any[]>(
-      `SELECT v.id, v.rego, v.year, v.make, v.model, v.series, v.colour,
+      `SELECT v.id, v.rego, v.rego_state, v.rego_expiry, v.year, v.make, v.model, v.series, v.colour,
               v.fuel_type, v.transmission, v.engine_size_cc, v.vin,
               v.odometer_current, v.avatar_image_id, v.cover_image_id, v.is_active,
               v.for_sale, v.asking_price, v.city, v.country, v.description,
@@ -73,8 +73,16 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const publicSettings = parsePublicProfileSettings(vehicle.public_profile_settings)
 
+    const regoExpiry = vehicle.rego_expiry
+      ? (vehicle.rego_expiry instanceof Date
+          ? vehicle.rego_expiry.toISOString().slice(0, 10)
+          : String(vehicle.rego_expiry).slice(0, 10))
+      : null
+
     return ok({
       rego:            vehicle.rego,
+      regoState:       vehicle.rego_state ?? null,
+      regoExpiry,
       year:            vehicle.year,
       make:            vehicle.make,
       model:           vehicle.model,

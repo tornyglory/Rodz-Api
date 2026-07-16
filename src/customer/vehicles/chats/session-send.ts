@@ -586,7 +586,7 @@ ${isHintsEnabled() ? HINTS_INSTRUCTION : ''}`
           `SELECT id, title, recommendation_body, urgency, status,
                   estimated_due_odometer, estimated_due_date,
                   estimated_cost_min, estimated_cost_max
-           FROM vehicle_recommendations
+           FROM ai_recommendations
            WHERE vehicle_id = ? AND status IN ('active','sent','acknowledged')
            ORDER BY FIELD(urgency, 'urgent', 'important', 'recommended', 'advisory'), estimated_due_date ASC, id DESC
            LIMIT ?`,
