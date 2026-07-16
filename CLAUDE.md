@@ -26,20 +26,21 @@ Key things to verify before writing SQL:
 
 ## Stack overview
 
-Two CDK stacks share the same HTTP API and VPC:
+Three CDK stacks share the same HTTP API and VPC:
 
 | Stack | File | Contains |
 |-------|------|----------|
-| `RodzApiStack` | `cdk/lib/rodz-api-stack.ts` | All existing Lambdas, HTTP API, VPC, authorizer |
-| `RodzApiStack2` | `cdk/lib/rodz-api-stack2.ts` | New Lambdas (reports, AI, rego lookup, etc.) |
+| `RodzApiStack` | `cdk/lib/rodz-api-stack.ts` | All existing Lambdas, HTTP API, VPC, staff authorizer |
+| `RodzApiStack2` | `cdk/lib/rodz-api-stack2.ts` | Second wave of Lambdas (reports, AI, customer portal core, etc.) + customer JWT authorizer |
+| `RodzApiStack3` | `cdk/lib/rodz-api-stack3.ts` | New customer-facing (`/c/…`) endpoints — Stack 2 overflow bucket |
 
 - **Runtime:** Node.js Lambda (TypeScript, compiled via esbuild)
 - **Database:** MySQL (Azure) accessed via `getPool()` from `src/shared/db.ts`
-- **Auth:** `getAuthContext(event)` returns `{ staffId, role, storeId, permissions }`
+- **Auth:** `getAuthContext(event)` returns `{ staffId, role, storeId, permissions }`. Customer routes use `getCustomerContext(event)` instead.
 - **Roles:** `super_admin` | `store_manager` | `technician`
-- **Deploy:** `cdk deploy` works for both stacks (as of 2026-07-10). See the Deploy section below.
+- **Deploy:** `cdk deploy` works for all three stacks. See the Deploy section below.
 
-CloudFormation caps each stack at 500 resources. Current counts (as of 2026-07-10): Stack 1 = 341, Stack 2 = 432. Both have headroom, but **new Lambda functions and routes should go in `RodzApiStack2`** to keep Stack 1 lean. Use `new HttpRoute()` (not `httpApi.addRoutes()`) so route resources are scoped to Stack 2.
+CloudFormation caps each stack at 500 resources. Current counts (as of 2026-07-16): Stack 1 = 341, Stack 2 = 497, Stack 3 = 12. **Stack 2 is essentially at the cap** — put new Lambdas and routes in `RodzApiStack3`. Stack 3 imports `httpApi`, `vpc`, `sharedEnv`, and `customerAuthorizerId` from Stack 2 via constructor props. Use `new HttpRoute()` (not `httpApi.addRoutes()`) so route resources stay scoped to the correct stack.
 
 Every Lambda in a stack shares one IAM role and one security group (see `cdk/lib/constructs/lambda-fn.ts` — this consolidation is what keeps the count under 500). If you need Lambda-to-Lambda invocation, do NOT use `fn.grantInvoke()` — the shared role covers all Lambdas via a wildcard `lambda:InvokeFunction` policy already. Adding `grantInvoke` creates a circular dependency because caller and callee both use the same shared role.
 
@@ -87,11 +88,13 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 | `notFound(msg)` | 404 | Resource not found |
 | `serverError(err)` | 500 | Unexpected DB/runtime error |
 
-### CDK route registration (new endpoints → `cdk/lib/rodz-api-stack2.ts`)
+### CDK route registration (new endpoints → `cdk/lib/rodz-api-stack3.ts`)
 
 Each new endpoint needs:
 1. A `LambdaFn` definition (pointing to the handler file via `entry`)
-2. A `new HttpRoute()` call (NOT `httpApi.addRoutes()`) so resources go in `RodzApiStack2`
+2. A `new HttpRoute()` call (NOT `httpApi.addRoutes()`) so resources go in `RodzApiStack3`
+
+Stack 2 is at the 500-resource cap — new endpoints must land in Stack 3 unless there's a specific reason to modify existing Stack 2 code. For customer-authed routes, use the `customerAuthorizer` reconstructed at the top of Stack 3 from the `customerAuthorizerId` prop.
 
 ```typescript
 const myFn = new LambdaFn(this, 'MyHandler', {

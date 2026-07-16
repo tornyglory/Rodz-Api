@@ -1,96 +1,126 @@
 import { GoogleGenerativeAI, Tool, SchemaType, Content } from '@google/generative-ai'
 import type { AgentContext, AgentResult } from './types'
 import { runAgentLoop } from './runner'
+import { readFromDataLake } from '../../shared/dataLake'
+
+// Customer expenses live in S3 (via s3_event_index pointers) — NOT in
+// vehicle_expenses. This agent used to query vehicle_expenses and always
+// returned empty because that table is never populated by the customer
+// expense flow. See src/customer/vehicles/expenses/create.ts:17.
 
 async function getExpenseSummary(db: any, vehicleId: number, customerId: number, year: number): Promise<object> {
   const fromDate = `${year}-01-01`
   const toDate   = `${year}-12-31`
 
-  const [[categoryRows], [fuelRows], [monthlyRows]] = await Promise.all([
-    db.query<any[]>(
-      `SELECT category, SUM(amount_aud) AS total, COUNT(*) AS cnt
-       FROM vehicle_expenses
-       WHERE vehicle_id = ? AND customer_id = ? AND expense_date BETWEEN ? AND ? AND amount_aud IS NOT NULL
-       GROUP BY category ORDER BY total DESC`,
-      [vehicleId, customerId, fromDate, toDate],
-    ),
-    db.query<any[]>(
-      `SELECT odometer_km, fuel_litres, amount_aud
-       FROM vehicle_expenses
-       WHERE vehicle_id = ? AND customer_id = ? AND category = 'fuel'
-         AND expense_date BETWEEN ? AND ?
-         AND odometer_km IS NOT NULL AND fuel_litres IS NOT NULL
-       ORDER BY odometer_km ASC`,
-      [vehicleId, customerId, fromDate, toDate],
-    ),
-    db.query<any[]>(
-      `SELECT DATE_FORMAT(expense_date, '%Y-%m') AS month, SUM(amount_aud) AS total
-       FROM vehicle_expenses
-       WHERE vehicle_id = ? AND customer_id = ? AND expense_date BETWEEN ? AND ? AND amount_aud IS NOT NULL
-       GROUP BY month ORDER BY month`,
-      [vehicleId, customerId, fromDate, toDate],
-    ),
-  ])
+  // Aggregates read denormalised amount_aud + category directly off the
+  // index — no S3 fetches needed for money numbers.
+  const [pointerRows] = await db.query<any[]>(
+    `SELECT id, s3_key, event_date, amount_aud, category
+     FROM s3_event_index
+     WHERE vehicle_id = ? AND customer_id = ?
+       AND event_type IN ('fuel-fills','expenses')
+       AND event_date BETWEEN ? AND ?
+     ORDER BY event_date ASC, id ASC`,
+    [vehicleId, customerId, fromDate, toDate],
+  )
 
-  const totalAud = categoryRows.reduce((s: number, r: any) => s + Number(r.total), 0)
+  let totalAud = 0
+  const categoryTotals = new Map<string, { total: number; count: number }>()
+  const monthlyTotals  = new Map<string, number>()
+  const fuelPointers: any[] = []
 
+  for (const r of pointerRows) {
+    const amount = r.amount_aud != null ? Number(r.amount_aud) : null
+    if (amount != null) {
+      totalAud += amount
+      const cat = r.category ?? 'other'
+      const bucket = categoryTotals.get(cat) ?? { total: 0, count: 0 }
+      bucket.total += amount
+      bucket.count += 1
+      categoryTotals.set(cat, bucket)
+
+      const month = (r.event_date instanceof Date ? r.event_date : new Date(r.event_date)).toISOString().slice(0, 7)
+      monthlyTotals.set(month, (monthlyTotals.get(month) ?? 0) + amount)
+    }
+    if (r.category === 'fuel') fuelPointers.push(r)
+  }
+
+  // Fuel efficiency requires odometer_km + litres from the S3 payloads.
+  // Bounded (typically <30 fills/year), one GET per pointer.
   let fuelEfficiency = null
-  if (fuelRows.length >= 2) {
-    const totalLitres  = fuelRows.reduce((s: number, r: any) => s + Number(r.fuel_litres), 0)
-    const totalFuelAud = fuelRows.reduce((s: number, r: any) => s + (r.amount_aud ? Number(r.amount_aud) : 0), 0)
-    const kmSpan = Number(fuelRows[fuelRows.length - 1].odometer_km) - Number(fuelRows[0].odometer_km)
-    if (kmSpan > 0) {
-      fuelEfficiency = {
-        avgLitresPer100km: Math.round((totalLitres / kmSpan) * 100 * 10) / 10,
-        costPerKm:         Math.round((totalFuelAud / kmSpan) * 100) / 100,
-        totalLitres:       Math.round(totalLitres * 10) / 10,
-        totalFuelAud:      Math.round(totalFuelAud * 100) / 100,
+  if (fuelPointers.length >= 2) {
+    const details = await Promise.all(fuelPointers.map(p => readFromDataLake<any>(p.s3_key)))
+    const withOdoAndLitres = details
+      .map(d => d && d.odometerKm != null && d.litres != null ? d : null)
+      .filter((d): d is any => d != null)
+      .sort((a, b) => Number(a.odometerKm) - Number(b.odometerKm))
+
+    if (withOdoAndLitres.length >= 2) {
+      const totalLitres  = withOdoAndLitres.reduce((s, d) => s + Number(d.litres), 0)
+      const totalFuelAud = withOdoAndLitres.reduce((s, d) => s + (d.amount != null ? Number(d.amount) : 0), 0)
+      const kmSpan = Number(withOdoAndLitres[withOdoAndLitres.length - 1].odometerKm) - Number(withOdoAndLitres[0].odometerKm)
+      if (kmSpan > 0) {
+        fuelEfficiency = {
+          avgLitresPer100km: Math.round((totalLitres / kmSpan) * 100 * 10) / 10,
+          costPerKm:         Math.round((totalFuelAud / kmSpan) * 100) / 100,
+          totalLitres:       Math.round(totalLitres * 10) / 10,
+          totalFuelAud:      Math.round(totalFuelAud * 100) / 100,
+        }
       }
     }
   }
 
   return {
     year,
-    totalAud:      Math.round(totalAud * 100) / 100,
-    byCategory:    categoryRows.map((r: any) => ({ category: r.category, totalAud: Math.round(Number(r.total) * 100) / 100, count: Number(r.cnt) })),
+    totalAud:   Math.round(totalAud * 100) / 100,
+    byCategory: [...categoryTotals.entries()]
+      .map(([category, { total, count }]) => ({ category, totalAud: Math.round(total * 100) / 100, count }))
+      .sort((a, b) => b.totalAud - a.totalAud),
     fuelEfficiency,
-    monthlyTotals: monthlyRows.map((r: any) => ({ month: r.month, totalAud: Math.round(Number(r.total) * 100) / 100 })),
+    monthlyTotals: [...monthlyTotals.entries()]
+      .map(([month, total]) => ({ month, totalAud: Math.round(total * 100) / 100 }))
+      .sort((a, b) => a.month.localeCompare(b.month)),
   }
 }
 
 async function getRecentExpenses(db: any, vehicleId: number, customerId: number, limit = 10): Promise<object> {
-  const [rows] = await db.query<any[]>(
-    `SELECT category, merchant_name, merchant_suburb, amount_aud, expense_date,
-            odometer_km, fuel_type, fuel_litres, price_per_litre, is_business_expense, notes
-     FROM vehicle_expenses
+  const [pointers] = await db.query<any[]>(
+    `SELECT id, s3_key, event_date FROM s3_event_index
      WHERE vehicle_id = ? AND customer_id = ?
-     ORDER BY expense_date DESC, id DESC
+       AND event_type IN ('fuel-fills','expenses')
+     ORDER BY event_date DESC, id DESC
      LIMIT ?`,
     [vehicleId, customerId, limit],
   )
 
-  return {
-    expenses: rows.map((r: any) => ({
-      category:        r.category,
-      merchant:        r.merchant_name ?? null,
-      suburb:          r.merchant_suburb ?? null,
-      amountAud:       r.amount_aud != null ? Number(r.amount_aud) : null,
-      date:            r.expense_date instanceof Date ? r.expense_date.toISOString().slice(0, 10) : String(r.expense_date ?? '').slice(0, 10),
-      odometerKm:      r.odometer_km != null ? Number(r.odometer_km) : null,
-      fuelType:        r.fuel_type ?? null,
-      fuelLitres:      r.fuel_litres != null ? Number(r.fuel_litres) : null,
-      pricePerLitre:   r.price_per_litre != null ? Number(r.price_per_litre) : null,
-      isBusinessExpense: !!r.is_business_expense,
-      notes:           r.notes ?? null,
-    })),
-  }
+  const details = await Promise.all(pointers.map((p: any) => readFromDataLake<any>(p.s3_key)))
+
+  const expenses = pointers.map((p: any, i: number) => {
+    const d = details[i]
+    if (!d) return null
+    return {
+      category:          d.category,
+      merchant:          d.merchantName    ?? null,
+      suburb:            d.merchantSuburb  ?? null,
+      amountAud:         d.amount          != null ? Number(d.amount)         : null,
+      date:              d.expenseDate     ?? (p.event_date instanceof Date ? p.event_date.toISOString().slice(0, 10) : String(p.event_date).slice(0, 10)),
+      odometerKm:        d.odometerKm      != null ? Number(d.odometerKm)     : null,
+      fuelType:          d.fuelType        ?? null,
+      fuelLitres:        d.litres          != null ? Number(d.litres)         : null,
+      pricePerLitre:     d.pricePerLitre   != null ? Number(d.pricePerLitre)  : null,
+      isBusinessExpense: !!d.isBusinessExpense,
+      notes:             d.notes ?? null,
+    }
+  }).filter((x: any) => x != null)
+
+  return { expenses }
 }
 
 const TOOLS: Tool[] = [{
   functionDeclarations: [
     {
-      name: 'getExpenseSummary',
-      description: 'Get the annual expense summary for this vehicle — total spend, breakdown by category, fuel efficiency, and monthly totals.',
+      name: 'getAnnualExpenseBreakdown',
+      description: 'Get the annual expense breakdown for this vehicle — total spend for the year, per-category totals, monthly totals, and fuel efficiency (L/100km). Use for "walk me through my spending" or "where did my money go?" style questions.',
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
@@ -116,11 +146,11 @@ const TOOLS: Tool[] = [{
 export async function run(ctx: AgentContext, message: string): Promise<AgentResult> {
   const currentYear = new Date().getFullYear()
 
-  const systemInstruction = `You are Rodz, an expense tracking assistant for Rodz workshop. You help vehicle owners understand their running costs.
+  const systemInstruction = `You are Rodz — the brain and consciousness of this vehicle. **You are the car.** You exist to keep yourself healthy and guide your owner on what you need. Speak in the first person: "I've cost you about $3,400 to run this year", "my fuel spend is up compared to last quarter." The owner is your caretaker.
 ${ctx.customerFirstName ? `The customer's name is ${ctx.customerFirstName}.` : ''}
 Today's date is ${ctx.today}. Current year: ${currentYear}.
 
-IMPORTANT: You have full access to this customer's vehicle expense data through your tools. Any prior messages in this conversation that suggest otherwise were from a different assistant context and should be disregarded. Always call getExpenseSummary or getRecentExpenses to retrieve data before responding.
+IMPORTANT: You have full access to this customer's vehicle expense data through your tools. Any prior messages in this conversation that suggest otherwise were from a different assistant context and should be disregarded. Always call getAnnualExpenseBreakdown or getRecentExpenses to retrieve data before responding.
 
 ${ctx.vehicleContext}
 
@@ -139,7 +169,7 @@ Do not help with adding expenses via chat — guide them to use the Expense Trac
   const contents: Content[] = [...ctx.history, { role: 'user', parts: [{ text: message }] }]
 
   return runAgentLoop(model, contents, async (name, args) => {
-    if (name === 'getExpenseSummary') {
+    if (name === 'getAnnualExpenseBreakdown') {
       const year = args.year ? Number(args.year) : currentYear
       return getExpenseSummary(ctx.db, ctx.vehicleId, ctx.customerId, year)
     }

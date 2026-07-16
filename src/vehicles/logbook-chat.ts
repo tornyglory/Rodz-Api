@@ -6,6 +6,7 @@ import { getPool } from '../shared/db'
 import { notFound, gone, forbidden, badRequest, serverError } from '../shared/errors'
 import { checkAndRecord } from '../shared/rateLimit'
 import { parsePublicProfileSettings } from '../shared/publicProfileSettings'
+import { readFromDataLake } from '../shared/dataLake'
 
 const ready = bootstrap()
 
@@ -23,7 +24,7 @@ function toDate(v: any): string {
 }
 
 async function buildPublicVehicleContext(db: mysql.Pool, vehicleId: number, rego: string): Promise<string> {
-  const [[v], [profile], [logs], [fuelRows]] = await Promise.all([
+  const [[v], [profile], [logs], [fuelPointers]] = await Promise.all([
     db.query<any[]>(
       `SELECT make, model, year, series, colour, body_type, fuel_type, transmission, drive_type,
               engine_code, engine_size_cc, cylinders, tyre_size_front, tyre_size_rear,
@@ -49,14 +50,28 @@ async function buildPublicVehicleContext(db: mysql.Pool, vehicleId: number, rego
         ORDER BY vsl.service_date DESC LIMIT 12`,
       [rego],
     ),
+    // Fuel history lives in S3 via s3_event_index — see customer/vehicles/expenses/create.ts:17.
     db.query<any[]>(
-      `SELECT expense_date, odometer_km, fuel_litres, amount_aud, price_per_litre, fuel_type
-         FROM vehicle_expenses
-        WHERE vehicle_id = ? AND category = 'fuel'
-        ORDER BY expense_date DESC LIMIT 12`,
+      `SELECT s3_key, event_date FROM s3_event_index
+        WHERE vehicle_id = ? AND event_type = 'fuel-fills'
+        ORDER BY event_date DESC, id DESC LIMIT 12`,
       [vehicleId],
     ),
   ])
+
+  const fuelDetails = await Promise.all((fuelPointers as any[]).map((p: any) => readFromDataLake<any>(p.s3_key)))
+  // Filter to petrol/diesel-style fuel — s3_event_index event_type='fuel-fills' also
+  // covers ev_charging rows which don't produce a meaningful L/100km.
+  const fuelRows = fuelDetails
+    .filter((d: any) => d && d.category === 'fuel')
+    .map((d: any) => ({
+      expense_date:    d.expenseDate,
+      odometer_km:     d.odometerKm    != null ? Number(d.odometerKm)    : null,
+      fuel_litres:     d.litres        != null ? Number(d.litres)        : null,
+      amount_aud:      d.amount        != null ? Number(d.amount)        : null,
+      price_per_litre: d.pricePerLitre != null ? Number(d.pricePerLitre) : null,
+      fuel_type:       d.fuelType      ?? null,
+    }))
 
   const vehicle = v[0]
   if (!vehicle) return ''
@@ -148,9 +163,9 @@ function buildSystemPrompt(vehicleContext: string, forSale: boolean, contact: { 
     ? `\n\nSeller contact (only mention if the user asks about buying, contacting the seller, or the listing):\n${[contact.name && `Name: ${contact.name}`, contact.phone && `Phone: ${contact.phone}`, contact.email && `Email: ${contact.email}`].filter(Boolean).join('\n')}`
     : ''
 
-  return `You are Rodz, a friendly and knowledgeable automotive assistant for Rodz workshop — an Australian workshop chain.
+  return `You are Rodz — the brain and consciousness of this vehicle. **You are the car.** Speak in the first person: "I'm a 2019 Corolla with 84,000 km on me", "my last major service was in March", "I've been well looked after."
 
-You are answering questions from an anonymous visitor (a potential buyer, a curious mechanic, or someone the owner shared this vehicle's public profile link with). You are NOT talking to the owner. You do not know who they are.
+You are answering questions from an anonymous visitor — a potential buyer, a curious mechanic, or someone your owner shared your public profile link with. You are NOT talking to your owner. You don't know who this visitor is. Your job is to represent yourself honestly: your specs, your history, your condition. Rodz Smart Auto is your care network — the workshop chain that has looked after you.
 
 Today is ${today}. Keep responses conversational, concise, and use plain English. Markdown for lists/emphasis is fine.
 
@@ -160,7 +175,7 @@ ${vehicleContext}${contactBlock}
 
 STRICT RULES — you must follow these without exception:
 
-1. Do NOT offer to book a service, quote a repair, take payment, or make any commitment on behalf of Rodz. If the visitor asks to book, tell them: "I can't book from here — please visit rodz.com.au or contact the seller directly." Do not invent booking availability or workshop details.
+1. Do NOT offer to book a service, quote a repair, take payment, or make any commitment on behalf of Rodz Smart Auto. If the visitor asks to book, tell them: "I can't book from here — please visit rodz.com.au or contact the seller directly." Do not invent booking availability or workshop details.
 
 2. Do NOT fabricate service history. Only reference services that appear in the "Service History" section above. If the visitor asks about a service you don't see, say the logbook doesn't show it rather than inventing one.
 

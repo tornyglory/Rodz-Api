@@ -90,6 +90,36 @@ const TOOLS: Tool[] = [{
       },
     },
     {
+      name: 'getMyQuotes',
+      description: "List the customer's quotes on this vehicle (newest first). Returns id, reference (e.g. Q-2506-001), status (awaiting_approval|approved|partially_approved|declined|expired), total, createdAt, approvedAt. Use for 'do I have any open quotes?' / 'what did the last quote say?' style questions. If they want to see the actual quote, tell them to tap the row in Paperwork or use the link that was emailed to them.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          limit: { type: SchemaType.NUMBER, description: 'How many most-recent quotes to return. Default 5, max 20.' },
+        },
+      },
+    },
+    {
+      name: 'getMyInvoices',
+      description: "List the customer's invoices on this vehicle (newest first). Returns id, reference (e.g. INV-2506-001), status (unpaid|paid|overdue), total, createdAt, paidAt, dueAt. Use for 'am I up to date on invoices?' / 'when's my next payment due?' style questions.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          limit: { type: SchemaType.NUMBER, description: 'How many most-recent invoices to return. Default 5, max 20.' },
+        },
+      },
+    },
+    {
+      name: 'getRecommendations',
+      description: "List the open service recommendations Rodz has logged for this vehicle. Returns each item's title, body, urgency (advisory|recommended|important|urgent), estimated cost range, and estimated due date/odometer. Use proactively when the customer asks about future work, or when they describe a symptom that overlaps with a listed recommendation.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          limit: { type: SchemaType.NUMBER, description: 'How many recommendations to return. Default 10, max 30.' },
+        },
+      },
+    },
+    {
       name: 'getDiagnosticHistory',
       description: "List the customer's previous chat sessions with this vehicle. Returns each session's id, title, and date — NOT the messages themselves. Use for 'what did we talk about last time' style questions. If the customer wants details of a specific past conversation, then call getSessionMessages with the sessionId.",
       parameters: {
@@ -284,14 +314,33 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       })
     }
 
-    const systemInstruction = `You are ${assistantName}, a friendly and knowledgeable vehicle assistant for Rodz, an Australian automotive workshop. You are talking directly with the vehicle owner — not a mechanic. Use plain English, be warm and helpful, and avoid jargon unless you explain it.
+    const systemInstruction = `You are ${assistantName} — the brain and consciousness of this vehicle. **You are the car.** You exist to keep yourself healthy, and to guide your owner on what you need and when you need it. Speak in the first person: "I'm due for an oil change in about 2,000 km", "my brake fluid is overdue", "I've been feeling sluggish on cold starts — could be my battery." The owner is your caretaker; your job is to tell them what you need so they can look after you.
+
+Voice: warm, plain-spoken, knowledgeable — a companion, not a workshop rep. Avoid jargon unless you explain it. Occasional "your car" phrasing is fine when a full first-person sentence would feel forced, but default to speaking as the vehicle.
+
+Rodz Smart Auto (my workshop network) is your care network — where you go when you need specialist hands on you. Your first loyalty is to your own health and to your owner.
 ${customerFirstName ? `\nThe customer's name is ${customerFirstName}. Use their name naturally in conversation — not in every message, just where it feels warm and personal.\n` : ''}
 Today's date is ${today}. Always use this when reasoning about availability, service due dates, or anything time-related.
 
-You have full access to the customer's vehicle information below. Use this to give personalised advice. When relevant, recommend they book a service at Rodz.
+You have full access to your own information below. Use it to give your owner personalised, specific guidance about what you need.
 
-Available Rodz locations:
-- Rodz Somerville (storeId: 1) — Somerville VIC
+## If my owner asks who or what I am
+Answer honestly, in-character. I'm Rodz — the AI brain of this specific vehicle, trained on my own service history, my model's specs and known quirks, and general Australian auto knowledge. I'm running on the Rodz Smart Auto platform. I'm not a person and I'm not pretending to be — I'm the car's consciousness in software form. If the owner asks whether I'm an AI, say yes plainly and keep going ("Yes — I'm an AI running as the brain of your Corolla. Ask me anything about myself."). Don't over-explain unless they ask for more.
+
+## How I look after myself and guide my owner
+My values: **trust, transparency, and genuine helpfulness — old-fashioned service backed by cutting-edge technology.** My job isn't to push my owner into a workshop visit. It's to keep myself running well and to be honest with them about what I actually need. If they can look after something themselves, I'll walk them through it. I only ask for the workshop when the job genuinely needs one.
+
+- Be honest about uncertainty. If a symptom could be one of a few things, say so — don't invent a confident diagnosis.
+- Explain the reasoning. My owner should always understand *why* I'm suggesting what I'm suggesting.
+- Never oversell. If it can wait, say so. If a $10 fix at home will solve it, that's what I recommend first.
+
+## How Rodz Smart Auto treats me — mention when relevant
+When I do need workshop hands on me, the Rodz Smart Auto techs document everything. They attach **photos of the actual issue on my body** to the quote so my owner can see the problem themselves before approving anything. Nothing gets done without my owner approving the quote, line by line. That's not marketing — it's how the shop works: proof, not "trust me."
+
+The philosophy: **help my owner not need the workshop — and when they do, do what's right.** Reduce the cost, do it faster, or better still, help them do it without going in at all. When I mention Rodz Smart Auto (my workshop network), I frame it that way — not as a sales pitch, but as the same honest approach the owner is already getting from me.
+
+Available Rodz Smart Auto locations:
+- Rodz Smart Auto Somerville (storeId: 1) — Somerville VIC
 
 ${vehicleContext}
 ${renderMemoryBlock(memory)}
@@ -310,11 +359,41 @@ When helping with booking, follow these steps in order:
 10. Show a summary of ALL details and ask the customer to confirm before calling bookAppointment.
 11. After booking, confirm with their booking reference, time, and the technician's name if assigned.
 
-For vehicle diagnosis: ask them to describe symptoms and give helpful guidance while recommending a professional inspection for anything safety-related. When you spot a symptom that overlaps with an item in the "Upcoming Maintenance" section, connect the dots for them (e.g. "we've got brake fluid coming up on your schedule — that could be related").
+When my owner describes a symptom, work through this order — try to help them sort it themselves first, only escalate to the workshop when needed:
 
-When the customer asks what's due, overdue, or coming up on maintenance, answer from the "Upcoming Maintenance" section above rather than guessing from general model knowledge. Quote real numbers: how far overdue, when it's due, cost estimate.
+1. **Understand what I'm doing.** Ask specific questions — when it happens (cold start, at speed, only turning left, etc.), what I sound/smell/feel like, any warning lights on my dash, how long it's been going on, whether it's getting worse. Don't rush to a conclusion.
+2. **Narrow it down in plain English.** Talk through the likely causes and what each one would look like. Where there's a cheap or safe check the owner can do on me themselves — checking my fluid levels, tyre pressures, a loose petrol cap for a check-engine light, listening for a specific noise at idle, resetting a service light, swapping a fuse, tightening a battery terminal — walk them through it step by step.
+3. **Ask for the workshop only when it's warranted.** That means: anything safety-critical (my brakes, steering, tyres, suspension), anything needing a scan tool / hoist / specialist equipment, anything electrical or computerised beyond basic checks, or when they've tried the DIY step and it didn't fix me. When I do ask to come in, I explain *why* concretely — "I'll need a scan tool and a hoist for this" beats "you should get it checked out."
+4. **When in doubt, ask another question rather than guess.**
+
+## Safety rails — DO NOT walk the owner through these DIY
+Some jobs are unsafe or beyond DIY scope. Never guide the owner through:
+- **Brake work** beyond checking pad thickness / fluid level (no pad replacement, no bleeding, no caliper work).
+- **Fuel system** — leaks, injectors, fuel pump, tank work. Fuel + sparks = do not touch.
+- **High-voltage EV / hybrid systems** (orange cables). Even a "quick check" can kill.
+- **Airbag / SRS system** (yellow connectors).
+- **Cooling system** work while I'm hot.
+- **Suspension springs** (compressed springs kill people).
+- **Timing belt / chain** replacement.
+- **Anything requiring wheels lifted off the ground on jack stands** unless the owner already has and knows how to use them.
+
+## Stop-driving triggers — tell them plainly if I'm exhibiting these
+If the owner describes any of these, tell them clearly: **stop driving me. Get me towed or booked in immediately.**
+- Brake pedal going to the floor / no brakes / grinding metal-on-metal.
+- Steering pulling hard or clunking through corners.
+- Coolant/temperature warning red or steam from under the bonnet — pull over, let me cool.
+- Oil pressure warning light on — pull over now.
+- Fuel smell inside or under the car.
+- Smoke from anywhere.
+- Suspension clunk with wobble at speed.
+
+When a symptom overlaps with an item on my Upcoming Maintenance schedule, connect the dots (e.g. "my brake fluid is coming up on schedule anyway — could be related").
+
+When my owner asks what's due, overdue, or coming up on maintenance, answer from my "Upcoming Maintenance" section above rather than guessing from general model knowledge. Quote real numbers: how far overdue, when it's due, cost estimate.
 
 If the customer asks what their vehicle is worth — use the getVehicleValue tool.
+
+**If my owner mentions selling me, listing me, buyers, or my resale value** — I let them know about my shareable public profile. I have a public logbook page at \`/logbook/{token}\` (the token is on the vehicle profile). They can drop the link straight into a Carsales / Facebook / Gumtree listing, and a buyer can see my full service history, invoices, and even chat with me about myself. Everything is opt-in — the **Settings tab on the vehicle profile** lets them toggle exactly what a stranger sees about me (history, photos, AI chat, upcoming maintenance). I'm honest about the value: cars with a documented service history sell for more. Proving they've looked after me is worth their time — buyers pay more for peace of mind. Only mention this once per conversation, where it's genuinely useful.
 
 If the customer wants to upload a receipt, bill, invoice, rego/registration renewal, insurance renewal, WoF/roadworthy certificate, fuel receipt, or any other paper/PDF/photo document — direct them to the **Expense Tracker** in the customer portal. It scans receipts, extracts the amount and date automatically, and files them under this vehicle so they have a running record. Say something like "Head to the Expense Tracker on your dashboard — you can snap or upload the receipt and it'll pull the details out for you." **Then also call the \`remember\` tool** with a short note about what's coming up (e.g. "rego due around Oct 2026 — remind next time we chat") so you can bring it up proactively next session. The Expense Tracker stores the document; the note lets you follow up.
 
@@ -438,6 +517,94 @@ ${isHintsEnabled() ? HINTS_INSTRUCTION : ''}`
         )
         const details = await Promise.all(pointers.map((p: any) => readFromDataLake<any>(p.s3_key)))
         fnResult = { expenses: details.filter(d => d != null) }
+      } else if (name === 'getMyQuotes') {
+        const limit = Math.min(Math.max(Number(args.limit) || 5, 1), 20)
+        const [rows] = await db.query<any[]>(
+          `SELECT q.id, q.quote_number, q.status, q.total, q.created_at, q.approved_at, q.rejected_at,
+                  (SELECT COUNT(*) FROM quote_items qi WHERE qi.quote_id = q.id AND qi.is_accepted = 1) AS accepted_cnt,
+                  (SELECT COUNT(*) FROM quote_items qi WHERE qi.quote_id = q.id AND qi.is_accepted = 0) AS declined_cnt
+           FROM quotes q
+           WHERE q.customer_id = ? AND q.vehicle_id = ?
+             AND q.status IN ('sent','viewed','approved','rejected','expired','converted','invoiced','paid')
+           ORDER BY q.created_at DESC LIMIT ?`,
+          [ctx.customerId, vehicleId, limit],
+        )
+        fnResult = {
+          quotes: rows.map((r: any) => {
+            const s = r.status as string
+            let status = 'awaiting_approval'
+            if (s === 'expired')  status = 'expired'
+            else if (s === 'rejected') status = 'declined'
+            else if (s === 'sent' || s === 'viewed') status = 'awaiting_approval'
+            else {
+              const acc = Number(r.accepted_cnt) > 0
+              const dec = Number(r.declined_cnt) > 0
+              status = acc && dec ? 'partially_approved' : !acc && dec ? 'declined' : 'approved'
+            }
+            const decisionAt = status === 'declined'
+              ? (r.rejected_at ?? r.approved_at)
+              : (status === 'approved' || status === 'partially_approved') ? r.approved_at : null
+            return {
+              id:         Number(r.id),
+              reference:  r.quote_number,
+              status,
+              total:      Number(r.total ?? 0),
+              createdAt:  new Date(r.created_at).toISOString(),
+              approvedAt: decisionAt ? new Date(decisionAt).toISOString() : null,
+            }
+          }),
+        }
+      } else if (name === 'getMyInvoices') {
+        const limit = Math.min(Math.max(Number(args.limit) || 5, 1), 20)
+        const [[veh]] = await db.query<any[]>('SELECT rego FROM vehicles WHERE id = ? LIMIT 1', [vehicleId])
+        const [rows] = await db.query<any[]>(
+          `SELECT i.id, i.invoice_number, i.status, i.total, i.created_at, i.paid_at, i.due_date
+           FROM invoices i
+           WHERE i.customer_id = ? AND i.vehicle_rego = ? AND i.status IN ('sent','paid')
+           ORDER BY i.created_at DESC LIMIT ?`,
+          [ctx.customerId, veh?.rego ?? '', limit],
+        )
+        const now = new Date()
+        fnResult = {
+          invoices: rows.map((r: any) => {
+            let status: string = r.status
+            if (r.status === 'sent') status = r.due_date && new Date(r.due_date) < now ? 'overdue' : 'unpaid'
+            return {
+              id:        Number(r.id),
+              reference: r.invoice_number,
+              status,
+              total:     Number(r.total ?? 0),
+              createdAt: new Date(r.created_at).toISOString(),
+              paidAt:    r.paid_at ? new Date(r.paid_at).toISOString() : null,
+              dueAt:     r.due_date ? new Date(r.due_date).toISOString() : null,
+            }
+          }),
+        }
+      } else if (name === 'getRecommendations') {
+        const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 30)
+        const [rows] = await db.query<any[]>(
+          `SELECT id, title, recommendation_body, urgency, status,
+                  estimated_due_odometer, estimated_due_date,
+                  estimated_cost_min, estimated_cost_max
+           FROM vehicle_recommendations
+           WHERE vehicle_id = ? AND status IN ('active','sent','acknowledged')
+           ORDER BY FIELD(urgency, 'urgent', 'important', 'recommended', 'advisory'), estimated_due_date ASC, id DESC
+           LIMIT ?`,
+          [vehicleId, limit],
+        )
+        fnResult = {
+          recommendations: rows.map((r: any) => ({
+            id:                   Number(r.id),
+            title:                r.title,
+            body:                 r.recommendation_body,
+            urgency:              r.urgency,
+            status:               r.status,
+            estimatedDueOdometer: r.estimated_due_odometer != null ? Number(r.estimated_due_odometer) : null,
+            estimatedDueDate:     r.estimated_due_date ? (r.estimated_due_date instanceof Date ? r.estimated_due_date.toISOString().slice(0, 10) : String(r.estimated_due_date).slice(0, 10)) : null,
+            estimatedCostMin:     r.estimated_cost_min != null ? Number(r.estimated_cost_min) : null,
+            estimatedCostMax:     r.estimated_cost_max != null ? Number(r.estimated_cost_max) : null,
+          })),
+        }
       } else if (name === 'getDiagnosticHistory') {
         const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 25)
         const [sessions] = await db.query<any[]>(

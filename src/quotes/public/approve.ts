@@ -54,38 +54,52 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       )
     }
 
-    // ── Mark quote as approved ─────────────────────────────────────────────
-    await db.query(
-      "UPDATE quotes SET status = 'approved', approved_at = NOW(), approval_method = 'email_link' WHERE id = ?",
-      [quote.id],
-    )
+    // ── Mark quote status based on decisions ───────────────────────────────
+    // All-declined → rejected. Any acceptance (full or partial) → approved.
+    const allDeclined = items.every((i: any) => !i.approved)
 
-    // Move linked job back to open so the kanban badge appears
-    await db.query(
-      "UPDATE service_jobs SET status = 'open' WHERE quote_id = ? AND status = 'awaiting_approval'",
-      [quote.id],
-    )
-
-    // ── Create job card items from approved quote line items ───────────────
-    const [[linkedJob]] = await db.query<any[]>(
-      'SELECT id FROM service_jobs WHERE quote_id = ? LIMIT 1',
-      [quote.id],
-    )
-    if (linkedJob) {
-      const [[cardExists]] = await db.query<any[]>(
-        'SELECT id FROM job_card_items WHERE job_id = ? LIMIT 1',
-        [linkedJob.id],
+    if (allDeclined) {
+      await db.query(
+        "UPDATE quotes SET status = 'rejected', rejected_at = NOW(), approval_method = 'email_link' WHERE id = ?",
+        [quote.id],
       )
-      if (!cardExists) {
-        const [lineItems] = await db.query<any[]>(
-          'SELECT id, description, quantity, sort_order FROM quote_items WHERE quote_id = ? ORDER BY sort_order, id',
-          [quote.id],
+      // Cancel the linked job — nothing to do
+      await db.query(
+        "UPDATE service_jobs SET status = 'cancelled' WHERE quote_id = ? AND status = 'awaiting_approval'",
+        [quote.id],
+      )
+    } else {
+      await db.query(
+        "UPDATE quotes SET status = 'approved', approved_at = NOW(), approval_method = 'email_link' WHERE id = ?",
+        [quote.id],
+      )
+      // Move linked job back to open so the kanban badge appears
+      await db.query(
+        "UPDATE service_jobs SET status = 'open' WHERE quote_id = ? AND status = 'awaiting_approval'",
+        [quote.id],
+      )
+
+      // Create job card items from approved quote line items
+      const [[linkedJob]] = await db.query<any[]>(
+        'SELECT id FROM service_jobs WHERE quote_id = ? LIMIT 1',
+        [quote.id],
+      )
+      if (linkedJob) {
+        const [[cardExists]] = await db.query<any[]>(
+          'SELECT id FROM job_card_items WHERE job_id = ? LIMIT 1',
+          [linkedJob.id],
         )
-        for (const li of lineItems) {
-          await db.query(
-            'INSERT INTO job_card_items (job_id, quote_item_id, description, qty, sort_order, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
-            [linkedJob.id, li.id, li.description, li.quantity, li.sort_order],
+        if (!cardExists) {
+          const [lineItems] = await db.query<any[]>(
+            'SELECT id, description, quantity, sort_order FROM quote_items WHERE quote_id = ? AND is_accepted = 1 ORDER BY sort_order, id',
+            [quote.id],
           )
+          for (const li of lineItems) {
+            await db.query(
+              'INSERT INTO job_card_items (job_id, quote_item_id, description, qty, sort_order, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+              [linkedJob.id, li.id, li.description, li.quantity, li.sort_order],
+            )
+          }
         }
       }
     }
@@ -97,10 +111,16 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const quoteItems = await getQuoteItems(db, quote.id)
     const builtQuote = buildQuote(row, quoteItems)
 
+    // Notification: staff_notifications.type enum has no `quote_declined` yet,
+    // so we send the closest available type (`quote_approved`) with a
+    // decline-specific title/body. Add `quote_declined` to the enum if the
+    // dashboard needs to filter these separately.
     await notifyStore(db, row.store_id, {
       type:    'quote_approved',
-      title:   'Quote Approved',
-      body:    `${builtQuote.customerName} approved quote ${builtQuote.quoteNumber}`,
+      title:   allDeclined ? 'Quote Declined' : 'Quote Approved',
+      body:    allDeclined
+        ? `${builtQuote.customerName} declined quote ${builtQuote.quoteNumber}`
+        : `${builtQuote.customerName} approved quote ${builtQuote.quoteNumber}`,
       quoteId: quote.id,
     })
 

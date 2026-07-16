@@ -1,3 +1,10 @@
+// DEPRECATED (2026-07-16): single-turn POST /c/vehicles/{id}/chat.
+// The live frontend uses the session-based endpoint at
+// POST /c/vehicles/{id}/chats/{sessionId}/messages (session-send.ts).
+// No frontend code currently calls this route. Safe to remove the CDK
+// wiring + this file + agents/vehicle.ts if a future cleanup wants to
+// prune the second prompt surface — verify with a grep across the
+// frontend for `POST` calls to `/c/vehicles/*/chat` before deleting.
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import type { Content } from '@google/generative-ai'
 import type mysql from 'mysql2/promise'

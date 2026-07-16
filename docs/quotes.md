@@ -466,8 +466,8 @@ draft ──[POST /send]──▶ sent ─────────────�
 | From | To | How |
 |------|----|-----|
 | `draft` | `sent` | `POST /quotes/{id}/send` only — not via PATCH |
-| `sent` | `rejected` | `PATCH /quotes/{id}` with `status: "rejected"` |
-| `sent` | `approved` | Customer submits `POST /q/{token}/approve` |
+| `sent` | `rejected` | `PATCH /quotes/{id}` with `status: "rejected"`, OR customer declines every line item via `POST /q/{token}/approve` |
+| `sent` | `approved` | Customer accepts at least one line item via `POST /q/{token}/approve` |
 | `approved` | `invoiced` | `PATCH /quotes/{id}` with `status: "invoiced"` |
 | `invoiced` | `paid` | `PATCH /quotes/{id}` with `status: "paid"` |
 
@@ -556,7 +556,20 @@ Content-Type: application/json
 
 ### Response `200`
 
-Returns the full quote object with updated `approved` values on each item and `status: "approved"`.
+Returns the full quote object with updated `approved` values on each item.
+
+- If **any** item was accepted → `status: "approved"`, `approvedAt` stamped.
+- If **every** item was declined → `status: "rejected"`, `rejectedAt` stamped.
+
+Frontend should branch the success screen on the returned `status`:
+
+| Returned `status` | Suggested copy |
+|---|---|
+| `approved` (all items accepted) | "Quote approved — we'll be in touch." |
+| `approved` (some declined) | "Thanks — we'll proceed with the items you accepted." |
+| `rejected` | "Quote declined. Let us know if you'd like to discuss." |
+
+You can detect "partially approved" client-side by inspecting `items[].approved` — if any are `false`, it's partial.
 
 ### Errors
 

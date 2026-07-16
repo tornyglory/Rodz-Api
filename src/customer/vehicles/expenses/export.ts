@@ -3,6 +3,7 @@ import { bootstrap } from '../../../shared/bootstrap'
 import { getPool } from '../../../shared/db'
 import { forbidden, serverError } from '../../../shared/errors'
 import { getCustomerContext, isPremium } from '../../_helpers'
+import { readFromDataLake } from '../../../shared/dataLake'
 
 const ready = bootstrap()
 
@@ -35,25 +36,25 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [vehicleId],
     )
 
-    const conditions: string[] = ['vehicle_id = ?', 'customer_id = ?']
+    // Expenses live in S3 via s3_event_index — see create.ts:17. Filter the
+    // pointers by date on the index (indexed columns), then hydrate detail
+    // rows from S3. Category/business filters apply after hydration.
+    const conditions: string[] = ['vehicle_id = ?', 'customer_id = ?', "event_type IN ('fuel-fills','expenses')"]
     const params: any[]        = [vehicleId, ctx.customerId]
 
-    if (q.from)         { conditions.push('expense_date >= ?'); params.push(q.from) }
-    if (q.to)           { conditions.push('expense_date <= ?'); params.push(q.to) }
-    if (q.year)         { conditions.push('YEAR(expense_date) = ?'); params.push(Number(q.year)) }
-    if (q.businessOnly === 'true') { conditions.push('is_business_expense = 1') }
+    if (q.from) { conditions.push('event_date >= ?');    params.push(q.from) }
+    if (q.to)   { conditions.push('event_date <= ?');    params.push(q.to)   }
+    if (q.year) { conditions.push('YEAR(event_date) = ?'); params.push(Number(q.year)) }
 
-    const [rows] = await db.query<any[]>(
-      `SELECT category, merchant_name, merchant_suburb, merchant_state,
-              amount_aud, expense_date, odometer_km,
-              fuel_type, fuel_litres, price_per_litre,
-              ev_kwh, price_per_kwh,
-              is_business_expense, notes
-       FROM vehicle_expenses
+    const [pointers] = await db.query<any[]>(
+      `SELECT id, s3_key, event_date FROM s3_event_index
        WHERE ${conditions.join(' AND ')}
-       ORDER BY expense_date ASC, id ASC`,
+       ORDER BY event_date ASC, id ASC`,
       params,
     )
+
+    const details = await Promise.all(pointers.map((p: any) => readFromDataLake<any>(p.s3_key)))
+    const wantBusinessOnly = q.businessOnly === 'true'
 
     const headers = [
       'Date', 'Category', 'Merchant', 'Suburb', 'State',
@@ -63,27 +64,33 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       'Business Expense', 'Notes',
     ]
 
-    const csvRows = rows.map((r: any) => {
-      const date = r.expense_date instanceof Date
-        ? r.expense_date.toISOString().slice(0, 10)
-        : String(r.expense_date).slice(0, 10)
-      return [
+    const csvRows: string[] = []
+    for (let i = 0; i < pointers.length; i++) {
+      const p = pointers[i]
+      const d = details[i]
+      if (!d) continue
+      if (wantBusinessOnly && !d.isBusinessExpense) continue
+
+      const date = d.expenseDate
+        ?? (p.event_date instanceof Date ? p.event_date.toISOString().slice(0, 10) : String(p.event_date).slice(0, 10))
+
+      csvRows.push([
         date,
-        r.category,
-        r.merchant_name,
-        r.merchant_suburb,
-        r.merchant_state,
-        r.amount_aud != null ? Number(r.amount_aud).toFixed(2) : '',
-        r.odometer_km != null ? Number(r.odometer_km) : '',
-        r.fuel_type,
-        r.fuel_litres != null ? Number(r.fuel_litres).toFixed(3) : '',
-        r.price_per_litre != null ? Number(r.price_per_litre).toFixed(3) : '',
-        r.ev_kwh != null ? Number(r.ev_kwh).toFixed(3) : '',
-        r.price_per_kwh != null ? Number(r.price_per_kwh).toFixed(3) : '',
-        r.is_business_expense ? 'Yes' : 'No',
-        r.notes,
-      ].map(csvEscape).join(',')
-    })
+        d.category,
+        d.merchantName    ?? '',
+        d.merchantSuburb  ?? '',
+        d.merchantState   ?? '',
+        d.amount          != null ? Number(d.amount).toFixed(2)         : '',
+        d.odometerKm      != null ? Number(d.odometerKm)                : '',
+        d.fuelType        ?? '',
+        d.litres          != null ? Number(d.litres).toFixed(3)         : '',
+        d.pricePerLitre   != null ? Number(d.pricePerLitre).toFixed(3)  : '',
+        d.evKwh           != null ? Number(d.evKwh).toFixed(3)          : '',
+        d.pricePerKwh     != null ? Number(d.pricePerKwh).toFixed(3)    : '',
+        d.isBusinessExpense ? 'Yes' : 'No',
+        d.notes ?? '',
+      ].map(csvEscape).join(','))
+    }
 
     const yearLabel = q.year ?? (q.from ? q.from.slice(0, 4) : new Date().getFullYear())
     const filename  = veh

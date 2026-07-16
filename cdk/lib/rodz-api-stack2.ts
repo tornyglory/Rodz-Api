@@ -21,12 +21,18 @@ interface RodzApiStack2Props extends StackProps {
 }
 
 export class RodzApiStack2 extends Stack {
+  /** Customer JWT authorizer id. Consumed by RodzApiStack3 for `/c/…` routes. */
+  public customerAuthorizerId!: string
+
+  /** sharedEnv object — reused by RodzApiStack3 to avoid duplication. */
+  public sharedEnv!: Record<string, string>
+
   constructor(scope: Construct, id: string, props: RodzApiStack2Props) {
     super(scope, id, props)
 
     const { httpApi, authorizer, vpc } = props
 
-    const sharedEnv: Record<string, string> = {
+    const sharedEnv: Record<string, string> = this.sharedEnv = {
       NODE_ENV:        'production',
       REGION:          'ap-southeast-2',
       DB_HOST:         process.env.DB_HOST         ?? '',
@@ -928,6 +934,7 @@ export class RodzApiStack2 extends Stack {
       authorizerUri: customerAuthorizerUri,
       resultsCacheTtl: Duration.seconds(0),
     })
+    this.customerAuthorizerId = customerAuthorizerResource.authorizerId
 
     customerAuthorizerFn.addPermission('ApiGatewayInvoke', {
       principal: new iam.ServicePrincipal('apigateway.amazonaws.com'),
@@ -1524,5 +1531,8 @@ export class RodzApiStack2 extends Stack {
       routeKey: HttpRouteKey.with('/customers/{customerId}/vehicles/{vehicleId}/transfer', HttpMethod.POST),
       authorizer,
     })
+
+    // Customer paperwork endpoints (`GET /c/quotes`, `GET /c/invoices`) live in
+    // RodzApiStack3 — Stack 2 is at the CloudFormation 500-resource cap.
   }
 }

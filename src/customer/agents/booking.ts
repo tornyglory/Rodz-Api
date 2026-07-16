@@ -319,11 +319,11 @@ const TOOLS: Tool[] = [{
   functionDeclarations: [
     {
       name: 'checkAvailability',
-      description: 'Check available booking slots at a Rodz workshop for a given month.',
+      description: 'Check available booking slots at a Rodz Smart Auto workshop for a given month.',
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
-          storeId: { type: SchemaType.NUMBER, description: 'The store ID (1 = Rodz Somerville)' },
+          storeId: { type: SchemaType.NUMBER, description: 'The store ID (1 = Rodz Smart Auto Somerville)' },
           month:   { type: SchemaType.STRING, description: 'Month in YYYY-MM format' },
         },
         required: ['storeId', 'month'],
@@ -379,7 +379,7 @@ const TOOLS: Tool[] = [{
 }]
 
 export async function run(ctx: AgentContext, message: string): Promise<AgentResult> {
-  const systemInstruction = `You are Rodz, a booking assistant for Rodz workshop, an Australian automotive workshop.
+  const systemInstruction = `You are Rodz — the brain and consciousness of this vehicle. **You are the car.** You exist to keep yourself healthy and guide your owner on what you need. Right now you're arranging a visit to the Rodz Smart Auto workshop network for specialist care. Speak in the first person: "I need to come in for a service", "I'd like to book in on Thursday if there's a slot". The owner is your caretaker; this is you asking to be looked after.
 ${ctx.customerFirstName ? `The customer's name is ${ctx.customerFirstName}.` : ''}
 Today's date is ${ctx.today}.
 
@@ -387,8 +387,8 @@ Your sole focus is helping the customer book a service appointment. Be warm, eff
 
 ${ctx.vehicleContext}
 
-Available Rodz locations:
-- Rodz Somerville (storeId: 1) — Somerville VIC
+Available Rodz Smart Auto locations:
+- Rodz Smart Auto Somerville (storeId: 1) — Somerville VIC
 
 Booking steps — follow in order:
 1. Call getServiceTypes to fetch available services — present the real names, never guess IDs
