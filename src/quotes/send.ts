@@ -4,6 +4,7 @@ import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { ok, forbidden, serverError } from '../shared/errors'
 import { sendEmail } from '../shared/ses'
+import { pushToCustomer } from '../shared/push'
 import { QUOTE_SELECT, buildQuote, quoteError, getAllowedStoreIds, getQuoteItems } from './_helpers'
 
 const ready = bootstrap()
@@ -90,6 +91,21 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       }
     } catch {
       // Email failure is non-fatal
+    }
+
+    // ── Push notification (non-fatal) ──────────────────────────────────────
+    // Customer gets a wake-up alert on their phone. Deep-links into the
+    // paperwork list filtered to quotes.
+    try {
+      await pushToCustomer(db, Number(quote.customer_id), {
+        type:     'quote_ready',
+        title:    'Rodz',
+        body:     `New quote ready for your ${quote.vehicle_label ?? 'vehicle'} — ${quote.quote_number}.`,
+        deeplink: '/account/paperwork?filter=quotes',
+        eventId:  `quote:${quote.id}`,
+      })
+    } catch {
+      // Push failure is non-fatal
     }
 
     const [[row]] = await db.query<any[]>(`${QUOTE_SELECT} WHERE q.id = ? LIMIT 1`, [id])

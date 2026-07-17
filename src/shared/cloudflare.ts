@@ -9,10 +9,13 @@ export function imageUrls(imageId: string) {
   return { thumbnail: `${base}/thumbnail`, public: `${base}/public` }
 }
 
-export async function getDirectUploadUrl(source: string): Promise<{ uploadUrl: string; imageId: string }> {
+export async function getDirectUploadUrl(
+  source: string,
+  extraMetadata?: Record<string, unknown>,
+): Promise<{ uploadUrl: string; imageId: string }> {
   const form = new FormData()
   form.append('requireSignedURLs', 'false')
-  form.append('metadata', JSON.stringify({ source }))
+  form.append('metadata', JSON.stringify({ source, ...extraMetadata }))
 
   const res = await fetch(`${CF_BASE}/${accountId()}/images/v2/direct_upload`, {
     method: 'POST',

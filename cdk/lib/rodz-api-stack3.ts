@@ -3,11 +3,13 @@ import { Stack, StackProps } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as ec2 from 'aws-cdk-lib/aws-ec2'
 import { HttpApi, HttpRoute, HttpRouteKey, HttpMethod, HttpAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2'
+import { HttpLambdaAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers'
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations'
 import { LambdaFn } from './constructs/lambda-fn'
 
 interface RodzApiStack3Props extends StackProps {
   httpApi:              HttpApi
+  authorizer:           HttpLambdaAuthorizer
   vpc:                  ec2.IVpc
   sharedEnv:            Record<string, string>
   customerAuthorizerId: string
@@ -24,7 +26,7 @@ export class RodzApiStack3 extends Stack {
   constructor(scope: Construct, id: string, props: RodzApiStack3Props) {
     super(scope, id, props)
 
-    const { httpApi, vpc, sharedEnv, customerAuthorizerId } = props
+    const { httpApi, authorizer, vpc, sharedEnv, customerAuthorizerId } = props
 
     const src = (p: string) => path.join(__dirname, '../../src', p)
 
@@ -71,5 +73,135 @@ export class RodzApiStack3 extends Stack {
       routeKey: HttpRouteKey.with('/c/vehicles/{id}/health', HttpMethod.GET),
       authorizer: customerAuthorizer,
     })
+
+    // ── Push notifications — Phase 1.1 device-token registration ────────────
+
+    const customerPushRegisterFn = new LambdaFn(this, 'CustomerPushRegister', {
+      entry: src('customer/push/register.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerPushRegisterRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerPushRegisterInt', customerPushRegisterFn),
+      routeKey: HttpRouteKey.with('/c/push/register', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerPushUnregisterFn = new LambdaFn(this, 'CustomerPushUnregister', {
+      entry: src('customer/push/unregister.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerPushUnregisterRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerPushUnregisterInt', customerPushUnregisterFn),
+      routeKey: HttpRouteKey.with('/c/push/register', HttpMethod.DELETE),
+      authorizer: customerAuthorizer,
+    })
+
+    // Test-push endpoint — support/debug utility. Bypasses gating.
+    const customerPushTestFn = new LambdaFn(this, 'CustomerPushTest', {
+      entry: src('customer/push/test.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerPushTestRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerPushTestInt', customerPushTestFn),
+      routeKey: HttpRouteKey.with('/c/push/test', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    // Notification preferences — per-topic opt-outs + quiet hours
+    const customerNotifPrefsGetFn = new LambdaFn(this, 'CustomerNotifPrefsGet', {
+      entry: src('customer/me/notification-prefs-get.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerNotifPrefsGetRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerNotifPrefsGetInt', customerNotifPrefsGetFn),
+      routeKey: HttpRouteKey.with('/c/me/notification-prefs', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerNotifPrefsUpdateFn = new LambdaFn(this, 'CustomerNotifPrefsUpdate', {
+      entry: src('customer/me/notification-prefs-update.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerNotifPrefsUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerNotifPrefsUpdateInt', customerNotifPrefsUpdateFn),
+      routeKey: HttpRouteKey.with('/c/me/notification-prefs', HttpMethod.PATCH),
+      authorizer: customerAuthorizer,
+    })
+
+    // ── Staff vehicle profile — upload URL + AI description enhance ────────
+
+    const vehicleUploadUrlFn = new LambdaFn(this, 'VehicleUploadUrl', {
+      entry: src('customers/vehicles/upload-url.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'VehicleUploadUrlRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleUploadUrlInt', vehicleUploadUrlFn),
+      routeKey: HttpRouteKey.with('/customers/{customerId}/vehicles/{vehicleId}/upload-url', HttpMethod.GET),
+      authorizer,
+    })
+
+    const vehicleDescriptionEnhanceFn = new LambdaFn(this, 'VehicleDescriptionEnhance', {
+      entry: src('customers/vehicles/description-enhance.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'VehicleDescriptionEnhanceRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleDescriptionEnhanceInt', vehicleDescriptionEnhanceFn),
+      routeKey: HttpRouteKey.with('/customers/{customerId}/vehicles/{vehicleId}/description/enhance', HttpMethod.POST),
+      authorizer,
+    })
+
+    // ── Staff vehicle gallery — /vehicles/{id}/gallery* ────────────────────
+
+    const vehicleGalleryListFn = new LambdaFn(this, 'VehicleGalleryList', {
+      entry: src('vehicles/gallery-list.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'VehicleGalleryListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleGalleryListInt', vehicleGalleryListFn),
+      routeKey: HttpRouteKey.with('/vehicles/{id}/gallery', HttpMethod.GET),
+      authorizer,
+    })
+
+    const vehicleGalleryUploadUrlFn = new LambdaFn(this, 'VehicleGalleryUploadUrl', {
+      entry: src('vehicles/gallery-upload-url.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'VehicleGalleryUploadUrlRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleGalleryUploadUrlInt', vehicleGalleryUploadUrlFn),
+      routeKey: HttpRouteKey.with('/vehicles/{id}/gallery/upload-url', HttpMethod.GET),
+      authorizer,
+    })
+
+    const vehicleGalleryCreateFn = new LambdaFn(this, 'VehicleGalleryCreate', {
+      entry: src('vehicles/gallery-create.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'VehicleGalleryCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleGalleryCreateInt', vehicleGalleryCreateFn),
+      routeKey: HttpRouteKey.with('/vehicles/{id}/gallery', HttpMethod.POST),
+      authorizer,
+    })
+
+    const vehicleGalleryDeleteFn = new LambdaFn(this, 'VehicleGalleryDelete', {
+      entry: src('vehicles/gallery-delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'VehicleGalleryDeleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehicleGalleryDeleteInt', vehicleGalleryDeleteFn),
+      routeKey: HttpRouteKey.with('/vehicles/{id}/gallery/{imageId}', HttpMethod.DELETE),
+      authorizer,
+    })
+
   }
 }

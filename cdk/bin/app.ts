@@ -27,6 +27,7 @@ const stack2 = new RodzApiStack2(app, 'RodzApiStack2', {
 new RodzApiStack3(app, 'RodzApiStack3', {
   env,
   httpApi:              coreStack.httpApi,
+  authorizer:           coreStack.authorizer,
   vpc:                  coreStack.vpc,
   sharedEnv:            stack2.sharedEnv,
   customerAuthorizerId: stack2.customerAuthorizerId,

@@ -5,6 +5,7 @@ import { getPool } from '../../../shared/db'
 import { ok, forbidden, validationError, serverError } from '../../../shared/errors'
 import { getCustomerContext, isPremium } from '../../_helpers'
 import { imageUrls } from '../../../shared/cloudflare'
+import { bumpOdometer } from '../../../shared/odometer'
 
 const ready   = bootstrap()
 const CF_HASH = process.env.CF_ACCOUNT_HASH ?? ''
@@ -96,6 +97,14 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
        services, amountAud, invoiceNumber, status],
     )
     const entryId = result.insertId
+
+    // Ratchet the vehicle's odometer forward if this imported reading is
+    // newer than what we have. Silent no-op on backwards / past entries.
+    if (odometerKm != null) {
+      await bumpOdometer(db, vehicleId, odometerKm, 'logbook').catch(err =>
+        console.error(`odometer ratchet from logbook import failed for vehicle ${vehicleId}:`, err),
+      )
+    }
 
     return ok({
       id:             entryId,

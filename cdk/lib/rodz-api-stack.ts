@@ -46,6 +46,11 @@ export class RodzApiStack extends Stack {
       CF_IMAGES_TOKEN:  process.env.CF_IMAGES_TOKEN  ?? '',
       REDIS_URL:          process.env.REDIS_URL          ?? '',
       RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED ?? 'false',
+      // Push notification platform ARNs — read by src/shared/push.ts.
+      // All customer-facing event hooks (quote/invoice/booking/job) live
+      // in this stack and need these to actually deliver via SNS.
+      IOS_PLATFORM_APP_ARN:     process.env.IOS_PLATFORM_APP_ARN     ?? '',
+      ANDROID_PLATFORM_APP_ARN: process.env.ANDROID_PLATFORM_APP_ARN ?? '',
     }
 
     const src = (p: string) => path.join(__dirname, '../../src', p)

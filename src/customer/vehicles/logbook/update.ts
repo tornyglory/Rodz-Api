@@ -4,6 +4,7 @@ import { getPool } from '../../../shared/db'
 import { ok, forbidden, notFound, validationError, serverError } from '../../../shared/errors'
 import { getCustomerContext, isPremium } from '../../_helpers'
 import { imageUrls } from '../../../shared/cloudflare'
+import { bumpOdometer } from '../../../shared/odometer'
 
 const ready = bootstrap()
 
@@ -49,6 +50,13 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (params.length > 0) {
       params.push(entryId)
       await db.query(`UPDATE vehicle_service_log_external SET ${sets.join(', ')} WHERE id = ?`, params)
+    }
+
+    // Ratchet vehicle odometer forward from this reading if newer.
+    if (odometerKm !== undefined && odometerKm != null) {
+      await bumpOdometer(db, vehicleId, Number(odometerKm), 'logbook').catch(err =>
+        console.error(`odometer ratchet from logbook update failed for vehicle ${vehicleId}:`, err),
+      )
     }
 
     const [[row]] = await db.query<any[]>(

@@ -6,6 +6,7 @@ import { getCustomerContext, isPremium } from '../../_helpers'
 import { imageUrls } from '../../../shared/cloudflare'
 import { refreshVehicleSummaries } from '../../../shared/summaries'
 import { readFromDataLake, overwriteInDataLake } from '../../../shared/dataLake'
+import { bumpOdometer } from '../../../shared/odometer'
 
 const ready = bootstrap()
 
@@ -83,6 +84,15 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [newEventType, merged.expenseDate ?? pointer.event_date, write.summary, merged.amount ?? null, merged.category ?? null, expenseId],
     )
     await refreshVehicleSummaries(db, vehicleId)
+
+    // Ratchet vehicle odometer forward if the (possibly patched) reading
+    // is newer than what we have.
+    if (merged.odometerKm != null) {
+      const source = newIsFuel ? 'fuel-fill' : 'expense'
+      await bumpOdometer(db, vehicleId, Number(merged.odometerKm), source).catch(err =>
+        console.error(`odometer ratchet from ${source} update failed for vehicle ${vehicleId}:`, err),
+      )
+    }
 
     return ok({
       id:                expenseId,

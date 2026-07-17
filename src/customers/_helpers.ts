@@ -105,8 +105,41 @@ export async function buildCustomerList(db: mysql.Pool, rows: any[]) {
   })
 }
 
+const NOTIFICATION_TOPIC_COLUMNS = [
+  'service_due',
+  'rego_expiring',
+  'booking',
+  'quote',
+  'invoice',
+  'urgent_reco',
+  'workshop_message',
+] as const
+
+const TOPIC_COLUMN_TO_KEY: Record<(typeof NOTIFICATION_TOPIC_COLUMNS)[number], string> = {
+  service_due:      'serviceDue',
+  rego_expiring:    'regoExpiring',
+  booking:          'booking',
+  quote:            'quote',
+  invoice:          'invoice',
+  urgent_reco:      'urgentReco',
+  workshop_message: 'workshopMessage',
+}
+
+function timeToHhMm(v: unknown): string | null {
+  if (!v) return null
+  // mysql2 returns TIME as "HH:MM:SS" string. TRIM to "HH:MM" per project convention.
+  return String(v).slice(0, 5)
+}
+
+function isoOrNull(v: unknown): string | null {
+  if (!v) return null
+  if (v instanceof Date) return v.toISOString()
+  const d = new Date(String(v))
+  return isNaN(d.getTime()) ? null : d.toISOString()
+}
+
 export async function buildCustomerFull(db: mysql.Pool, row: any) {
-  const [tags, vehicles, stats, spend, jobs, notesCountRes] = await Promise.all([
+  const [tags, vehicles, stats, spend, jobs, notesCountRes, pushDevicesRes, notifPrefsRes] = await Promise.all([
     db.query<any[]>('SELECT tag FROM customer_tags WHERE customer_id = ?', [row.id]),
     db.query<any[]>(
       `SELECT v.id, v.rego, v.year, v.make, v.model, v.avatar_image_id, v.cover_image_id,
@@ -173,9 +206,35 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
       'SELECT COUNT(*) AS count FROM customer_notes WHERE customer_id = ?',
       [row.id],
     ),
+    db.query<any[]>(
+      `SELECT COUNT(*) AS device_count, MAX(last_seen_at) AS last_seen
+         FROM customer_push_tokens
+        WHERE customer_id = ?`,
+      [row.id],
+    ),
+    db.query<any[]>(
+      `SELECT service_due, rego_expiring, booking, quote, invoice,
+              urgent_reco, workshop_message,
+              quiet_hours_start, quiet_hours_end
+         FROM customer_notification_prefs
+        WHERE customer_id = ?
+        LIMIT 1`,
+      [row.id],
+    ),
   ])
 
-  const [[tagRows], [vehicleRows], [[statsRow]], [[spendRow]], [jobRows], [[notesRow]]] = [tags, vehicles, stats, spend, jobs, notesCountRes]
+  const [[tagRows], [vehicleRows], [[statsRow]], [[spendRow]], [jobRows], [[notesRow]], [[pushRow]], [[prefsRow]]] =
+    [tags, vehicles, stats, spend, jobs, notesCountRes, pushDevicesRes, notifPrefsRes]
+
+  const topicsOptedOut: string[] = []
+  if (prefsRow) {
+    for (const col of NOTIFICATION_TOPIC_COLUMNS) {
+      if (Number(prefsRow[col]) === 0) topicsOptedOut.push(TOPIC_COLUMN_TO_KEY[col])
+    }
+  }
+
+  const quietStart = timeToHhMm(prefsRow?.quiet_hours_start)
+  const quietEnd   = timeToHhMm(prefsRow?.quiet_hours_end)
 
   return {
     id:            row.id,
@@ -215,5 +274,15 @@ export async function buildCustomerFull(db: mysql.Pool, row: any) {
       km:              j.km ?? null,
       nextServiceDueKm: j.next_service_due_km ?? null,
     })),
+    notifications: {
+      pushDevices:      Number(pushRow?.device_count ?? 0),
+      pushLastSeenAt:   isoOrNull(pushRow?.last_seen),
+      topicsOptedOut,
+      quietHours:       quietStart && quietEnd ? { start: quietStart, end: quietEnd } : null,
+      preferredContact: (row.preferred_contact ?? 'mobile') as 'mobile' | 'email' | 'sms' | 'app',
+      smsOptIn:         Boolean(row.sms_opt_in),
+      marketingOptIn:   Boolean(row.marketing_opt_in),
+      pushOptIn:        Boolean(row.push_opt_in),
+    },
   }
 }

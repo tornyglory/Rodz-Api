@@ -5,6 +5,7 @@ import { getPool } from '../../shared/db'
 import { ok, validationError, forbidden, notFound, serverError } from '../../shared/errors'
 import { getCustomerContext, buildVehicle } from '../_helpers'
 import { maybeRegenerateSchedule } from '../../shared/aiEngines'
+import { bumpOdometer } from '../../shared/odometer'
 
 const ready = bootstrap()
 
@@ -40,12 +41,22 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (colour      != null) { sets.push('colour = ?');           params.push(String(colour).trim() || null) }
     if (regoExpiry  != null) { sets.push('rego_expiry = ?');      params.push(String(regoExpiry)) }
     if (vin         != null) { sets.push('vin = ?');              params.push(String(vin).trim().toUpperCase() || null) }
-    if (odometerKm  != null) { sets.push('odometer_current = ?'); params.push(Number(odometerKm)) }
     if (description != null) { sets.push('description = ?');      params.push(String(description).trim() || null) }
+
+    if (odometerKm != null) {
+      const bump = await bumpOdometer(db, vehicleId, Number(odometerKm), 'customer')
+      if (!bump.ok && bump.reason === 'backwards') {
+        return validationError(`odometerKm cannot decrease. Previous reading was ${bump.previous.toLocaleString()} km.`)
+      }
+      if (!bump.ok && bump.reason === 'not_found') return notFound('Vehicle')
+    }
 
     if (params.length > 0) {
       params.push(vehicleId)
       await db.query(`UPDATE vehicles SET ${sets.join(', ')} WHERE id = ?`, params)
+    }
+
+    if (params.length > 0 || odometerKm != null) {
       await safeDel([`vehicle:${vehicleId}:context`, `customer:${ctx.customerId}:profile`])
     }
 

@@ -6,6 +6,7 @@ import { getCustomerContext, isPremium } from '../../_helpers'
 import { imageUrls } from '../../../shared/cloudflare'
 import { writeToDataLake } from '../../../shared/dataLake'
 import { refreshVehicleSummaries } from '../../../shared/summaries'
+import { bumpOdometer } from '../../../shared/odometer'
 
 const ready = bootstrap()
 
@@ -81,6 +82,16 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const expenseId = ins.insertId as number
 
     await refreshVehicleSummaries(db, vehicleId)
+
+    // Ratchet the source of truth forward when this snapshot is newer than
+    // what we have. Silent no-op if the snapshot is older (e.g. a receipt
+    // being logged after the fact) — we don't fail the expense create.
+    if (payload.odometerKm != null) {
+      const source = isFuel ? 'fuel-fill' : 'expense'
+      await bumpOdometer(db, vehicleId, payload.odometerKm, source).catch(err =>
+        console.error(`odometer ratchet from ${source} failed for vehicle ${vehicleId}:`, err),
+      )
+    }
 
     // Fuel-price intelligence side-effect (unchanged behaviour — writes to
     // fuel_station_prices for the network benchmarking feature). Uses the

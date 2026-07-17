@@ -11,6 +11,7 @@ import { generateJobNumber, buildJob, getJobServices, JOB_SELECT_BY_ID } from '.
 import { buildHoist, HOIST_SELECT_BY_ID } from '../hoists/_helpers'
 import { sendBookingConfirmedEmail } from '../shared/emailTemplates'
 import { pushToStore } from '../shared/wsPush'
+import { pushToCustomer } from '../shared/push'
 
 const ready = bootstrap()
 
@@ -215,7 +216,39 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const [[updatedRow]] = await db.query<any[]>(BOOKING_SELECT_BY_ID, [id])
     const servicesMap = await getBookingServices(db, [Number(id)])
     const result = buildBooking(updatedRow, servicesMap.get(Number(id)) ?? [])
-    if (status === 'confirmed') await sendBookingConfirmedEmail(db, result)
+    if (status === 'confirmed') {
+      await sendBookingConfirmedEmail(db, result)
+
+      // Customer push (non-fatal). Dedupe key is stable per booking-id, so
+      // re-confirming won't re-notify. The chat deep-link surfaces the
+      // booking summary to the customer as soon as they land.
+      try {
+        const serviceNames = (result.services ?? [])
+          .map((s: any) => s.serviceName ?? s.customerDescription)
+          .filter((n: string | null | undefined) => !!n)
+          .slice(0, 2)
+          .join(' + ')
+        const service = serviceNames || 'your service'
+        const dateStr = result.date
+          ? new Date(`${result.date}T00:00:00`).toLocaleDateString('en-AU',
+              { weekday: 'short', day: 'numeric', month: 'short' })
+          : 'your booking date'
+        const timePart = result.dropOffTime ? ` at ${result.dropOffTime}` : ''
+        const storeName = (result.store ?? '').replace(/^Rodz\s+Smart\s+Auto\s+/i, '')
+          .replace(/^Rodz\s+/i, '') || (result.store ?? 'Rodz Smart Auto')
+
+        await pushToCustomer(db, Number(result.customerId), {
+          type:      'booking_confirmed',
+          title:     'Rodz',
+          body:      `You're booked in for ${service} on ${dateStr}${timePart} at ${storeName}.`,
+          deeplink:  result.vehicleId ? `/account/vehicles/${result.vehicleId}/chat` : '/account',
+          eventId:   `booking:${result.id}:confirmed`,
+          vehicleId: result.vehicleId ?? null,
+        })
+      } catch {
+        // Non-fatal
+      }
+    }
     return ok({ booking: result })
   } catch (err) {
     return serverError(err)

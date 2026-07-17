@@ -5,6 +5,7 @@ import { getAuthContext } from '../shared/auth'
 import { ok, notFound, forbidden, validationError, serverError } from '../shared/errors'
 import { invoiceError, INVOICE_SELECT_BY_ID, buildInvoice, getInvoiceItems, getAllowedStoreIds, upsertServiceLog } from './_helpers'
 import { notifyStore } from '../shared/staffNotifications'
+import { pushToCustomer } from '../shared/push'
 
 const ready = bootstrap()
 
@@ -53,6 +54,21 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       body:      `Invoice ${invoice.invoiceNumber} paid — $${Number(invoice.total).toFixed(2)}`,
       invoiceId: Number(id),
     })
+
+    // Customer receipt push (non-fatal). Include ISO date in eventId so
+    // paid → refunded → repaid cycles re-notify per transition.
+    try {
+      const paidStamp = new Date().toISOString().slice(0, 10)
+      await pushToCustomer(db, Number(invoice.customerId), {
+        type:     'payment_received',
+        title:    'Rodz',
+        body:     `Thanks — payment received for invoice ${invoice.invoiceNumber} ($${Number(invoice.total).toFixed(0)}).`,
+        deeplink: '/account/paperwork?filter=invoices',
+        eventId:  `invoice:${invoice.id}:paid:${paidStamp}`,
+      })
+    } catch {
+      // Non-fatal
+    }
 
     return ok({ invoice })
   } catch (err) {

@@ -9,13 +9,17 @@ if (!sqlPath) { console.error('Usage: node run-migration.mjs <path-to-sql>'); pr
 
 const sql = fs.readFileSync(path.resolve(sqlPath), 'utf8')
 
+// Local runs against Azure MySQL fail cert verification unless the DigiCert
+// Global Root G2 chain is installed. Allow relaxed TLS via env for dev.
+const rejectUnauthorized = process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false'
+
 const conn = await mysql.createConnection({
   host:     process.env.DB_HOST,
   user:     process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   port:     Number(process.env.DB_PORT ?? 3306),
-  ssl:      { rejectUnauthorized: true },
+  ssl:      { rejectUnauthorized },
   multipleStatements: false,
 })
 

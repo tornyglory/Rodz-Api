@@ -32,6 +32,13 @@ export class RodzApiStack2 extends Stack {
 
     const { httpApi, authorizer, vpc } = props
 
+    // SNS platform applications are NOT supported as native CloudFormation
+    // resources — they must be created via the SDK/CLI. See:
+    // https://docs.aws.amazon.com/cloudformation/latest/userguide/aws-resource-sns-*
+    // The ARNs come in via env vars (`IOS_PLATFORM_APP_ARN`, `ANDROID_PLATFORM_APP_ARN`)
+    // set in .env after `aws sns create-platform-application`. `src/shared/push.ts`
+    // reads them at runtime and skips sending (logs "would send") if unset.
+
     const sharedEnv: Record<string, string> = this.sharedEnv = {
       NODE_ENV:        'production',
       REGION:          'ap-southeast-2',
@@ -60,6 +67,10 @@ export class RodzApiStack2 extends Stack {
       VOICE_VOICE_NAME:          process.env.VOICE_VOICE_NAME          ?? 'Aoede',
       VOICE_SESSION_TTL_SECONDS: process.env.VOICE_SESSION_TTL_SECONDS ?? '900',
       VOICE_DAILY_LIMIT_SECONDS: process.env.VOICE_DAILY_LIMIT_SECONDS ?? '1800',
+      // Push notification platform ARNs — consumed by src/shared/push.ts.
+      // ANDROID_PLATFORM_APP_ARN stays empty until FCM credentials land.
+      IOS_PLATFORM_APP_ARN:      process.env.IOS_PLATFORM_APP_ARN     ?? '',
+      ANDROID_PLATFORM_APP_ARN:  process.env.ANDROID_PLATFORM_APP_ARN ?? '',
       // GEMINI_VOICE_API_KEY is set per-Lambda after deploy via
       // `aws lambda update-function-configuration` — it's a secret and
       // shouldn't live in the CDK env stanza.

@@ -66,6 +66,15 @@ function getOrCreateSharedRole(stack: Stack): iam.Role {
           resources: ['*'],
         })],
       }),
+      // SNS — push notification fan-out via APNs + FCM platform apps.
+      // CreatePlatformEndpoint is idempotent when called with the same
+      // device token; Publish targets the resulting endpoint ARN.
+      SNSPush: new iam.PolicyDocument({
+        statements: [new iam.PolicyStatement({
+          actions:   ['sns:CreatePlatformEndpoint', 'sns:Publish', 'sns:GetEndpointAttributes', 'sns:SetEndpointAttributes'],
+          resources: ['*'],
+        })],
+      }),
     },
   })
 }

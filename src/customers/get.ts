@@ -24,7 +24,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const [[row]] = await db.query<any[]>(
       `SELECT c.id, c.first_name, c.last_name, c.email, c.mobile, c.internal_notes,
               c.date_of_birth, c.created_at, c.address_line1, c.address_line2, c.suburb, c.state, c.postcode,
-              c.is_premium, c.tier, c.avatar_image_id, st.name AS store_name
+              c.is_premium, c.tier, c.avatar_image_id,
+              c.preferred_contact, c.sms_opt_in, c.marketing_opt_in, c.push_opt_in,
+              st.name AS store_name
        FROM customers c
        JOIN stores st ON st.id = c.store_id
        WHERE c.id = ? AND c.is_active = 1${storeFilter}

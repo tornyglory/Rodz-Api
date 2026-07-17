@@ -8,8 +8,10 @@ import { buildHoist, HOIST_SELECT_BY_ID } from '../hoists/_helpers'
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs'
 import { sendWorkCommencedEmail, sendWorkCompleteEmail } from '../shared/emailTemplates'
 import { notifyStore } from '../shared/staffNotifications'
+import { pushToCustomer } from '../shared/push'
 import { pushToStore } from '../shared/wsPush'
 import { maybeRegenerateSchedule } from '../shared/aiEngines'
+import { bumpOdometer } from '../shared/odometer'
 
 const sqsClient = new SQSClient({ region: process.env.REGION ?? 'ap-southeast-2' })
 
@@ -110,13 +112,21 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const servicesMap = await getJobServices(db, [Number(id)])
     const result = buildJob(updatedRow, servicesMap.get(Number(id)) ?? [])
 
-    // Mirror odometer to vehicles so the prediction engine has a fresh reference point
+    // Mirror odometer to vehicles so the prediction engine has a fresh
+    // reference point. Backwards readings (tech typo, wrong car) silently
+    // no-op — we don't want to fail the whole job update over a stale
+    // number. The job's own `odometer_in` snapshot is still preserved.
     if (odometerIn != null && updatedRow.vehicle_id) {
-      await db.query(
-        `UPDATE vehicles SET odometer_current = ?, odometer_recorded_at = CURDATE(), updated_at = NOW() WHERE id = ?`,
-        [Number(odometerIn), updatedRow.vehicle_id],
-      )
-      void maybeRegenerateSchedule(db, Number(updatedRow.vehicle_id), Number(odometerIn))
+      const bump = await bumpOdometer(db, Number(updatedRow.vehicle_id), Number(odometerIn), 'job')
+      if (!bump.ok && bump.reason === 'backwards') {
+        console.warn(
+          `Job ${id}: odometer_in (${bump.attempted}) below vehicle ${updatedRow.vehicle_id} current (${bump.previous}). ` +
+          `Job snapshot kept, vehicles.odometer_current unchanged.`,
+        )
+      }
+      if (bump.ok && bump.changed) {
+        void maybeRegenerateSchedule(db, Number(updatedRow.vehicle_id), Number(odometerIn))
+      }
     }
 
     if (status === 'in_progress') await sendWorkCommencedEmail(db, result)
@@ -128,6 +138,24 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         body:  `${result.vehicle ?? result.rego} (${result.rego}) completed${result.tech ? ` by ${result.tech}` : ''}`,
         jobId: Number(id),
       })
+
+      // Customer "car ready" push (non-fatal). Exempt from baseline rate-
+      // limit + quiet hours per push.ts config — customer wants to know
+      // their car is ready even at 10pm.
+      try {
+        const storeName = (result.store ?? '').replace(/^Rodz\s+Smart\s+Auto\s+/i, '')
+          .replace(/^Rodz\s+/i, '') || (result.store ?? 'Rodz Smart Auto')
+        await pushToCustomer(db, Number(result.customerId), {
+          type:      'car_ready',
+          title:     'Rodz',
+          body:      `${result.rego ?? 'Your car'} is ready to collect from ${storeName}. See you soon!`,
+          deeplink:  result.vehicleId ? `/account/vehicles/${result.vehicleId}/chat` : '/account',
+          eventId:   `job:${result.id}:completed`,
+          vehicleId: result.vehicleId ?? null,
+        })
+      } catch {
+        // Non-fatal
+      }
       // Send digital logbook email 1 minute after job completion
       const logbookQueueUrl = process.env.LOGBOOK_NOTIFY_QUEUE_URL
       if (logbookQueueUrl && result.rego) {

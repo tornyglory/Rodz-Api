@@ -8,6 +8,7 @@ import { ok, notFound, forbidden, serverError } from '../shared/errors'
 import { invoiceError, INVOICE_SELECT_BY_ID, buildInvoice, getInvoiceItems, getAllowedStoreIds, upsertServiceLog } from './_helpers'
 import { createZellerPayment } from '../shared/zeller'
 import { sendInvoiceEmail } from '../shared/emailTemplates'
+import { pushToCustomer } from '../shared/push'
 
 const ready = bootstrap()
 const lambdaClient = new LambdaClient({ region: process.env.REGION ?? 'ap-southeast-2' })
@@ -103,6 +104,21 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     })
 
     await upsertServiceLog(db, Number(id))
+
+    // Push notification (non-fatal). Dedupe key is stable per invoice-id so
+    // resends don't double-notify. Include the ISO date in the eventId if
+    // we ever want to re-notify on resend.
+    try {
+      await pushToCustomer(db, Number(row.customer_id), {
+        type:     'invoice_ready',
+        title:    'Rodz',
+        body:     `New invoice ready for your ${row.vehicle_label ?? row.vehicle_rego ?? 'vehicle'} — ${row.invoice_number} · $${Number(row.total).toFixed(0)}.`,
+        deeplink: '/account/paperwork?filter=invoices',
+        eventId:  `invoice:${row.id}:ready`,
+      })
+    } catch {
+      // Non-fatal
+    }
 
     // Async AI summary generation — fire and forget
     const summaryArn = process.env.SERVICE_SUMMARY_FN_ARN

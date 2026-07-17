@@ -2,8 +2,17 @@ import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { getAuthContext } from '../../shared/auth'
-import { ok, forbidden, notFound, validationError, serverError } from '../../shared/errors'
+import { ok, forbidden, gone, notFound, validationError, serverError } from '../../shared/errors'
 import { maybeRegenerateSchedule } from '../../shared/aiEngines'
+import { verifyImage, deleteCloudflareImage } from '../../shared/cloudflare'
+import { safeDel } from '../../shared/redis'
+import { bumpOdometer } from '../../shared/odometer'
+import {
+  sanitiseSettingsPatch,
+  mergePublicProfileSettings,
+  PUBLIC_PROFILE_DEFAULTS,
+} from '../../shared/publicProfileSettings'
+import { loadVehicleForResponse } from './_helpers'
 
 const ready = bootstrap()
 
@@ -14,6 +23,12 @@ const VALID_DRIVE_TYPE   = new Set(['fwd','rwd','awd','4wd'])
 const VALID_REGO_STATE   = new Set(['VIC','NSW','QLD','SA','WA','TAS','NT','ACT'])
 const VALID_ODOM_UNIT    = new Set(['km','mi'])
 
+const DESCRIPTION_MAX = 2000
+const CITY_MAX        = 120
+const COUNTRY_MAX     = 120
+
+const PUBLIC_SETTINGS_KEYS = new Set(Object.keys(PUBLIC_PROFILE_DEFAULTS))
+
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
   const db  = getPool()
@@ -23,13 +38,18 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   if (ctx.role === 'technician') return forbidden()
 
   try {
-    const [[owner]] = await db.query<any[]>(
-      'SELECT id FROM vehicle_owners WHERE vehicle_id = ? AND customer_id = ? AND is_current = 1 LIMIT 1',
+    const [[vRow]] = await db.query<any[]>(
+      `SELECT v.is_active, v.avatar_image_id, v.cover_image_id
+         FROM vehicles v
+         JOIN vehicle_owners vo ON vo.vehicle_id = v.id AND vo.is_current = 1
+        WHERE v.id = ? AND vo.customer_id = ?
+        LIMIT 1`,
       [vehicleId, customerId],
     )
-    if (!owner) return notFound('Vehicle')
+    if (!vRow)          return notFound('Vehicle')
+    if (!vRow.is_active) return gone('Vehicle')
 
-    const body    = JSON.parse(event.body ?? '{}') as Record<string, unknown>
+    const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
     const updates: [string, unknown][] = []
 
     // ── Identity ───────────────────────────────────────────────────────────
@@ -95,10 +115,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       updates.push(['odometer_unit', v])
     }
 
-    if (body.odometerCurrent != null) {
-      updates.push(['odometer_current',     Number(body.odometerCurrent)])
-      updates.push(['odometer_recorded_at', new Date().toISOString().slice(0, 10)])
-    }
+    // odometerCurrent goes through bumpOdometer() below so it can never
+    // decrease. Handled outside the `updates` set for the same reason.
     if (body.odometerAtPurchase != null) updates.push(['odometer_at_purchase', Number(body.odometerAtPurchase)])
 
     // ── Service intervals ──────────────────────────────────────────────────
@@ -111,64 +129,156 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (body.fleetUnitNumber != null) updates.push(['fleet_unit_number', String(body.fleetUnitNumber).trim() || null])
     if (body.internalNotes   != null) updates.push(['internal_notes',    String(body.internalNotes).trim()   || null])
 
-    if (updates.length === 0) return validationError('No valid fields to update.')
+    // ── Profile — description ──────────────────────────────────────────────
+    if ('description' in body) {
+      const raw = body.description
+      if (raw === null || raw === '') {
+        updates.push(['description', null])
+      } else if (typeof raw === 'string') {
+        const trimmed = raw.trim()
+        if (trimmed.length > DESCRIPTION_MAX) {
+          return validationError(`description must be ${DESCRIPTION_MAX} characters or fewer.`)
+        }
+        updates.push(['description', trimmed.length ? trimmed : null])
+      } else {
+        return validationError('description must be a string or null.')
+      }
+    }
 
-    const set    = updates.map(([k]) => `${k} = ?`).join(', ')
-    const values = [...updates.map(([, v]) => v), vehicleId]
-    await db.query(`UPDATE vehicles SET ${set}, updated_at = NOW() WHERE id = ?`, values)
+    // ── Profile — for-sale + location ──────────────────────────────────────
+    if ('forSale' in body) {
+      updates.push(['for_sale', body.forSale ? 1 : 0])
+    }
+
+    if ('askingPrice' in body) {
+      if (body.askingPrice === null) {
+        updates.push(['asking_price', null])
+      } else {
+        const n = Number(body.askingPrice)
+        if (!Number.isFinite(n) || n < 0) return validationError('askingPrice must be a non-negative integer.')
+        updates.push(['asking_price', Math.floor(n)])
+      }
+    }
+
+    if ('city' in body) {
+      if (body.city === null) {
+        updates.push(['city', null])
+      } else {
+        const s = String(body.city).trim()
+        if (s.length > CITY_MAX) return validationError(`city must be ${CITY_MAX} characters or fewer.`)
+        updates.push(['city', s.length ? s : null])
+      }
+    }
+
+    if ('country' in body) {
+      if (body.country === null) {
+        updates.push(['country', null])
+      } else {
+        const s = String(body.country).trim()
+        if (s.length > COUNTRY_MAX) return validationError(`country must be ${COUNTRY_MAX} characters or fewer.`)
+        updates.push(['country', s.length ? s : null])
+      }
+    }
+
+    // ── Profile — publicProfileSettings (merged separately from column set) ─
+    let settingsPatch: ReturnType<typeof sanitiseSettingsPatch> = null
+    if ('publicProfileSettings' in body) {
+      const raw = body.publicProfileSettings
+      if (!raw || typeof raw !== 'object') {
+        return validationError('publicProfileSettings must be an object of boolean keys (history, photos, chat, maintenance).')
+      }
+      for (const key of Object.keys(raw as Record<string, unknown>)) {
+        if (!PUBLIC_SETTINGS_KEYS.has(key)) {
+          return validationError(`publicProfileSettings contains unknown key: ${key}.`)
+        }
+      }
+      settingsPatch = sanitiseSettingsPatch(raw)
+      if (!settingsPatch) {
+        return validationError('publicProfileSettings must contain at least one boolean key (history, photos, chat, maintenance).')
+      }
+    }
+
+    // ── Profile — avatar / cover image ids ─────────────────────────────────
+    // Verify BEFORE running the UPDATE so a bad image id doesn't clobber the
+    // row and leave the previous file orphaned.
+    let previousAvatarId: string | null = null
+    let previousCoverId:  string | null = null
+
+    if ('avatarImageId' in body) {
+      const raw = body.avatarImageId
+      if (raw === null) {
+        updates.push(['avatar_image_id', null])
+      } else if (typeof raw === 'string' && raw) {
+        const exists = await verifyImage(raw)
+        if (!exists) return validationError('avatarImageId not found in Cloudflare.')
+        previousAvatarId = vRow.avatar_image_id ?? null
+        updates.push(['avatar_image_id', raw])
+      } else {
+        return validationError('avatarImageId must be a non-empty string or null.')
+      }
+    }
+
+    if ('coverImageId' in body) {
+      const raw = body.coverImageId
+      if (raw === null) {
+        updates.push(['cover_image_id', null])
+      } else if (typeof raw === 'string' && raw) {
+        const exists = await verifyImage(raw)
+        if (!exists) return validationError('coverImageId not found in Cloudflare.')
+        previousCoverId = vRow.cover_image_id ?? null
+        updates.push(['cover_image_id', raw])
+      } else {
+        return validationError('coverImageId must be a non-empty string or null.')
+      }
+    }
+
+    let odometerChanged = false
+    if (body.odometerCurrent != null) {
+      const bump = await bumpOdometer(db, Number(vehicleId), Number(body.odometerCurrent), 'staff')
+      if (!bump.ok && bump.reason === 'backwards') {
+        return validationError(`odometerCurrent cannot decrease. Previous reading was ${bump.previous.toLocaleString()} km.`)
+      }
+      if (!bump.ok && bump.reason === 'not_found') return notFound('Vehicle')
+      odometerChanged = bump.ok
+    }
+
+    if (updates.length === 0 && !settingsPatch && !odometerChanged) {
+      return validationError('No valid fields to update.')
+    }
+
+    if (updates.length > 0) {
+      const set    = updates.map(([k]) => `${k} = ?`).join(', ')
+      const values = [...updates.map(([, v]) => v), vehicleId]
+      await db.query(`UPDATE vehicles SET ${set}, updated_at = NOW() WHERE id = ?`, values)
+    }
+
+    if (settingsPatch) {
+      await mergePublicProfileSettings(db, Number(vehicleId), settingsPatch)
+    }
+
+    // Fire-and-forget: delete the replaced Cloudflare images. Log but don't
+    // surface failures — cache-purge-style side effect.
+    if (previousAvatarId && previousAvatarId !== body.avatarImageId) {
+      deleteCloudflareImage(previousAvatarId).catch(err =>
+        console.error(`Failed to delete previous avatar ${previousAvatarId}:`, err),
+      )
+    }
+    if (previousCoverId && previousCoverId !== body.coverImageId) {
+      deleteCloudflareImage(previousCoverId).catch(err =>
+        console.error(`Failed to delete previous cover ${previousCoverId}:`, err),
+      )
+    }
 
     if (body.odometerCurrent != null) {
       void maybeRegenerateSchedule(db, Number(vehicleId), Number(body.odometerCurrent), Number(customerId))
     }
 
-    const [[v]] = await db.query<any[]>(
-      `SELECT
-         id, rego, rego_state, rego_expiry, vin,
-         make, model, series, year, colour,
-         body_type, fuel_type, transmission, drive_type,
-         engine_code, engine_size_cc, cylinders,
-         tyre_size_front, tyre_size_rear, spare_tyre_size,
-         odometer_unit, odometer_current, odometer_at_purchase,
-         service_interval_km, service_interval_months,
-         next_service_due_km, next_service_due_date,
-         fleet_unit_number, internal_notes
-       FROM vehicles WHERE id = ? LIMIT 1`,
-      [vehicleId],
-    )
+    await safeDel([`vehicle:${vehicleId}:context`, `customer:${customerId}:profile`])
 
-    return ok({
-      vehicle: {
-        id:                   v.id,
-        rego:                 v.rego,
-        regoState:            v.rego_state             ?? null,
-        regoExpiry:           v.rego_expiry            ? String(v.rego_expiry).slice(0, 10) : null,
-        vin:                  v.vin                    ?? null,
-        make:                 v.make,
-        model:                v.model,
-        series:               v.series                 ?? null,
-        year:                 v.year,
-        colour:               v.colour                 ?? null,
-        bodyType:             v.body_type              ?? null,
-        fuelType:             v.fuel_type,
-        transmission:         v.transmission,
-        driveType:            v.drive_type             ?? null,
-        engineCode:           v.engine_code            ?? null,
-        engineSizeCC:         v.engine_size_cc         ?? null,
-        cylinders:            v.cylinders              ?? null,
-        tyreSizeFront:        v.tyre_size_front        ?? null,
-        tyreSizeRear:         v.tyre_size_rear         ?? null,
-        spareTyreSize:        v.spare_tyre_size        ?? null,
-        odometerUnit:         v.odometer_unit,
-        odometerCurrent:      v.odometer_current       ?? null,
-        odometerAtPurchase:   v.odometer_at_purchase   ?? null,
-        serviceIntervalKm:    v.service_interval_km    ?? null,
-        serviceIntervalMonths: v.service_interval_months ?? null,
-        nextServiceDueKm:     v.next_service_due_km    ?? null,
-        nextServiceDueDate:   v.next_service_due_date  ? String(v.next_service_due_date).slice(0, 10) : null,
-        fleetUnitNumber:      v.fleet_unit_number      ?? null,
-        internalNotes:        v.internal_notes         ?? null,
-      },
-    })
+    const load = await loadVehicleForResponse(db, customerId!, vehicleId!)
+    if (load.state !== 'ok') return serverError(new Error('Vehicle disappeared after update'))
+
+    return ok({ vehicle: load.payload })
   } catch (err) {
     return serverError(err)
   }
