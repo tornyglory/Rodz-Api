@@ -4,6 +4,7 @@ import { getPool } from '../../../shared/db'
 import { ok, forbidden, serverError } from '../../../shared/errors'
 import { getCustomerContext, isPremium } from '../../_helpers'
 import { readFromDataLake } from '../../../shared/dataLake'
+import { loadWorkshopInvoiceExpenses } from './_workshopInvoices'
 
 const ready = bootstrap()
 
@@ -30,33 +31,39 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const fromDate = `${year}-01-01`
     const toDate   = `${year}-12-31`
 
-    const [pointers] = await db.query<any[]>(
-      `SELECT id, s3_key, event_date, event_type, category, amount_aud
-       FROM s3_event_index
-       WHERE vehicle_id = ? AND customer_id = ?
-         AND event_type IN ('fuel-fills', 'expenses')
-         AND event_date BETWEEN ? AND ?
-       ORDER BY event_date ASC`,
-      [vehicleId, ctx.customerId, fromDate, toDate],
-    )
+    const [[pointers], workshopInvoices] = await Promise.all([
+      db.query<any[]>(
+        `SELECT id, s3_key, event_date, event_type, category, amount_aud
+         FROM s3_event_index
+         WHERE vehicle_id = ? AND customer_id = ?
+           AND event_type IN ('fuel-fills', 'expenses')
+           AND event_date BETWEEN ? AND ?
+         ORDER BY event_date ASC`,
+        [vehicleId, ctx.customerId, fromDate, toDate],
+      ),
+      loadWorkshopInvoiceExpenses(db, { vehicleId, customerId: ctx.customerId, from: fromDate, to: toDate }),
+    ])
 
     // Category / monthly / total — pure SQL-level rollups, no S3 GET needed.
     const byCategoryMap = new Map<string, { total: number; count: number }>()
     const byMonthMap    = new Map<string, number>()
     let totalAud = 0
 
-    for (const p of pointers) {
-      const amt = p.amount_aud != null ? Number(p.amount_aud) : 0
-      const cat = p.category || 'other'
+    const bumpBuckets = (amtRaw: number | string | null, catRaw: string | null, dateInput: any) => {
+      const amt = amtRaw != null ? Number(amtRaw) : 0
+      const cat = catRaw || 'other'
       totalAud += amt
       const bc = byCategoryMap.get(cat) ?? { total: 0, count: 0 }
       bc.total += amt
       bc.count += 1
       byCategoryMap.set(cat, bc)
-      const d     = p.event_date instanceof Date ? p.event_date : new Date(p.event_date)
+      const d     = dateInput instanceof Date ? dateInput : new Date(dateInput)
       const month = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
       byMonthMap.set(month, (byMonthMap.get(month) ?? 0) + amt)
     }
+
+    for (const p of pointers) bumpBuckets(p.amount_aud, p.category, p.event_date)
+    for (const w of workshopInvoices) bumpBuckets(w.amountAud, 'workshop', w.expenseDate)
 
     // Business-total + fuel efficiency need per-object fields. Fetch S3
     // objects in parallel — at realistic volume this is <50ms total.

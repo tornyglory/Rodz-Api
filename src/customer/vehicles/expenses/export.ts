@@ -4,6 +4,7 @@ import { getPool } from '../../../shared/db'
 import { forbidden, serverError } from '../../../shared/errors'
 import { getCustomerContext, isPremium } from '../../_helpers'
 import { readFromDataLake } from '../../../shared/dataLake'
+import { loadWorkshopInvoiceExpenses } from './_workshopInvoices'
 
 const ready = bootstrap()
 
@@ -46,25 +47,39 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (q.to)   { conditions.push('event_date <= ?');    params.push(q.to)   }
     if (q.year) { conditions.push('YEAR(event_date) = ?'); params.push(Number(q.year)) }
 
-    const [pointers] = await db.query<any[]>(
-      `SELECT id, s3_key, event_date FROM s3_event_index
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY event_date ASC, id ASC`,
-      params,
-    )
-
-    const details = await Promise.all(pointers.map((p: any) => readFromDataLake<any>(p.s3_key)))
     const wantBusinessOnly = q.businessOnly === 'true'
 
+    // Workshop invoices are business-neutral — skip when filtering to business only.
+    const workshopFrom = q.from ?? (q.year ? `${Number(q.year)}-01-01` : undefined)
+    const workshopTo   = q.to   ?? (q.year ? `${Number(q.year)}-12-31` : undefined)
+
+    const [pointersResult, workshopInvoices] = await Promise.all([
+      db.query<any[]>(
+        `SELECT id, s3_key, event_date FROM s3_event_index
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY event_date ASC, id ASC`,
+        params,
+      ),
+      wantBusinessOnly
+        ? Promise.resolve([])
+        : loadWorkshopInvoiceExpenses(db, { vehicleId, customerId: ctx.customerId, from: workshopFrom, to: workshopTo }),
+    ])
+
+    const [pointers] = pointersResult
+    const details    = await Promise.all(pointers.map((p: any) => readFromDataLake<any>(p.s3_key)))
+
     const headers = [
-      'Date', 'Category', 'Merchant', 'Suburb', 'State',
+      'Date', 'Category', 'Source', 'Merchant', 'Suburb', 'State',
       'Amount (AUD)', 'Odometer (km)',
       'Fuel Type', 'Litres', 'Price/Litre',
       'EV kWh', 'Price/kWh',
-      'Business Expense', 'Notes',
+      'Business Expense', 'Invoice #', 'Notes',
     ]
 
-    const csvRows: string[] = []
+    // Collect rows into a shape that carries the date so we can merge-sort
+    // user + workshop entries by date before writing CSV.
+    const rows: Array<{ date: string; cells: string[] }> = []
+
     for (let i = 0; i < pointers.length; i++) {
       const p = pointers[i]
       const d = details[i]
@@ -74,23 +89,51 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       const date = d.expenseDate
         ?? (p.event_date instanceof Date ? p.event_date.toISOString().slice(0, 10) : String(p.event_date).slice(0, 10))
 
-      csvRows.push([
+      rows.push({
         date,
-        d.category,
-        d.merchantName    ?? '',
-        d.merchantSuburb  ?? '',
-        d.merchantState   ?? '',
-        d.amount          != null ? Number(d.amount).toFixed(2)         : '',
-        d.odometerKm      != null ? Number(d.odometerKm)                : '',
-        d.fuelType        ?? '',
-        d.litres          != null ? Number(d.litres).toFixed(3)         : '',
-        d.pricePerLitre   != null ? Number(d.pricePerLitre).toFixed(3)  : '',
-        d.evKwh           != null ? Number(d.evKwh).toFixed(3)          : '',
-        d.pricePerKwh     != null ? Number(d.pricePerKwh).toFixed(3)    : '',
-        d.isBusinessExpense ? 'Yes' : 'No',
-        d.notes ?? '',
-      ].map(csvEscape).join(','))
+        cells: [
+          date,
+          d.category,
+          'user',
+          d.merchantName    ?? '',
+          d.merchantSuburb  ?? '',
+          d.merchantState   ?? '',
+          d.amount          != null ? Number(d.amount).toFixed(2)         : '',
+          d.odometerKm      != null ? Number(d.odometerKm)                : '',
+          d.fuelType        ?? '',
+          d.litres          != null ? Number(d.litres).toFixed(3)         : '',
+          d.pricePerLitre   != null ? Number(d.pricePerLitre).toFixed(3)  : '',
+          d.evKwh           != null ? Number(d.evKwh).toFixed(3)          : '',
+          d.pricePerKwh     != null ? Number(d.pricePerKwh).toFixed(3)    : '',
+          d.isBusinessExpense ? 'Yes' : 'No',
+          '',
+          d.notes ?? '',
+        ],
+      })
     }
+
+    for (const w of workshopInvoices) {
+      rows.push({
+        date: w.expenseDate,
+        cells: [
+          w.expenseDate,
+          'workshop',
+          'workshop',
+          w.merchantName,
+          w.merchantSuburb ?? '',
+          w.merchantState  ?? '',
+          w.amountAud.toFixed(2),
+          w.odometerKm != null ? String(w.odometerKm) : '',
+          '', '', '', '', '',
+          'No',
+          w.invoiceNumber,
+          w.notes ?? '',
+        ],
+      })
+    }
+
+    rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+    const csvRows = rows.map(r => r.cells.map(csvEscape).join(','))
 
     const yearLabel = q.year ?? (q.from ? q.from.slice(0, 4) : new Date().getFullYear())
     const filename  = veh

@@ -5,6 +5,7 @@ import { ok, forbidden, serverError } from '../../../shared/errors'
 import { getCustomerContext, isPremium } from '../../_helpers'
 import { imageUrls } from '../../../shared/cloudflare'
 import { readFromDataLake } from '../../../shared/dataLake'
+import { loadWorkshopInvoiceExpenses } from './_workshopInvoices'
 
 const ready = bootstrap()
 
@@ -32,24 +33,35 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!ownership) return forbidden()
     if (!await isPremium(db, ctx.customerId)) return forbidden()
 
+    const wantCategory     = q.category && VALID_CATEGORIES.has(q.category) ? q.category : null
+    const wantBusinessOnly = q.businessOnly === 'true'
+
     const conditions: string[] = ['vehicle_id = ?', "event_type IN ('fuel-fills', 'expenses')"]
     const params: any[]        = [vehicleId]
 
     if (q.from) { conditions.push('event_date >= ?'); params.push(q.from) }
     if (q.to)   { conditions.push('event_date <= ?'); params.push(q.to)   }
 
-    const [pointers] = await db.query<any[]>(
-      `SELECT id, s3_key, event_date FROM s3_event_index
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY event_date DESC, id DESC
-       LIMIT 200`,
-      params,
-    )
+    // Fetch user-created expenses (S3) and workshop invoices in parallel.
+    const [pointersResult, workshopExpenses] = await Promise.all([
+      db.query<any[]>(
+        `SELECT id, s3_key, event_date FROM s3_event_index
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY event_date DESC, id DESC
+         LIMIT 200`,
+        params,
+      ),
+      // Workshop invoices are business-neutral (no per-invoice flag), so
+      // they're excluded when the user filters to "business only".
+      wantBusinessOnly
+        ? Promise.resolve([])
+        : (wantCategory && wantCategory !== 'workshop')
+          ? Promise.resolve([])
+          : loadWorkshopInvoiceExpenses(db, { vehicleId, customerId: ctx.customerId, from: q.from, to: q.to }),
+    ])
 
-    const details = await Promise.all(pointers.map((p: any) => readFromDataLake<any>(p.s3_key)))
-
-    const wantCategory     = q.category && VALID_CATEGORIES.has(q.category) ? q.category : null
-    const wantBusinessOnly = q.businessOnly === 'true'
+    const [pointers] = pointersResult
+    const details    = await Promise.all(pointers.map((p: any) => readFromDataLake<any>(p.s3_key)))
 
     const expenses: any[] = []
     for (let i = 0; i < pointers.length; i++) {
@@ -61,6 +73,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
       expenses.push({
         id:                p.id,                                         // s3_event_index.id is the stable API id
+        source:            'user',
         category:          d.category,
         merchantName:      d.merchantName    ?? null,
         merchantSuburb:    d.merchantSuburb  ?? null,
@@ -81,7 +94,13 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       })
     }
 
-    return ok({ expenses, total: expenses.length })
+    // Merge workshop invoices in and sort the combined list by date DESC.
+    const merged = [...expenses, ...workshopExpenses].sort((a, b) => {
+      if (a.expenseDate === b.expenseDate) return 0
+      return a.expenseDate < b.expenseDate ? 1 : -1
+    })
+
+    return ok({ expenses: merged, total: merged.length })
   } catch (err) {
     return serverError(err)
   }

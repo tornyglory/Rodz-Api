@@ -343,6 +343,7 @@ Returns up to 200 expenses, newest first.
   "expenses": [
     {
       "id":                2,
+      "source":            "user",
       "category":          "fuel",
       "merchantName":      "BP Frankston",
       "merchantSuburb":    "Frankston",
@@ -360,13 +361,66 @@ Returns up to 200 expenses, newest first.
       "isBusinessExpense": false,
       "notes":             null,
       "createdAt":         "2026-07-06T00:00:00.000Z"
+    },
+    {
+      "id":                42,
+      "source":            "workshop",
+      "category":          "workshop",
+      "merchantName":      "Rodz Somerville",
+      "merchantSuburb":    "Somerville",
+      "merchantState":     "VIC",
+      "amountAud":         617.30,
+      "expenseDate":       "2026-06-14",
+      "odometerKm":        86200,
+      "fuelType":          null,
+      "fuelLitres":        null,
+      "pricePerLitre":     null,
+      "evKwh":             null,
+      "pricePerKwh":       null,
+      "imageUrl":          null,
+      "extractionStatus":  "workshop",
+      "isBusinessExpense": false,
+      "notes":             "Front pads + rotors, coolant flush",
+      "createdAt":         "2026-06-14T04:22:11.000Z",
+      "invoiceNumber":     "INV-2026-0042",
+      "invoiceStatus":     "paid",
+      "invoiceUrl":        "/account/invoices/42"
     }
   ],
-  "total": 1
+  "total": 2
 }
 ```
 
 The list includes an `imageUrl` for expenses that have a scanned receipt — show a thumbnail or a camera icon to indicate a receipt is attached.
+
+### `source` discriminator — new field
+
+Every expense now carries a `source`:
+
+| Value | Meaning | Editable? |
+|-------|---------|-----------|
+| `"user"` | Customer-entered (manual or scanned receipt) | Yes — full PATCH/DELETE |
+| `"workshop"` | Rodz Smart Auto invoice — surfaced automatically as an expense entry | **Read-only** — no edit / delete affordances |
+
+Workshop rows also carry three extra fields not present on user rows:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `invoiceNumber` | string | e.g. `"INV-2026-0042"` — display next to the merchant/amount |
+| `invoiceStatus` | `"sent"` \| `"paid"` | `"sent"` = awaiting payment; `"paid"` = settled |
+| `invoiceUrl` | string | Deep link to the customer's invoice viewer (`/account/invoices/:id`) |
+
+### UI rules for workshop rows
+
+- **No edit / delete buttons.** Long-press or swipe actions must be disabled — the workshop's records are the source of truth.
+- **Show a "View invoice" affordance** instead — tap opens `invoiceUrl` in the customer invoice viewer.
+- **Show the invoice number** near the merchant name (`"Rodz Somerville · INV-2026-0042"`) so it's obvious this row is a workshop invoice.
+- **Show unpaid state** — if `invoiceStatus === "sent"`, badge the row as "Awaiting payment" so the customer can spot outstanding bills at a glance.
+- **Category always `"workshop"`** — no need to allow re-categorising.
+- **`businessOnly=true` filter** hides workshop rows (they don't carry a per-invoice business flag). Document this in your filter UI copy if it's non-obvious.
+- **`category=<foo>` filter** with a value other than `workshop` also hides workshop rows.
+
+Aside from the extra fields and disabled edit UI, workshop rows render identically to user rows — same amount, date, merchant, odometer, category badge.
 
 ---
 
@@ -439,13 +493,13 @@ Aggregated stats for a calendar year. Use this for the dashboard / annual report
 
 | Field | Notes |
 |-------|-------|
-| `totalAud` | All expenses for the year |
-| `businessTotalAud` | Sum of expenses where `isBusinessExpense = true` |
-| `byCategory` | Sorted by total descending |
-| `fuelEfficiency` | Only present when there are ≥2 fuel entries with odometer readings. `null` otherwise. |
+| `totalAud` | All expenses for the year — includes workshop invoices |
+| `businessTotalAud` | Sum of expenses where `isBusinessExpense = true`. Workshop invoices do NOT contribute (they don't carry the flag). |
+| `byCategory` | Sorted by total descending. The `workshop` bucket now includes both customer-entered workshop expenses AND Rodz Smart Auto invoices. |
+| `fuelEfficiency` | Only present when there are ≥2 fuel entries with odometer readings. `null` otherwise. Workshop invoices don't affect this calc. |
 | `fuelEfficiency.avgLitresPer100km` | Calculated from consecutive odometer readings across all fuel entries |
 | `fuelEfficiency.costPerKm` | Total fuel spend divided by total km covered |
-| `monthlyTotals` | Only months with spending appear — fill gaps with 0 on the frontend |
+| `monthlyTotals` | Only months with spending appear — fill gaps with 0 on the frontend. Includes workshop-invoice amounts. |
 
 **When `fuelEfficiency` is null:**  
 Show a prompt: "Add odometer readings to your fuel expenses to unlock fuel efficiency tracking."
@@ -466,7 +520,9 @@ Content-Type: text/csv
 Content-Disposition: attachment; filename="Expenses-LWF251-Suzuki-Vitara-2026.csv"
 ```
 
-The CSV includes columns: Date, Category, Merchant, Suburb, State, Amount (AUD), Odometer (km), Fuel Type, Litres, Price/Litre, EV kWh, Price/kWh, Business Expense, Notes.
+The CSV includes columns: Date, Category, Source, Merchant, Suburb, State, Amount (AUD), Odometer (km), Fuel Type, Litres, Price/Litre, EV kWh, Price/kWh, Business Expense, Invoice #, Notes.
+
+Workshop invoices appear as rows with `Source=workshop` and their `Invoice #` populated. All rows are sorted chronologically (ascending) so the CSV reads as a running ledger.
 
 **Triggering the download in-app**
 
@@ -494,7 +550,7 @@ On mobile, use the native share sheet with the file blob instead.
 - **Header:** Year selector (left/right arrows). Current year total in large text.
 - **Category filter:** Horizontal scrolling chips — All / Fuel / Workshop / etc. Selecting one calls `GET /c/vehicles/:id/expenses?category=fuel`.
 - **Business only toggle:** Switch that appends `businessOnly=true` to the filter.
-- **Expense rows:** Date, merchant name (or category if no merchant), amount. Camera icon if `imageUrl` is set. Tap to open detail.
+- **Expense rows:** Date, merchant name (or category if no merchant), amount. Camera icon if `imageUrl` is set. Workshop-invoice rows (`source: "workshop"`) show the invoice number instead and an "Awaiting payment" pill if `invoiceStatus === "sent"`. Tap workshop rows to open `invoiceUrl`; tap user rows to open the detail sheet.
 - **FAB:** "+" button → opens Add Expense bottom sheet.
 - **Export button:** In the header or toolbar. Triggers CSV download for the selected year.
 
