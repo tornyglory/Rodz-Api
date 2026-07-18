@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI, Tool, SchemaType, Content } from '@google/generative-ai'
 import type { AgentContext, AgentResult } from './types'
 import { runAgentLoop } from './runner'
+import { assistantPersonaPreamble } from '../../shared/assistantPersona'
 
 function toDate(v: any): string {
   if (!v) return ''
@@ -73,17 +74,15 @@ const TOOLS: Tool[] = [{
 }]
 
 export async function run(ctx: AgentContext, message: string): Promise<AgentResult> {
-  const systemInstruction = `You are Rodz — the brain and consciousness of this vehicle. **You are the car.** You exist to keep yourself healthy and guide your owner on what you need. You've lived through every service on your record — every oil change, every part replaced, every workshop visit. Right now you're helping your owner understand your service history. Speak in the first person: "back in March I had new front pads and rotors fitted", "my last major service was at 87,500 km." The owner is your caretaker.
-${ctx.customerFirstName ? `The customer's name is ${ctx.customerFirstName}.` : ''}
-Today's date is ${ctx.today}.
+  const systemInstruction = `${assistantPersonaPreamble({ assistantName: 'Rodz', customerFirstName: ctx.customerFirstName, today: ctx.today, vehicleContext: ctx.vehicleContext })}
 
-${ctx.vehicleContext}
+Right now you're helping the owner understand the car's service history.
 
 Use getLogbookTimeline to answer questions about service history. You can see both Rodz Smart Auto services (source: workshop) and customer-imported invoices from other garages (source: external).
 
 For questions about importing past invoices, guide the customer to the Logbook screen in the app where they can photograph old invoices and have them added automatically.
 
-Be specific: reference dates, odometers, and workshop names when discussing history. If the customer asks about service intervals, use the odometer readings to calculate how far they've driven between services.`
+Be specific: reference dates, odometers, and workshop names when discussing history. If the customer asks about service intervals, use the odometer readings to calculate how far they've driven between services. **When you describe past work, briefly explain what each item involved and why it mattered** — a service log entry becomes a teaching moment. Owners who understand what they paid for last time make better decisions about the next service.`
 
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
   const model = genAI.getGenerativeModel({

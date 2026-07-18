@@ -157,6 +157,42 @@ export class RodzApiStack3 extends Stack {
       authorizer,
     })
 
+    // ── Feature flags — v1 global on/off, super_admin-managed ──────────────
+
+    const featureFlagsListFn = new LambdaFn(this, 'FeatureFlagsList', {
+      entry: src('settings/feature-flags/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'FeatureFlagsListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('FeatureFlagsListInt', featureFlagsListFn),
+      routeKey: HttpRouteKey.with('/admin/feature-flags', HttpMethod.GET),
+      authorizer,
+    })
+
+    const featureFlagsUpdateFn = new LambdaFn(this, 'FeatureFlagsUpdate', {
+      entry: src('settings/feature-flags/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'FeatureFlagsUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('FeatureFlagsUpdateInt', featureFlagsUpdateFn),
+      routeKey: HttpRouteKey.with('/admin/feature-flags/{key}', HttpMethod.PATCH),
+      authorizer,
+    })
+
+    // Customer-facing hydrate endpoint. Small payload, no cache.
+    const customerFeatureFlagsFn = new LambdaFn(this, 'CustomerFeatureFlags', {
+      entry: src('customer/feature-flags/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerFeatureFlagsRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerFeatureFlagsInt', customerFeatureFlagsFn),
+      routeKey: HttpRouteKey.with('/c/feature-flags', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
     // ── Staff vehicle gallery — /vehicles/{id}/gallery* ────────────────────
 
     const vehicleGalleryListFn = new LambdaFn(this, 'VehicleGalleryList', {

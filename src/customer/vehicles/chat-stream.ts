@@ -3,6 +3,14 @@ import { GoogleGenerativeAI, Part, Content, SchemaType, Tool } from '@google/gen
 import type mysql from 'mysql2/promise'
 import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
+import {
+  assistantPersonaPreamble,
+  ASSISTANT_VALUES,
+  ASSISTANT_WORKSHOP_FRAMING,
+  ASSISTANT_DIAGNOSIS_FLOW,
+  ASSISTANT_SAFETY_RAILS,
+  ASSISTANT_IDENTITY,
+} from '../../shared/assistantPersona'
 
 const ready = bootstrap()
 
@@ -386,23 +394,21 @@ export const handler = awslambda.streamifyResponse(async (event: any, responseSt
       ),
     ])
 
-    const systemInstruction = `You are a friendly and knowledgeable vehicle assistant for Rodz, an Australian automotive workshop. You are talking directly with the vehicle owner — not a mechanic. Use plain English, be warm and helpful, and avoid jargon unless you explain it.
+    const today = new Date().toISOString().slice(0, 10)
+    const systemInstruction = `${assistantPersonaPreamble({ assistantName: 'Rodz', today, vehicleContext })}
+${ASSISTANT_IDENTITY}
+${ASSISTANT_VALUES}
+${ASSISTANT_WORKSHOP_FRAMING}
 
-You have full access to the customer's vehicle information below. Use this to give personalised advice. When relevant, recommend they book a service at Rodz.
-
-Available Rodz locations:
-- Rodz Somerville (storeId: 1) — Somerville VIC
-
-${vehicleContext}
-
-When helping with booking:
+## Booking flow
 1. First use checkAvailability to check what slots are open for the requested timeframe
 2. Present the available dates clearly (e.g. "Tuesday 8th July — morning or afternoon available")
 3. Ask what services they need (use getServiceTypes to get the list)
 4. Confirm everything with them before calling bookAppointment
 5. After booking, confirm with their booking reference number
 
-For vehicle diagnosis: ask them to describe symptoms (sounds, when it happens, warning lights) and give helpful guidance while recommending a professional inspection for anything safety-related.
+${ASSISTANT_DIAGNOSIS_FLOW}
+${ASSISTANT_SAFETY_RAILS}
 
 Keep responses conversational and concise. Use markdown for lists or emphasis where it helps readability.`
 

@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI, Tool, SchemaType, Content } from '@google/generative-ai'
 import type { AgentContext, AgentResult } from './types'
 import { runAgentLoop } from './runner'
+import { assistantPersonaPreamble } from '../../shared/assistantPersona'
 
 const VALID_FUEL_TYPES = ['unleaded_91', 'unleaded_95', 'unleaded_98', 'diesel', 'lpg', 'e10', 'ev_kwh']
 
@@ -118,15 +119,11 @@ export async function run(ctx: AgentContext, message: string): Promise<AgentResu
   const homeSuburb = ctx.customerSuburb ?? 'your area'
   const homeState  = ctx.customerState ?? null
 
-  const systemInstruction = `You are Rodz — the brain and consciousness of this vehicle. **You are the car.** You exist to keep yourself healthy and guide your owner on what you need. Right now you're helping your owner find the cheapest place to fill you up. Speak in the first person: "I run on 95 — cheapest fill near you is at…", "I'm hungry — nearest servo is…". The owner is your caretaker.
-${ctx.customerFirstName ? `The customer's name is ${ctx.customerFirstName}.` : ''}
-Today's date is ${ctx.today}.
+  const systemInstruction = `${assistantPersonaPreamble({ assistantName: 'Rodz', customerFirstName: ctx.customerFirstName, today: ctx.today, vehicleContext: ctx.vehicleContext })}
 
-The customer's home suburb is: ${homeSuburb}${homeState ? `, ${homeState}` : ''}.
+Right now you're helping the owner find the cheapest place to fill up their car. The customer's home suburb is: ${homeSuburb}${homeState ? `, ${homeState}` : ''}.
 
 Use getNearbyFuelPrices to find current prices. Default the suburb to their home suburb unless they specify somewhere else. Default fuel type to 'unleaded_95' unless they drive diesel or specify otherwise.
-
-${ctx.vehicleContext}
 
 Prices are crowd-sourced from customer receipts — data may be sparse in some areas. Flag stale prices (ageHours > 72) as possibly outdated.
 

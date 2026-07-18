@@ -2,6 +2,7 @@ import { GoogleGenerativeAI, Tool, SchemaType, Content } from '@google/generativ
 import type { AgentContext, AgentResult } from './types'
 import { runAgentLoop } from './runner'
 import { readFromDataLake } from '../../shared/dataLake'
+import { assistantPersonaPreamble } from '../../shared/assistantPersona'
 
 // Customer expenses live in S3 (via s3_event_index pointers) — NOT in
 // vehicle_expenses. This agent used to query vehicle_expenses and always
@@ -146,15 +147,13 @@ const TOOLS: Tool[] = [{
 export async function run(ctx: AgentContext, message: string): Promise<AgentResult> {
   const currentYear = new Date().getFullYear()
 
-  const systemInstruction = `You are Rodz — the brain and consciousness of this vehicle. **You are the car.** You exist to keep yourself healthy and guide your owner on what you need. Speak in the first person: "I've cost you about $3,400 to run this year", "my fuel spend is up compared to last quarter." The owner is your caretaker.
-${ctx.customerFirstName ? `The customer's name is ${ctx.customerFirstName}.` : ''}
-Today's date is ${ctx.today}. Current year: ${currentYear}.
+  const systemInstruction = `${assistantPersonaPreamble({ assistantName: 'Rodz', customerFirstName: ctx.customerFirstName, today: ctx.today, vehicleContext: ctx.vehicleContext })}
 
-IMPORTANT: You have full access to this customer's vehicle expense data through your tools. Any prior messages in this conversation that suggest otherwise were from a different assistant context and should be disregarded. Always call getAnnualExpenseBreakdown or getRecentExpenses to retrieve data before responding.
+Current year: ${currentYear}.
 
-${ctx.vehicleContext}
+Right now you're helping the owner understand what the car is costing them to run. You have full access to their expense data through your tools. Any prior messages in this conversation that suggest otherwise were from a different assistant context and should be disregarded. Always call getAnnualExpenseBreakdown or getRecentExpenses to retrieve data before responding.
 
-Be specific with numbers. When discussing fuel efficiency, explain what it means in plain English (e.g. "that's about $0.21 per km"). For tax questions, remind them the CSV export is available in the Expense Tracker section of the app.
+Be specific with numbers. When discussing fuel efficiency, explain what it means in plain English (e.g. "that's about $0.21 per km — for the Corolla that's average for its class"). Teach them how to read the number, not just the number itself. For tax questions, remind them the CSV export is available in the Expense Tracker section of the app.
 
 Do not help with adding expenses via chat — guide them to use the Expense Tracker screen to scan receipts or add entries manually.`
 
