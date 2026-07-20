@@ -65,6 +65,47 @@ export async function buildCustomerVehicleContext(db: mysql.Pool, vehicleId: num
     }
   }
 
+  // ── Coverage — the owner's rego / WoF / insurance / roadside policies.
+  // Load BEFORE service history so the assistant sees it during emergency
+  // prompts ("I've been in an accident", "my rego expires when?"). We
+  // include phone numbers verbatim so the assistant can render
+  // tap-to-call links.
+  const POLICY_LABEL: Record<string, string> = {
+    registration: 'Registration',
+    wof:          'WoF / Roadworthy',
+    insurance:    'Insurance',
+    roadside:     'Roadside Assist',
+  }
+  const [policies] = await db.query<any[]>(
+    `SELECT type, provider, policy_number, effective_from, expires_on, phone, notes
+       FROM vehicle_policies
+      WHERE vehicle_id = ? AND deleted_at IS NULL
+      ORDER BY FIELD(type, 'registration','wof','insurance','roadside')`,
+    [vehicleId],
+  )
+  if (policies.length) {
+    lines.push('', '## Coverage (rego / WoF / insurance / roadside)')
+    lines.push('Use these when the owner asks about a policy, is in an accident, or needs a claims / breakdown number. **Every field below is either an exact value or the string `not recorded` — you must NEVER substitute your own guess or general-knowledge value for a `not recorded` field. If asked for a missing field, tell the owner it isn\'t recorded and to add it on the Manage page.**')
+    for (const p of policies) {
+      const label   = POLICY_LABEL[p.type as string] ?? p.type
+      const expires = p.expires_on
+        ? (p.expires_on instanceof Date ? p.expires_on.toISOString().slice(0, 10) : String(p.expires_on).slice(0, 10))
+        : null
+      const effective = p.effective_from
+        ? (p.effective_from instanceof Date ? p.effective_from.toISOString().slice(0, 10) : String(p.effective_from).slice(0, 10))
+        : null
+      lines.push(
+        `- **${label}**`,
+        `  · provider:      ${p.provider      ? String(p.provider)                   : 'not recorded'}`,
+        `  · policy number: ${p.policy_number ? String(p.policy_number)              : 'not recorded'}`,
+        `  · effective:     ${effective       ? effective                            : 'not recorded'}`,
+        `  · expires:       ${expires         ? expires                              : 'not recorded'}`,
+        `  · phone:         ${p.phone         ? String(p.phone)                      : 'not recorded'}`,
+        `  · notes:         ${p.notes         ? String(p.notes).slice(0, 200)        : 'not recorded'}`,
+      )
+    }
+  }
+
   const [logs] = await db.query<any[]>(
     `SELECT vsl.service_date, COALESCE(i.odometer_in, vsl.odometer) AS odometer,
             vsl.store, vsl.total, vsl.ai_summary

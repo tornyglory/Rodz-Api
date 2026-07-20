@@ -5,6 +5,7 @@ import { ok, forbidden, serverError } from '../../../shared/errors'
 import { getCustomerContext, isPremium } from '../../_helpers'
 import { readFromDataLake } from '../../../shared/dataLake'
 import { loadWorkshopInvoiceExpenses } from './_workshopInvoices'
+import { loadVehiclePolicyExpenses } from './_vehiclePolicies'
 
 const ready = bootstrap()
 
@@ -31,7 +32,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const fromDate = `${year}-01-01`
     const toDate   = `${year}-12-31`
 
-    const [[pointers], workshopInvoices] = await Promise.all([
+    const [[pointers], workshopInvoices, policyExpenses] = await Promise.all([
       db.query<any[]>(
         `SELECT id, s3_key, event_date, event_type, category, amount_aud
          FROM s3_event_index
@@ -42,6 +43,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         [vehicleId, ctx.customerId, fromDate, toDate],
       ),
       loadWorkshopInvoiceExpenses(db, { vehicleId, customerId: ctx.customerId, from: fromDate, to: toDate }),
+      loadVehiclePolicyExpenses(db, { vehicleId, customerId: ctx.customerId, from: fromDate, to: toDate }),
     ])
 
     // Category / monthly / total — pure SQL-level rollups, no S3 GET needed.
@@ -64,6 +66,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     for (const p of pointers) bumpBuckets(p.amount_aud, p.category, p.event_date)
     for (const w of workshopInvoices) bumpBuckets(w.amountAud, 'workshop', w.expenseDate)
+    for (const p of policyExpenses)   bumpBuckets(p.amountAud, p.category,  p.expenseDate)
 
     // Business-total + fuel efficiency need per-object fields. Fetch S3
     // objects in parallel — at realistic volume this is <50ms total.

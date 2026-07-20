@@ -1,7 +1,7 @@
 import type mysql from 'mysql2/promise'
 import type { Content } from '@google/generative-ai'
 
-export type AgentType = 'booking' | 'vehicle' | 'expense' | 'fuel' | 'logbook'
+export type AgentType = 'booking' | 'vehicle' | 'expense' | 'fuel' | 'logbook' | 'quote'
 
 export interface AgentContext {
   db:                mysql.Pool

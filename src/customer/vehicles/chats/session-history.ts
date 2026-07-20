@@ -49,6 +49,21 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const page       = all.slice(sliceStart, sliceEnd)
     const hasMore    = sliceStart > 0
 
+    // Batch-fetch this customer's feedback for any AI messages in the
+    // returned page. Empty result set when there are no AI messages, or the
+    // customer hasn't thumbed any of them yet.
+    const aiMessageIds = page.filter(m => m.role === 'model').map(m => m.id)
+    const feedbackByMessage = new Map<string, 'up' | 'down'>()
+    if (aiMessageIds.length > 0) {
+      const ph = aiMessageIds.map(() => '?').join(',')
+      const [fbRows] = await db.query<any[]>(
+        `SELECT message_id, rating FROM chat_message_feedback
+         WHERE customer_id = ? AND message_id IN (${ph})`,
+        [ctx.customerId, ...aiMessageIds],
+      )
+      for (const r of fbRows as any[]) feedbackByMessage.set(r.message_id, r.rating)
+    }
+
     const messages = page.map(m => ({
       id:        m.id,
       role:      m.role,
@@ -56,6 +71,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       imageUrl:  m.imageId ? imageUrls(m.imageId).public : null,
       createdAt: m.createdAt,
       hints:     [] as string[], // ephemeral UI cue, never persisted
+      // Only AI messages can be thumbed; user messages get null so the
+      // frontend renders the feedback buttons conditionally.
+      feedback:  m.role === 'model' ? (feedbackByMessage.get(m.id) ?? null) : null,
     }))
 
     return ok({

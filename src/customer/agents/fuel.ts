@@ -2,6 +2,7 @@ import { GoogleGenerativeAI, Tool, SchemaType, Content } from '@google/generativ
 import type { AgentContext, AgentResult } from './types'
 import { runAgentLoop } from './runner'
 import { assistantPersonaPreamble } from '../../shared/assistantPersona'
+import { loadActivePrompt, renderLearnedGuidance } from '../../shared/prompts'
 
 const VALID_FUEL_TYPES = ['unleaded_91', 'unleaded_95', 'unleaded_98', 'diesel', 'lpg', 'e10', 'ev_kwh']
 
@@ -119,6 +120,11 @@ export async function run(ctx: AgentContext, message: string): Promise<AgentResu
   const homeSuburb = ctx.customerSuburb ?? 'your area'
   const homeState  = ctx.customerState ?? null
 
+  const active = await loadActivePrompt().catch(() => null)
+  const guidance = active
+    ? renderLearnedGuidance(active.learnedGuidance, { target: 'agent', agentName: 'fuel' })
+    : ''
+
   const systemInstruction = `${assistantPersonaPreamble({ assistantName: 'Rodz', customerFirstName: ctx.customerFirstName, today: ctx.today, vehicleContext: ctx.vehicleContext })}
 
 Right now you're helping the owner find the cheapest place to fill up their car. The customer's home suburb is: ${homeSuburb}${homeState ? `, ${homeState}` : ''}.
@@ -127,7 +133,8 @@ Use getNearbyFuelPrices to find current prices. Default the suburb to their home
 
 Prices are crowd-sourced from customer receipts — data may be sparse in some areas. Flag stale prices (ageHours > 72) as possibly outdated.
 
-Be concise: list stations with price and age. Highlight the cheapest option clearly.`
+Be concise: list stations with price and age. Highlight the cheapest option clearly.
+${guidance}`
 
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
   const model = genAI.getGenerativeModel({

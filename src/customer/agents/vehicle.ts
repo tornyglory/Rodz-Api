@@ -9,7 +9,9 @@ import {
   ASSISTANT_SAFETY_RAILS,
   ASSISTANT_IDENTITY,
   ASSISTANT_SELLING_HINT,
+  ASSISTANT_COVERAGE_GUIDANCE,
 } from '../../shared/assistantPersona'
+import { loadActivePrompt, renderLearnedGuidance } from '../../shared/prompts'
 
 async function getVehicleValue(db: any, vehicleId: number): Promise<object> {
   const [[v]] = await db.query<any[]>(
@@ -93,10 +95,16 @@ const TOOLS: Tool[] = [{
 }]
 
 export async function run(ctx: AgentContext, message: string, imageBase64?: { data: string; mimeType: string }): Promise<AgentResult> {
+  const active = await loadActivePrompt().catch(() => null)
+  const guidance = active
+    ? renderLearnedGuidance(active.learnedGuidance, { target: 'agent', agentName: 'vehicle' })
+    : ''
+
   const systemInstruction = `${assistantPersonaPreamble({ assistantName: 'Rodz', customerFirstName: ctx.customerFirstName, today: ctx.today, vehicleContext: ctx.vehicleContext })}
 ${ASSISTANT_IDENTITY}
 ${ASSISTANT_VALUES}
 ${ASSISTANT_WORKSHOP_FRAMING}
+${ASSISTANT_COVERAGE_GUIDANCE}
 ${ASSISTANT_DIAGNOSIS_FLOW}
 ${ASSISTANT_SAFETY_RAILS}
 
@@ -104,7 +112,8 @@ If the owner asks what the car is worth or what they could sell it for, use the 
 
 ${ASSISTANT_SELLING_HINT}
 
-Keep responses conversational and concise. Use markdown for lists or emphasis where it helps readability.`
+Keep responses conversational and concise. Use markdown for lists or emphasis where it helps readability.
+${guidance}`
 
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
   const model = genAI.getGenerativeModel({

@@ -10,6 +10,7 @@ import {
   ASSISTANT_DIAGNOSIS_FLOW,
   ASSISTANT_SAFETY_RAILS,
   ASSISTANT_IDENTITY,
+  ASSISTANT_COVERAGE_GUIDANCE,
 } from '../../shared/assistantPersona'
 
 const ready = bootstrap()
@@ -399,6 +400,7 @@ export const handler = awslambda.streamifyResponse(async (event: any, responseSt
 ${ASSISTANT_IDENTITY}
 ${ASSISTANT_VALUES}
 ${ASSISTANT_WORKSHOP_FRAMING}
+${ASSISTANT_COVERAGE_GUIDANCE}
 
 ## Booking flow
 1. First use checkAvailability to check what slots are open for the requested timeframe

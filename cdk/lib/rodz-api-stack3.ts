@@ -1,5 +1,5 @@
 import * as path from 'path'
-import { Stack, StackProps } from 'aws-cdk-lib'
+import { Stack, StackProps, Duration } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as ec2 from 'aws-cdk-lib/aws-ec2'
 import { HttpApi, HttpRoute, HttpRouteKey, HttpMethod, HttpAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2'
@@ -236,6 +236,241 @@ export class RodzApiStack3 extends Stack {
       httpApi,
       integration: new HttpLambdaIntegration('VehicleGalleryDeleteInt', vehicleGalleryDeleteFn),
       routeKey: HttpRouteKey.with('/vehicles/{id}/gallery/{imageId}', HttpMethod.DELETE),
+      authorizer,
+    })
+
+    // ── Quote voice notes — record, playback, transcribe ───────────────────
+
+    // Async transcription Lambda. Fire-and-forget invoked by the create +
+    // retry handlers. Longer timeout because Gemini audio calls can take
+    // a few seconds; larger memory to hold the audio buffer.
+    const quoteVoiceTranscribeFn = new LambdaFn(this, 'QuoteVoiceTranscribe', {
+      entry: src('quotes/voice-notes/transcribe.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(60), memorySize: 512,
+    }).fn
+
+    // Create handler needs the transcribe ARN to invoke it fire-and-forget.
+    // Same pattern as SERVICE_SUMMARY_FN_ARN in invoices/send.ts.
+    const voiceNoteEnv = { ...sharedEnv, QUOTE_VOICE_TRANSCRIBE_FN_ARN: quoteVoiceTranscribeFn.functionArn }
+
+    const quoteVoiceUploadUrlFn = new LambdaFn(this, 'QuoteVoiceUploadUrl', {
+      entry: src('quotes/voice-notes/upload-url.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'QuoteVoiceUploadUrlRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('QuoteVoiceUploadUrlInt', quoteVoiceUploadUrlFn),
+      routeKey: HttpRouteKey.with('/quotes/{id}/voice-notes/upload-url', HttpMethod.GET),
+      authorizer,
+    })
+
+    const quoteVoiceCreateFn = new LambdaFn(this, 'QuoteVoiceCreate', {
+      entry: src('quotes/voice-notes/create.ts'), vpc, sharedEnv: voiceNoteEnv,
+    }).fn
+
+    new HttpRoute(this, 'QuoteVoiceCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('QuoteVoiceCreateInt', quoteVoiceCreateFn),
+      routeKey: HttpRouteKey.with('/quotes/{id}/voice-notes', HttpMethod.POST),
+      authorizer,
+    })
+
+    const quoteVoiceDeleteFn = new LambdaFn(this, 'QuoteVoiceDelete', {
+      entry: src('quotes/voice-notes/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'QuoteVoiceDeleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('QuoteVoiceDeleteInt', quoteVoiceDeleteFn),
+      routeKey: HttpRouteKey.with('/quotes/{id}/voice-notes/{noteId}', HttpMethod.DELETE),
+      authorizer,
+    })
+
+    const quoteVoicePlaybackUrlFn = new LambdaFn(this, 'QuoteVoicePlaybackUrl', {
+      entry: src('quotes/voice-notes/playback-url.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'QuoteVoicePlaybackUrlRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('QuoteVoicePlaybackUrlInt', quoteVoicePlaybackUrlFn),
+      routeKey: HttpRouteKey.with('/quotes/{id}/voice-notes/{noteId}/playback-url', HttpMethod.GET),
+      authorizer,
+    })
+
+    const quoteVoiceRetryFn = new LambdaFn(this, 'QuoteVoiceRetryTranscribe', {
+      entry: src('quotes/voice-notes/retry-transcribe.ts'), vpc, sharedEnv: voiceNoteEnv,
+    }).fn
+
+    new HttpRoute(this, 'QuoteVoiceRetryTranscribeRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('QuoteVoiceRetryTranscribeInt', quoteVoiceRetryFn),
+      routeKey: HttpRouteKey.with('/quotes/{id}/voice-notes/{noteId}/retry-transcribe', HttpMethod.POST),
+      authorizer,
+    })
+
+    // ── Customer vehicle policies — rego / WoF / insurance / roadside ──────
+
+    const customerPolicyListFn = new LambdaFn(this, 'CustomerPolicyList', {
+      entry: src('customer/vehicles/policies/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerPolicyListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerPolicyListInt', customerPolicyListFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/policies', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerPolicyCreateFn = new LambdaFn(this, 'CustomerPolicyCreate', {
+      entry: src('customer/vehicles/policies/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerPolicyCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerPolicyCreateInt', customerPolicyCreateFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/policies', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerPolicyUpdateFn = new LambdaFn(this, 'CustomerPolicyUpdate', {
+      entry: src('customer/vehicles/policies/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerPolicyUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerPolicyUpdateInt', customerPolicyUpdateFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/policies/{policyId}', HttpMethod.PATCH),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerPolicyDeleteFn = new LambdaFn(this, 'CustomerPolicyDelete', {
+      entry: src('customer/vehicles/policies/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerPolicyDeleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerPolicyDeleteInt', customerPolicyDeleteFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/policies/{policyId}', HttpMethod.DELETE),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerPolicyUploadUrlFn = new LambdaFn(this, 'CustomerPolicyUploadUrl', {
+      entry: src('customer/vehicles/policies/upload-url.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerPolicyUploadUrlRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerPolicyUploadUrlInt', customerPolicyUploadUrlFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/policies/upload-url', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    // Policy document scan — same "upload → scan → confirm" pattern as
+    // expense receipts. Returns a draft; does NOT persist. Frontend
+    // prefills the policy edit sheet with the extracted fields.
+    const customerPolicyScanFn = new LambdaFn(this, 'CustomerPolicyScan', {
+      entry: src('customer/vehicles/policies/scan.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerPolicyScanRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerPolicyScanInt', customerPolicyScanFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/policies/scan', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    // ── Chat message feedback — 👍 / 👎 on individual AI replies ───────────
+
+    const customerChatFeedbackFn = new LambdaFn(this, 'CustomerChatFeedback', {
+      entry: src('customer/vehicles/chats/feedback.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerChatFeedbackRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerChatFeedbackInt', customerChatFeedbackFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/chats/{sessionId}/messages/{messageId}/feedback', HttpMethod.PUT),
+      authorizer: customerAuthorizer,
+    })
+
+    // ── Admin chat feedback review — aggregated 👎 with reasons ────────────
+
+    const adminChatFeedbackFn = new LambdaFn(this, 'AdminChatFeedback', {
+      entry: src('admin/chat-feedback/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'AdminChatFeedbackRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('AdminChatFeedbackInt', adminChatFeedbackFn),
+      routeKey: HttpRouteKey.with('/admin/chat-feedback', HttpMethod.GET),
+      authorizer,
+    })
+
+    // Gemini reviewer — reads 👎'd replies + returns themes / edits.
+    // Longer timeout because of the LLM call; 25s Lambda default is tight.
+    const adminChatFeedbackReviewFn = new LambdaFn(this, 'AdminChatFeedbackReview', {
+      entry: src('admin/chat-feedback/review.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(60),
+    }).fn
+
+    new HttpRoute(this, 'AdminChatFeedbackReviewRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('AdminChatFeedbackReviewInt', adminChatFeedbackReviewFn),
+      routeKey: HttpRouteKey.with('/admin/chat-feedback/review', HttpMethod.POST),
+      authorizer,
+    })
+
+    // ── Prompt versioning — closes the loop from review → live prompt ─────
+
+    const adminPromptsListFn = new LambdaFn(this, 'AdminPromptsList', {
+      entry: src('admin/prompts/list.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'AdminPromptsListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('AdminPromptsListInt', adminPromptsListFn),
+      routeKey: HttpRouteKey.with('/admin/prompts', HttpMethod.GET),
+      authorizer,
+    })
+
+    const adminPromptsSaveFn = new LambdaFn(this, 'AdminPromptsSave', {
+      entry: src('admin/prompts/save.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(30),
+    }).fn
+    new HttpRoute(this, 'AdminPromptsSaveRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('AdminPromptsSaveInt', adminPromptsSaveFn),
+      routeKey: HttpRouteKey.with('/admin/prompts', HttpMethod.POST),
+      authorizer,
+    })
+
+    const adminPromptsApplyEditsFn = new LambdaFn(this, 'AdminPromptsApplyEdits', {
+      entry: src('admin/prompts/apply-edits.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(30),
+    }).fn
+    new HttpRoute(this, 'AdminPromptsApplyEditsRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('AdminPromptsApplyEditsInt', adminPromptsApplyEditsFn),
+      routeKey: HttpRouteKey.with('/admin/prompts/apply-edits', HttpMethod.POST),
+      authorizer,
+    })
+
+    const adminPromptsGetFn = new LambdaFn(this, 'AdminPromptsGet', {
+      entry: src('admin/prompts/get.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'AdminPromptsGetRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('AdminPromptsGetInt', adminPromptsGetFn),
+      routeKey: HttpRouteKey.with('/admin/prompts/{id}', HttpMethod.GET),
+      authorizer,
+    })
+
+    const adminPromptsActivateFn = new LambdaFn(this, 'AdminPromptsActivate', {
+      entry: src('admin/prompts/activate.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(30),
+    }).fn
+    new HttpRoute(this, 'AdminPromptsActivateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('AdminPromptsActivateInt', adminPromptsActivateFn),
+      routeKey: HttpRouteKey.with('/admin/prompts/{id}/activate', HttpMethod.POST),
       authorizer,
     })
 

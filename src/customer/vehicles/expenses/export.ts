@@ -5,6 +5,7 @@ import { forbidden, serverError } from '../../../shared/errors'
 import { getCustomerContext, isPremium } from '../../_helpers'
 import { readFromDataLake } from '../../../shared/dataLake'
 import { loadWorkshopInvoiceExpenses } from './_workshopInvoices'
+import { loadVehiclePolicyExpenses } from './_vehiclePolicies'
 
 const ready = bootstrap()
 
@@ -53,7 +54,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const workshopFrom = q.from ?? (q.year ? `${Number(q.year)}-01-01` : undefined)
     const workshopTo   = q.to   ?? (q.year ? `${Number(q.year)}-12-31` : undefined)
 
-    const [pointersResult, workshopInvoices] = await Promise.all([
+    const [pointersResult, workshopInvoices, policyExpenses] = await Promise.all([
       db.query<any[]>(
         `SELECT id, s3_key, event_date FROM s3_event_index
          WHERE ${conditions.join(' AND ')}
@@ -63,6 +64,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       wantBusinessOnly
         ? Promise.resolve([])
         : loadWorkshopInvoiceExpenses(db, { vehicleId, customerId: ctx.customerId, from: workshopFrom, to: workshopTo }),
+      wantBusinessOnly
+        ? Promise.resolve([])
+        : loadVehiclePolicyExpenses(db, { vehicleId, customerId: ctx.customerId, from: workshopFrom, to: workshopTo }),
     ])
 
     const [pointers] = pointersResult
@@ -128,6 +132,26 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
           'No',
           w.invoiceNumber,
           w.notes ?? '',
+        ],
+      })
+    }
+
+    for (const p of policyExpenses) {
+      rows.push({
+        date: p.expenseDate,
+        cells: [
+          p.expenseDate,
+          p.category,
+          `policy:${p.policyType}`,
+          p.merchantName ?? '',
+          '',
+          '',
+          p.amountAud.toFixed(2),
+          '',
+          '', '', '', '', '',
+          'No',
+          p.policyNumber ?? '',
+          p.notes ?? '',
         ],
       })
     }

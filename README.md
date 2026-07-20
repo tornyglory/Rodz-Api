@@ -29,16 +29,17 @@ Detailed briefs: `docs/s3-data-lake-backend-brief.md`, `docs/redis-cache-backend
 
 ### CDK stacks
 
-Two CloudFormation stacks share the same HTTP API and VPC:
+Three CloudFormation stacks share the same HTTP API and VPC:
 
 | Stack | Purpose | Resource count |
 |-------|---------|----------------|
 | `RodzApiStack` | Original staff-facing Lambdas | 341 |
-| `RodzApiStack2` | Newer Lambdas — customer portal, AI, S3-related, chat, expenses, etc. | 432 |
+| `RodzApiStack2` | Second wave — customer portal, AI, S3-related, chat, expenses, etc. Now at the 500-resource cap. | 497 |
+| `RodzApiStack3` | Overflow bucket for newer customer + admin endpoints (paperwork, policies, voice notes, prompt versioning, feedback, etc.) | growing |
 
 Every Lambda in a stack shares one IAM role + one security group (see `cdk/lib/constructs/lambda-fn.ts`) — that consolidation is what keeps the count under CloudFormation's 500-resource cap. Lambda-to-Lambda invocation uses a wildcard `lambda:InvokeFunction` policy on the shared role rather than `grantInvoke` (which would create a circular dependency).
 
-**New Lambdas → `RodzApiStack2`.** Use `new HttpRoute()` (not `httpApi.addRoutes()`) to keep resources scoped to the new stack.
+**New endpoints → `RodzApiStack3`** unless there's a specific reason to touch Stack 2. Stack 3 imports `httpApi`, `vpc`, `sharedEnv`, and `customerAuthorizerId` from Stack 2 as constructor props. Use `new HttpRoute()` (not `httpApi.addRoutes()`) so route resources stay scoped to the correct stack.
 
 ---
 

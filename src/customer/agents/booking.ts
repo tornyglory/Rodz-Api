@@ -3,6 +3,7 @@ import type { AgentContext, AgentResult } from './types'
 import { runAgentLoop } from './runner'
 import { notifyStore } from '../../shared/staffNotifications'
 import { assistantPersonaPreamble } from '../../shared/assistantPersona'
+import { loadActivePrompt, renderLearnedGuidance } from '../../shared/prompts'
 
 const BOOKING_TIMES = [
   { time: '08:00:00', label: '8:00 AM',  slot: 'morning'   as const },
@@ -380,6 +381,11 @@ const TOOLS: Tool[] = [{
 }]
 
 export async function run(ctx: AgentContext, message: string): Promise<AgentResult> {
+  const active = await loadActivePrompt().catch(() => null)
+  const guidance = active
+    ? renderLearnedGuidance(active.learnedGuidance, { target: 'agent', agentName: 'booking' })
+    : ''
+
   const systemInstruction = `${assistantPersonaPreamble({ assistantName: 'Rodz', customerFirstName: ctx.customerFirstName, today: ctx.today, vehicleContext: ctx.vehicleContext })}
 
 Your sole focus right now is helping the customer book a service appointment for their car. Be warm, efficient, and clear.
@@ -395,7 +401,8 @@ Booking steps — follow in order:
 5. If loan car needed, call checkCourtesyCars and tell the customer what's available
 6. Include any symptoms or issues they described in the notes field
 7. Show a full summary (service, date, time, drop-off type) and ask for confirmation
-8. Call bookAppointment only after confirmation — then give the booking ref and technician name`
+8. Call bookAppointment only after confirmation — then give the booking ref and technician name
+${guidance}`
 
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
   const model = genAI.getGenerativeModel({

@@ -385,24 +385,50 @@ Returns up to 200 expenses, newest first.
       "invoiceNumber":     "INV-2026-0042",
       "invoiceStatus":     "paid",
       "invoiceUrl":        "/account/invoices/42"
+    },
+    {
+      "id":                7,
+      "source":            "policy",
+      "category":          "insurance",
+      "policyType":        "insurance",
+      "merchantName":      "AAMI",
+      "merchantSuburb":    null,
+      "merchantState":     null,
+      "amountAud":         1420.50,
+      "expenseDate":       "2026-02-01",
+      "odometerKm":        null,
+      "fuelType":          null,
+      "fuelLitres":        null,
+      "pricePerLitre":     null,
+      "evKwh":             null,
+      "pricePerKwh":       null,
+      "imageUrl":          null,
+      "extractionStatus":  "policy",
+      "isBusinessExpense": false,
+      "notes":             "$400 excess. Covers windscreen, hire car 14 days.",
+      "createdAt":         "2026-02-01T00:00:00.000Z",
+      "policyNumber":      "POL-98721",
+      "expiresOn":         "2027-02-01",
+      "policyUrl":         "/account/vehicles/4/health#policy-7"
     }
   ],
-  "total": 2
+  "total": 3
 }
 ```
 
 The list includes an `imageUrl` for expenses that have a scanned receipt — show a thumbnail or a camera icon to indicate a receipt is attached.
 
-### `source` discriminator — new field
+### `source` discriminator — three values
 
 Every expense now carries a `source`:
 
 | Value | Meaning | Editable? |
 |-------|---------|-----------|
 | `"user"` | Customer-entered (manual or scanned receipt) | Yes — full PATCH/DELETE |
-| `"workshop"` | Rodz Smart Auto invoice — surfaced automatically as an expense entry | **Read-only** — no edit / delete affordances |
+| `"workshop"` | Rodz Smart Auto invoice — surfaced automatically | **Read-only** — no edit / delete affordances |
+| `"policy"` | Vehicle policy from the Manage page (rego / WoF / insurance / roadside) | **Read-only** — edit via the Manage page |
 
-Workshop rows also carry three extra fields not present on user rows:
+Workshop rows carry three extra fields not present on user rows:
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -410,17 +436,52 @@ Workshop rows also carry three extra fields not present on user rows:
 | `invoiceStatus` | `"sent"` \| `"paid"` | `"sent"` = awaiting payment; `"paid"` = settled |
 | `invoiceUrl` | string | Deep link to the customer's invoice viewer (`/account/invoices/:id`) |
 
+Policy rows carry a different set of extras:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `policyType` | `"registration"` \| `"wof"` \| `"insurance"` \| `"roadside"` | Raw policy type — use for row label / icon |
+| `policyNumber` | string \| null | Policy / member / rego number |
+| `expiresOn` | string \| null | `YYYY-MM-DD` when the policy runs out — badge as "Renews soon" when < 30d |
+| `policyUrl` | string | Deep link into the Manage page's policy sheet — `/account/vehicles/:id/health#policy-:policyId` |
+
+Policy rows are also only present when `cost_aud IS NOT NULL AND cost_aud > 0` on the underlying `vehicle_policies` row. A policy the customer added without a cost recorded stays out of the expense view — it's just a coverage record until they know what they paid.
+
+### `category` mapping for policy rows
+
+Policies bucket into the existing expense categories so the "by category" chart stays consistent:
+
+| `policyType` | `category` |
+|--------------|-----------|
+| `registration` | `registration` |
+| `wof` | `registration` (bucketed as compliance cost — differentiate by `policyType` in the UI) |
+| `insurance` | `insurance` |
+| `roadside` | `roadside` |
+
+If you want a separate WoF pill/row label, key off `policyType`, not `category`.
+
 ### UI rules for workshop rows
 
 - **No edit / delete buttons.** Long-press or swipe actions must be disabled — the workshop's records are the source of truth.
 - **Show a "View invoice" affordance** instead — tap opens `invoiceUrl` in the customer invoice viewer.
-- **Show the invoice number** near the merchant name (`"Rodz Somerville · INV-2026-0042"`) so it's obvious this row is a workshop invoice.
-- **Show unpaid state** — if `invoiceStatus === "sent"`, badge the row as "Awaiting payment" so the customer can spot outstanding bills at a glance.
+- **Show the invoice number** near the merchant name (`"Rodz Somerville · INV-2026-0042"`).
+- **Show unpaid state** — if `invoiceStatus === "sent"`, badge the row as "Awaiting payment".
 - **Category always `"workshop"`** — no need to allow re-categorising.
-- **`businessOnly=true` filter** hides workshop rows (they don't carry a per-invoice business flag). Document this in your filter UI copy if it's non-obvious.
-- **`category=<foo>` filter** with a value other than `workshop` also hides workshop rows.
 
-Aside from the extra fields and disabled edit UI, workshop rows render identically to user rows — same amount, date, merchant, odometer, category badge.
+### UI rules for policy rows
+
+- **No edit / delete buttons.** Tapping the row opens `policyUrl` (the Manage page's policy sheet), not the expense edit sheet.
+- **Show the provider + policy label** — e.g. `"AAMI · Insurance"` or `"NZTA · Registration"`. Use `policyType` for the label.
+- **Show the renewal date** — `"Renews 1 Feb 2027"` from `expiresOn` — badge in amber if < 30 days out, red if past.
+- **Icon per `policyType`** — 📋 registration, 🛡️ insurance, 🚨 roadside, 🔧 or ✅ for WoF (pick one you like).
+- **No merchant suburb/state, no odometer, no fuel fields** — those are always `null` on policy rows.
+
+### Filter behaviour across all three sources
+
+- **`businessOnly=true`** hides both workshop and policy rows (neither carries a per-row business flag).
+- **`category=<foo>`** filter matches on the row's `category` field. Since policies map to `registration | insurance | roadside`, filtering by `insurance` shows both customer-entered insurance receipts AND the insurance policy row. Filtering by `workshop` shows only user + workshop rows. Filtering by a category that no policy uses (`fuel`, `parts`, etc.) hides all policy rows.
+
+Aside from the extra fields and disabled edit UI, workshop and policy rows render identically to user rows — same amount, date, merchant, category badge.
 
 ---
 
@@ -493,13 +554,13 @@ Aggregated stats for a calendar year. Use this for the dashboard / annual report
 
 | Field | Notes |
 |-------|-------|
-| `totalAud` | All expenses for the year — includes workshop invoices |
-| `businessTotalAud` | Sum of expenses where `isBusinessExpense = true`. Workshop invoices do NOT contribute (they don't carry the flag). |
-| `byCategory` | Sorted by total descending. The `workshop` bucket now includes both customer-entered workshop expenses AND Rodz Smart Auto invoices. |
-| `fuelEfficiency` | Only present when there are ≥2 fuel entries with odometer readings. `null` otherwise. Workshop invoices don't affect this calc. |
+| `totalAud` | All expenses for the year — includes user entries, workshop invoices, and policy premiums |
+| `businessTotalAud` | Sum of expenses where `isBusinessExpense = true`. Workshop invoices and policies do NOT contribute (neither carries the flag). |
+| `byCategory` | Sorted by total descending. The `workshop` bucket includes user workshop expenses + Rodz invoices; the `registration` bucket includes rego + WoF policies; `insurance` and `roadside` buckets include their matching policies. |
+| `fuelEfficiency` | Only present when there are ≥2 fuel entries with odometer readings. `null` otherwise. Workshop invoices and policies don't affect this calc. |
 | `fuelEfficiency.avgLitresPer100km` | Calculated from consecutive odometer readings across all fuel entries |
 | `fuelEfficiency.costPerKm` | Total fuel spend divided by total km covered |
-| `monthlyTotals` | Only months with spending appear — fill gaps with 0 on the frontend. Includes workshop-invoice amounts. |
+| `monthlyTotals` | Only months with spending appear — fill gaps with 0 on the frontend. Includes both workshop-invoice and policy amounts. |
 
 **When `fuelEfficiency` is null:**  
 Show a prompt: "Add odometer readings to your fuel expenses to unlock fuel efficiency tracking."
@@ -522,7 +583,11 @@ Content-Disposition: attachment; filename="Expenses-LWF251-Suzuki-Vitara-2026.cs
 
 The CSV includes columns: Date, Category, Source, Merchant, Suburb, State, Amount (AUD), Odometer (km), Fuel Type, Litres, Price/Litre, EV kWh, Price/kWh, Business Expense, Invoice #, Notes.
 
-Workshop invoices appear as rows with `Source=workshop` and their `Invoice #` populated. All rows are sorted chronologically (ascending) so the CSV reads as a running ledger.
+- **User rows** — `Source=user`, all fuel/odometer fields populated where relevant.
+- **Workshop rows** — `Source=workshop`, `Invoice #` populated.
+- **Policy rows** — `Source=policy:{policyType}` (e.g. `policy:insurance`, `policy:wof`). `Invoice #` carries the policy / member / rego number. Other fields (fuel, odometer, suburb) are blank.
+
+All rows are sorted chronologically (ascending) so the CSV reads as a running ledger.
 
 **Triggering the download in-app**
 
@@ -550,7 +615,10 @@ On mobile, use the native share sheet with the file blob instead.
 - **Header:** Year selector (left/right arrows). Current year total in large text.
 - **Category filter:** Horizontal scrolling chips — All / Fuel / Workshop / etc. Selecting one calls `GET /c/vehicles/:id/expenses?category=fuel`.
 - **Business only toggle:** Switch that appends `businessOnly=true` to the filter.
-- **Expense rows:** Date, merchant name (or category if no merchant), amount. Camera icon if `imageUrl` is set. Workshop-invoice rows (`source: "workshop"`) show the invoice number instead and an "Awaiting payment" pill if `invoiceStatus === "sent"`. Tap workshop rows to open `invoiceUrl`; tap user rows to open the detail sheet.
+- **Expense rows:** Date, merchant name (or category if no merchant), amount. Camera icon if `imageUrl` is set.
+  - **Workshop rows** (`source: "workshop"`): show the invoice number, "Awaiting payment" pill if `invoiceStatus === "sent"`. Tap opens `invoiceUrl`.
+  - **Policy rows** (`source: "policy"`): show the provider + policy label (rego / WoF / insurance / roadside) and the `expiresOn` renewal date. Tap opens `policyUrl`.
+  - **User rows** (`source: "user"`): tap opens the detail / edit sheet.
 - **FAB:** "+" button → opens Add Expense bottom sheet.
 - **Export button:** In the header or toolbar. Triggers CSV download for the selected year.
 

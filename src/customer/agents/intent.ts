@@ -49,6 +49,26 @@ export function classifyIntent(message: string, isPremium: boolean): AgentType {
     return 'logbook'
   }
 
+  // ── QUOTE (before booking so "explain the quote" doesn't hit service regexes) ──
+  // The customer is asking about a quote we already sent them. Route to the
+  // quote agent so it can pull the actual line items + voice notes and
+  // explain in the "educate don't sell" voice. NOT for the initial "how much
+  // does a service cost" question — that's a general vehicle Q&A.
+  if (
+    /\b(the|this|my|our|that|latest|recent|last)\s+quote\b/.test(m) ||
+    /\bquote\s+(you|rodz)\s+sent\b/.test(m) ||
+    /\bexplain.{0,20}\bquote\b/.test(m) ||
+    /\b(understand|walk|talk).{0,15}(me\s+)?through.{0,15}(the\s+)?quote\b/.test(m) ||
+    /\b(what|which|why).{0,25}(item|items|line|lines|part|parts)\s.{0,20}\bquote\b/.test(m) ||
+    /\bquote\b.{0,25}(item|items|line|lines|break.?down|breakdown)\b/.test(m) ||
+    /\bquote\s+(number|ref|reference)\b/.test(m) ||
+    /\bq\d{3,}\b/i.test(m) ||
+    /\b(accept|approve|reject|decline).{0,20}\b(item|items|line|lines)\b/.test(m) ||
+    /\b(voice|audio|memo)\s+(note|notes|message)\b/.test(m) && /\bquote\b/.test(m)
+  ) {
+    return 'quote'
+  }
+
   // ── BOOKING ──────────────────────────────────────────────────────────────
   if (
     // Core booking intent

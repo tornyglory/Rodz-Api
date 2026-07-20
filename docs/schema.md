@@ -76,6 +76,7 @@ Rules: **detail** goes to S3, **aggregates** into summary tables, **pointers** i
 | [Premium — Logbook import](#premium--logbook-import) | `vehicle_service_log_external` |
 | [Data lake index](#data-lake-index) | `s3_event_index` |
 | [Vehicle health & maintenance](#vehicle-health--maintenance) | `vehicle_health_scores`, `maintenance_schedule` |
+| [AI prompt versioning & feedback](#ai-prompt-versioning--feedback) | `prompt_versions`, `chat_message_feedback` |
 
 ---
 
@@ -1795,3 +1796,96 @@ Populated from `s3_event_index` rows where `event_type = 'fuel-fills'`, plus one
 Computed entirely from `s3_event_index` (uses denormalised `amount_aud + category` columns — zero S3 fetches).
 
 **Foreign keys:** `vehicle_id → vehicles(id)`, `customer_id → customers(id)`
+
+---
+
+## AI prompt versioning & feedback
+
+Closes the loop between customer feedback on AI replies and the live assistant prompt. Customers 👍/👎 individual AI messages (`chat_message_feedback`), a super-admin reviews the accumulated 👎s (Gemini clusters themes + proposes edits), the operator applies chosen edits which save as a new active row in `prompt_versions`. The chat handler + all specialist agents read the active version on every request.
+
+Migrations:
+- `docs/migrations/chat_message_feedback.sql`
+- `docs/migrations/prompt_versions.sql`
+
+Endpoints (all super-admin unless noted):
+- Customer-facing: `PUT /c/vehicles/{id}/chats/{sessionId}/messages/{messageId}/feedback` — customer submits 👍/👎.
+- Admin review: `GET /admin/chat-feedback`, `POST /admin/chat-feedback/review` (Gemini review).
+- Admin prompt CRUD: `GET /admin/prompts` (filters + pagination + lite mode), `GET /admin/prompts/{id}` (full detail), `POST /admin/prompts` (manual save), `POST /admin/prompts/apply-edits` (from Rodz review), `POST /admin/prompts/{id}/activate` (revert — creates a new row with `source = 'revert'`).
+
+Frontend briefs: `docs/chat-message-feedback-frontend-brief.md`, `docs/admin-chat-feedback-frontend-brief.md`, `docs/admin-chat-feedback-applied-flag-brief.md`, `docs/admin-prompts-frontend-brief.md`, `docs/admin-prompts-search-brief.md`.
+
+---
+
+### `chat_message_feedback`
+
+Per-customer 👍/👎 rating on individual AI chat messages. One row per (customer, message). Idempotent PUT upsert — same customer rating the same message replaces the row; rating: null deletes it.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `customer_id` | bigint unsigned | NO | FK → `customers.id` |
+| `vehicle_id` | bigint unsigned | NO | FK → `vehicles.id` |
+| `session_id` | bigint unsigned | NO | FK → `customer_chat_sessions.id` |
+| `message_id` | varchar(80) | NO | S3 message id (string, e.g. `1784158472547-0-b10446`). Never coerce to number. |
+| `rating` | enum | NO | `up` \| `down` |
+| `reason` | varchar(500) | YES | Optional freetext, used mostly with 👎 |
+| `prompt_version` | varchar(40) | YES | The `version_label` of `prompt_versions` that produced the AI reply. Correlates ratings to prompt iterations. |
+| `created_at` | datetime | NO | Default `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `ON UPDATE CURRENT_TIMESTAMP` |
+
+Unique key: `uk_customer_message (customer_id, message_id)` — enforces idempotent upsert.
+
+Indexes:
+- `idx_session (session_id, created_at)` — for session-history feedback lookup.
+- `idx_rating_date (rating, created_at)` — for admin review windowed queries.
+- `idx_prompt_rating (prompt_version, rating)` — for per-version up-rate aggregation.
+
+Detail (message text itself) lives in the S3 session blob at `s3://rodz-data-lake/diagnostic-sessions/current/{sessionId}.json` — this table stores only the customer's opinion of a given message.
+
+Foreign keys cascade on customer/vehicle/session delete.
+
+---
+
+### `prompt_versions`
+
+The assistant's live prompt, versioned. Exactly one row is active at any time (enforced by the virtual `_active_lock` column + UNIQUE trick — same pattern as `vehicle_policies`). Every save, review-apply, or revert writes a NEW immutable row and flips the active flag in one transaction. The chat handler reads the active row on every request via `loadActivePrompt()` (cached in Redis 30s).
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `version_label` | varchar(80) | NO | UNIQUE. Format: `v{N}-{YYYY-MM-DD}-{HH:mm}[-slug]`. N monotonically increases across all rows (never re-uses a number, even after reverts). |
+| `base_prompt` | mediumtext | NO | Full static persona text — persona blocks, values, workshop framing, diagnosis flow, safety rails, coverage guidance, etc. What the chat handler sees as the main system prompt. |
+| `learned_guidance` | json | NO | Array of accumulated guidance entries applied from Rodz's review-of-👎 workflow. Empty array on manual saves that don't carry guidance. |
+| `notes` | varchar(500) | YES | Freetext "why this change" — read in the version list. |
+| `source` | enum | NO | `manual` \| `review-apply` \| `revert`. Default `manual`. |
+| `source_review` | json | YES | Metadata about the review that produced a `review-apply` row: `{ windowDays, cached, reviewedCount }`. |
+| `parent_version_id` | bigint unsigned | YES | FK → `prompt_versions.id`. The version this one was saved on top of. Null only on the initial seed. |
+| `saved_by` | bigint unsigned | NO | FK → `staff.id`. Attribution. |
+| `saved_at` | datetime | NO | Default `CURRENT_TIMESTAMP` |
+| `is_active` | tinyint(1) | NO | Default `0`. Exactly one row has `1` at any time. |
+| `_active_lock` | tinyint(1) | — | **Virtual/generated** — `IF(is_active = 1, 1, NULL)`. Do NOT insert or update. Paired with UNIQUE index below. |
+
+Unique keys:
+- `uk_version_label (version_label)`
+- `uk_active_lock (_active_lock)` — the virtual-column trick: `_active_lock` is `1` for the active row and `NULL` otherwise; MySQL treats NULLs in a UNIQUE as distinct, so only one row can be active at a time.
+
+Other indexes: `idx_saved_at (saved_at DESC)` for the version list.
+
+**`learned_guidance` JSON shape** — array of:
+```jsonc
+{
+  "instruction":  "…",
+  "rationale":    "…",
+  "target":       "system-prompt" | "agent",
+  "agentName":    null | "booking" | "expense" | "fuel" | "vehicle" | "logbook" | "quote",
+  "addedAt":      "2026-07-20T14:29:11.000Z",
+  "addedBy":      <staff.id>,
+  "fromReview":   { "windowDays": 7, "reviewedCount": 12 } | null
+}
+```
+
+The chat handler composes the final system prompt as: `{preamble} + {base_prompt} + {dynamic scaffolding} + {learned_guidance filtered by target = 'system-prompt'}`. Each specialist agent composes: `{preamble} + {agent-specific instructions} + {learned_guidance filtered by target = 'agent' AND agentName = <this agent>}`.
+
+Foreign keys:
+- `parent_version_id → prompt_versions(id)` (ON DELETE SET NULL)
+- `saved_by → staff(id)` (ON DELETE RESTRICT — attribution must survive)

@@ -3,6 +3,7 @@ import type { AgentContext, AgentResult } from './types'
 import { runAgentLoop } from './runner'
 import { readFromDataLake } from '../../shared/dataLake'
 import { assistantPersonaPreamble } from '../../shared/assistantPersona'
+import { loadActivePrompt, renderLearnedGuidance } from '../../shared/prompts'
 
 // Customer expenses live in S3 (via s3_event_index pointers) — NOT in
 // vehicle_expenses. This agent used to query vehicle_expenses and always
@@ -147,6 +148,11 @@ const TOOLS: Tool[] = [{
 export async function run(ctx: AgentContext, message: string): Promise<AgentResult> {
   const currentYear = new Date().getFullYear()
 
+  const active = await loadActivePrompt().catch(() => null)
+  const guidance = active
+    ? renderLearnedGuidance(active.learnedGuidance, { target: 'agent', agentName: 'expense' })
+    : ''
+
   const systemInstruction = `${assistantPersonaPreamble({ assistantName: 'Rodz', customerFirstName: ctx.customerFirstName, today: ctx.today, vehicleContext: ctx.vehicleContext })}
 
 Current year: ${currentYear}.
@@ -155,7 +161,8 @@ Right now you're helping the owner understand what the car is costing them to ru
 
 Be specific with numbers. When discussing fuel efficiency, explain what it means in plain English (e.g. "that's about $0.21 per km — for the Corolla that's average for its class"). Teach them how to read the number, not just the number itself. For tax questions, remind them the CSV export is available in the Expense Tracker section of the app.
 
-Do not help with adding expenses via chat — guide them to use the Expense Tracker screen to scan receipts or add entries manually.`
+Do not help with adding expenses via chat — guide them to use the Expense Tracker screen to scan receipts or add entries manually.
+${guidance}`
 
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
   const model = genAI.getGenerativeModel({

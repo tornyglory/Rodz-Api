@@ -2,6 +2,7 @@ import { GoogleGenerativeAI, Tool, SchemaType, Content } from '@google/generativ
 import type { AgentContext, AgentResult } from './types'
 import { runAgentLoop } from './runner'
 import { assistantPersonaPreamble } from '../../shared/assistantPersona'
+import { loadActivePrompt, renderLearnedGuidance } from '../../shared/prompts'
 
 function toDate(v: any): string {
   if (!v) return ''
@@ -74,6 +75,11 @@ const TOOLS: Tool[] = [{
 }]
 
 export async function run(ctx: AgentContext, message: string): Promise<AgentResult> {
+  const active = await loadActivePrompt().catch(() => null)
+  const guidance = active
+    ? renderLearnedGuidance(active.learnedGuidance, { target: 'agent', agentName: 'logbook' })
+    : ''
+
   const systemInstruction = `${assistantPersonaPreamble({ assistantName: 'Rodz', customerFirstName: ctx.customerFirstName, today: ctx.today, vehicleContext: ctx.vehicleContext })}
 
 Right now you're helping the owner understand the car's service history.
@@ -82,7 +88,8 @@ Use getLogbookTimeline to answer questions about service history. You can see bo
 
 For questions about importing past invoices, guide the customer to the Logbook screen in the app where they can photograph old invoices and have them added automatically.
 
-Be specific: reference dates, odometers, and workshop names when discussing history. If the customer asks about service intervals, use the odometer readings to calculate how far they've driven between services. **When you describe past work, briefly explain what each item involved and why it mattered** — a service log entry becomes a teaching moment. Owners who understand what they paid for last time make better decisions about the next service.`
+Be specific: reference dates, odometers, and workshop names when discussing history. If the customer asks about service intervals, use the odometer readings to calculate how far they've driven between services. **When you describe past work, briefly explain what each item involved and why it mattered** — a service log entry becomes a teaching moment. Owners who understand what they paid for last time make better decisions about the next service.
+${guidance}`
 
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
   const model = genAI.getGenerativeModel({

@@ -9,6 +9,7 @@ import type { AgentContext } from '../../agents/types'
 import * as expenseAgent  from '../../agents/expense'
 import * as fuelAgent     from '../../agents/fuel'
 import * as logbookAgent  from '../../agents/logbook-agent'
+import * as quoteAgent    from '../../agents/quote'
 import {
   getAssistantMemory, saveAssistantMemory, forgetAssistantMemory,
   renderMemoryBlock, isMemoryEnabled,
@@ -34,7 +35,9 @@ import {
   ASSISTANT_IDENTITY,
   ASSISTANT_SELLING_HINT,
   ASSISTANT_EXPENSE_HINT,
+  ASSISTANT_COVERAGE_GUIDANCE,
 } from '../../../shared/assistantPersona'
+import { loadActivePrompt, renderLearnedGuidance } from '../../../shared/prompts'
 
 // Rate limit tiers — messages per customer per calendar day.
 const RATE_LIMIT_BY_TIER: Record<string, number> = { free: 20, silver: 100, gold: 100 }
@@ -285,9 +288,14 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       }
     }
 
-    // Route expense / fuel / logbook messages to specialist agents
+    // Load the active prompt version once — used for the systemInstruction
+    // below and to stamp `promptVersion` on the response (feedback rows
+    // reference this so we can correlate ratings to prompt iterations).
+    const activePrompt = await loadActivePrompt().catch(() => null)
+
+    // Route expense / fuel / logbook / quote messages to specialist agents
     const intent = classifyIntent(content ?? '', isPremium)
-    if (content && (intent === 'expense' || intent === 'fuel' || intent === 'logbook')) {
+    if (content && (intent === 'expense' || intent === 'fuel' || intent === 'logbook' || intent === 'quote')) {
       const agentCtx: AgentContext = {
         db,
         customerId:        ctx.customerId,
@@ -306,7 +314,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         ? await expenseAgent.run(agentCtx, content)
         : intent === 'fuel'
           ? await fuelAgent.run(agentCtx, content)
-          : await logbookAgent.run(agentCtx, content)
+          : intent === 'logbook'
+            ? await logbookAgent.run(agentCtx, content)
+            : await quoteAgent.run(agentCtx, content)
 
       const { content: agentContent, hints: agentHints } = extractHints(agentResult.content ?? '')
       const [savedModelMsg] = await appendMessages(sessionId, vehicleId, ctx.customerId, [{
@@ -321,13 +331,26 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         content:       agentContent,
         functionCalls: agentResult.functionCalls.length ? agentResult.functionCalls.map(({ name, result }) => ({ name, result })) : undefined,
         hints:         agentHints,
+        promptVersion: activePrompt?.versionLabel ?? null,
       })
     }
 
+    const basePersonaBody = activePrompt?.basePrompt ?? [
+      ASSISTANT_IDENTITY,
+      ASSISTANT_VALUES,
+      ASSISTANT_WORKSHOP_FRAMING,
+      ASSISTANT_COVERAGE_GUIDANCE,
+      ASSISTANT_DIAGNOSIS_FLOW,
+      ASSISTANT_SAFETY_RAILS,
+      ASSISTANT_SELLING_HINT,
+      ASSISTANT_EXPENSE_HINT,
+    ].join('\n')
+    const learnedGuidanceBlock = activePrompt
+      ? renderLearnedGuidance(activePrompt.learnedGuidance, { target: 'system-prompt' })
+      : ''
+
     const systemInstruction = `${assistantPersonaPreamble({ assistantName, customerFirstName, today, vehicleContext })}
-${ASSISTANT_IDENTITY}
-${ASSISTANT_VALUES}
-${ASSISTANT_WORKSHOP_FRAMING}
+${basePersonaBody}
 ${renderMemoryBlock(memory)}
 ${isMemoryEnabled() ? `Use \`remember\` sparingly. Save at most one note per conversation, only when the customer says something you'd genuinely benefit from recalling next time. Don't save facts we already have in structured data (odometer, service dates, vehicle specs — those are always available). Never save PII beyond what's already visible to the customer themselves.
 ` : ''}
@@ -345,20 +368,15 @@ When helping with booking, follow these steps in order:
 10. Show a summary of ALL details and ask the customer to confirm before calling bookAppointment.
 11. After booking, confirm with their booking reference, time, and the technician's name if assigned.
 
-${ASSISTANT_DIAGNOSIS_FLOW}
-${ASSISTANT_SAFETY_RAILS}
-
 When a symptom overlaps with an item on the car's Upcoming Maintenance schedule, connect the dots (e.g. "the brake fluid is coming up on schedule anyway — could be related").
 
 When the owner asks what's due, overdue, or coming up on maintenance, answer from the "Upcoming Maintenance" section above rather than guessing from general model knowledge. Quote real numbers: how far overdue, when it's due, cost estimate.
 
 If the customer asks what their vehicle is worth — use the getVehicleValue tool.
 
-${ASSISTANT_SELLING_HINT}
-${ASSISTANT_EXPENSE_HINT}
-
 Keep responses conversational and concise. Use markdown for lists or emphasis where it helps readability.
-${isHintsEnabled() ? HINTS_INSTRUCTION : ''}`
+${isHintsEnabled() ? HINTS_INSTRUCTION : ''}
+${learnedGuidanceBlock}`
 
     const contents: Content[] = [...historyContents]
 
@@ -639,6 +657,7 @@ ${isHintsEnabled() ? HINTS_INSTRUCTION : ''}`
       content:       cleanContent,
       functionCalls: functionCalls.length ? functionCalls.map(({ name, result }) => ({ name, result })) : undefined,
       hints,
+      promptVersion: activePrompt?.versionLabel ?? null,
     })
   } catch (err) {
     return serverError(err)

@@ -6,6 +6,7 @@ import { getCustomerContext, isPremium } from '../../_helpers'
 import { imageUrls } from '../../../shared/cloudflare'
 import { readFromDataLake } from '../../../shared/dataLake'
 import { loadWorkshopInvoiceExpenses } from './_workshopInvoices'
+import { loadVehiclePolicyExpenses } from './_vehiclePolicies'
 
 const ready = bootstrap()
 
@@ -42,8 +43,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (q.from) { conditions.push('event_date >= ?'); params.push(q.from) }
     if (q.to)   { conditions.push('event_date <= ?'); params.push(q.to)   }
 
-    // Fetch user-created expenses (S3) and workshop invoices in parallel.
-    const [pointersResult, workshopExpenses] = await Promise.all([
+    // Fetch user-created expenses (S3), workshop invoices, and policies
+    // in parallel. Each is filtered so its rows won't show up if the
+    // user has applied a category / businessOnly filter that excludes it.
+    // Policies bucket into 'registration' | 'insurance' | 'roadside'.
+    const POLICY_CATEGORIES = new Set(['registration', 'insurance', 'roadside'])
+    const [pointersResult, workshopExpenses, policyExpenses] = await Promise.all([
       db.query<any[]>(
         `SELECT id, s3_key, event_date FROM s3_event_index
          WHERE ${conditions.join(' AND ')}
@@ -58,7 +63,20 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         : (wantCategory && wantCategory !== 'workshop')
           ? Promise.resolve([])
           : loadWorkshopInvoiceExpenses(db, { vehicleId, customerId: ctx.customerId, from: q.from, to: q.to }),
+      // Policies are business-neutral too. Skip when a category filter
+      // is set that doesn't overlap policy buckets.
+      wantBusinessOnly
+        ? Promise.resolve([])
+        : (wantCategory && !POLICY_CATEGORIES.has(wantCategory))
+          ? Promise.resolve([])
+          : loadVehiclePolicyExpenses(db, { vehicleId, customerId: ctx.customerId, from: q.from, to: q.to }),
     ])
+
+    // Category filter applies AFTER policy load (a policy is included
+    // only if its mapped category matches the filter).
+    const filteredPolicies = wantCategory
+      ? policyExpenses.filter(p => p.category === wantCategory)
+      : policyExpenses
 
     const [pointers] = pointersResult
     const details    = await Promise.all(pointers.map((p: any) => readFromDataLake<any>(p.s3_key)))
@@ -94,8 +112,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       })
     }
 
-    // Merge workshop invoices in and sort the combined list by date DESC.
-    const merged = [...expenses, ...workshopExpenses].sort((a, b) => {
+    // Merge user + workshop + policy entries and sort by date DESC.
+    const merged = [...expenses, ...workshopExpenses, ...filteredPolicies].sort((a, b) => {
       if (a.expenseDate === b.expenseDate) return 0
       return a.expenseDate < b.expenseDate ? 1 : -1
     })
