@@ -71,6 +71,14 @@ export class RodzApiStack2 extends Stack {
       // ANDROID_PLATFORM_APP_ARN stays empty until FCM credentials land.
       IOS_PLATFORM_APP_ARN:      process.env.IOS_PLATFORM_APP_ARN     ?? '',
       ANDROID_PLATFORM_APP_ARN:  process.env.ANDROID_PLATFORM_APP_ARN ?? '',
+      // Cloudflare R2 — video storage. See docs/video-platform-plan.md.
+      // Set in .env after Sprint 0 bucket + API-token creation.
+      R2_ACCOUNT_ID:        process.env.R2_ACCOUNT_ID        ?? '',
+      R2_ACCESS_KEY_ID:     process.env.R2_ACCESS_KEY_ID     ?? '',
+      R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY ?? '',
+      R2_ENDPOINT:          process.env.R2_ENDPOINT          ?? '',
+      R2_BUCKET:            process.env.R2_BUCKET            ?? 'rodz-videos',
+      R2_PUBLIC_CDN_URL:    process.env.R2_PUBLIC_CDN_URL    ?? 'https://cdn.rodz.com.au',
       // GEMINI_VOICE_API_KEY is set per-Lambda after deploy via
       // `aws lambda update-function-configuration` — it's a secret and
       // shouldn't live in the CDK env stanza.

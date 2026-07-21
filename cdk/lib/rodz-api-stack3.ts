@@ -5,6 +5,7 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2'
 import { HttpApi, HttpRoute, HttpRouteKey, HttpMethod, HttpAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2'
 import { HttpLambdaAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers'
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations'
+import * as lambda from 'aws-cdk-lib/aws-lambda'
 import { LambdaFn } from './constructs/lambda-fn'
 
 interface RodzApiStack3Props extends StackProps {
@@ -319,6 +320,77 @@ export class RodzApiStack3 extends Stack {
       httpApi,
       integration: new HttpLambdaIntegration('QuoteVoiceRetryTranscribeInt', quoteVoiceRetryFn),
       routeKey: HttpRouteKey.with('/quotes/{id}/voice-notes/{noteId}/retry-transcribe', HttpMethod.POST),
+      authorizer,
+    })
+
+    // ── Quote videos — record / play back with thumbnails ──────────────────
+    //
+    // Storage: Cloudflare R2 via S3-compatible API (see src/shared/r2.ts).
+    // ffmpeg + ffprobe come from a Lambda layer (thumbnail extraction).
+    // Layer ARN must be set in the FFMPEG_LAYER_ARN env var — pointing at
+    // any public ffmpeg-for-lambda layer (e.g. serverlesspub's, or one we
+    // publish ourselves). If unset, post-process Lambda still deploys but
+    // ffmpeg calls will fail at runtime — safe (row lands as 'failed').
+
+    const ffmpegLayerArn = process.env.FFMPEG_LAYER_ARN
+    const ffmpegLayer = ffmpegLayerArn
+      ? lambda.LayerVersion.fromLayerVersionArn(this, 'FfmpegLayer', ffmpegLayerArn)
+      : undefined
+
+    // Async post-process Lambda — extracts thumbnail via ffmpeg, verifies
+    // duration + width/height via ffprobe. Longer timeout + memory
+    // because ffmpeg needs a real budget on a video read + JPEG encode.
+    const quoteVideoPostProcessFn = new LambdaFn(this, 'QuoteVideoPostProcess', {
+      entry: src('quotes/videos/post-process.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(90), memorySize: 1024,
+      ephemeralStorageSize: 1024,   // /tmp for the video file + thumbnail scratch space
+      layers: ffmpegLayer ? [ffmpegLayer] : undefined,
+    }).fn
+
+    // Create handler needs the post-process ARN to invoke it fire-and-forget.
+    const videoEnv = { ...sharedEnv, QUOTE_VIDEO_POST_PROCESS_FN_ARN: quoteVideoPostProcessFn.functionArn }
+
+    const quoteVideoUploadUrlFn = new LambdaFn(this, 'QuoteVideoUploadUrl', {
+      entry: src('quotes/videos/upload-url.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'QuoteVideoUploadUrlRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('QuoteVideoUploadUrlInt', quoteVideoUploadUrlFn),
+      routeKey: HttpRouteKey.with('/quotes/{id}/videos/upload-url', HttpMethod.GET),
+      authorizer,
+    })
+
+    const quoteVideoCreateFn = new LambdaFn(this, 'QuoteVideoCreate', {
+      entry: src('quotes/videos/create.ts'), vpc, sharedEnv: videoEnv,
+    }).fn
+
+    new HttpRoute(this, 'QuoteVideoCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('QuoteVideoCreateInt', quoteVideoCreateFn),
+      routeKey: HttpRouteKey.with('/quotes/{id}/videos', HttpMethod.POST),
+      authorizer,
+    })
+
+    const quoteVideoDeleteFn = new LambdaFn(this, 'QuoteVideoDelete', {
+      entry: src('quotes/videos/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'QuoteVideoDeleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('QuoteVideoDeleteInt', quoteVideoDeleteFn),
+      routeKey: HttpRouteKey.with('/quotes/{id}/videos/{videoId}', HttpMethod.DELETE),
+      authorizer,
+    })
+
+    const quoteVideoPlaybackUrlFn = new LambdaFn(this, 'QuoteVideoPlaybackUrl', {
+      entry: src('quotes/videos/playback-url.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'QuoteVideoPlaybackUrlRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('QuoteVideoPlaybackUrlInt', quoteVideoPlaybackUrlFn),
+      routeKey: HttpRouteKey.with('/quotes/{id}/videos/{videoId}/playback-url', HttpMethod.GET),
       authorizer,
     })
 

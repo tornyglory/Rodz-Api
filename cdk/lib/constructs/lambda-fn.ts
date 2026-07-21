@@ -1,5 +1,5 @@
 import { Construct } from 'constructs'
-import { Duration, Stack } from 'aws-cdk-lib'
+import { Duration, Size, Stack } from 'aws-cdk-lib'
 import * as lambda from 'aws-cdk-lib/aws-lambda'
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs'
 import * as ec2 from 'aws-cdk-lib/aws-ec2'
@@ -13,6 +13,8 @@ interface LambdaFnProps {
   timeout?: Duration
   memorySize?: number
   needsSes?: boolean
+  layers?: lambda.ILayerVersion[]
+  ephemeralStorageSize?: number   // MB, 512 default, up to 10240
 }
 
 // One shared role + one shared security group per stack. Consolidating these
@@ -108,6 +110,10 @@ export class LambdaFn extends Construct {
       securityGroups: [sharedSg],
       timeout: props.timeout ?? Duration.seconds(10),
       memorySize: props.memorySize ?? 256,
+      layers: props.layers,
+      ephemeralStorageSize: props.ephemeralStorageSize
+        ? Size.mebibytes(props.ephemeralStorageSize)
+        : undefined,
       environment: {
         ...props.sharedEnv,
         ...props.environment,

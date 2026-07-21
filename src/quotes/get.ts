@@ -5,6 +5,7 @@ import { getAuthContext } from '../shared/auth'
 import { ok, forbidden, notFound, serverError } from '../shared/errors'
 import { QUOTE_SELECT, buildQuote, getAllowedStoreIds, getQuoteItems } from './_helpers'
 import { attachVoiceNotesToQuote } from './voice-notes/_helpers'
+import { attachVideosToQuote } from './videos/_helpers'
 
 const ready = bootstrap()
 
@@ -29,6 +30,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const items = await getQuoteItems(db, row.id)
     const built = buildQuote(row, items)
     await attachVoiceNotesToQuote(db, built)
+    await attachVideosToQuote(db, built)
 
     return ok({ quote: built })
   } catch (err) {
