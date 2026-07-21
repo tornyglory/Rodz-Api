@@ -19,6 +19,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const {
       firstName, lastName, mobile, suburb, state, postcode, description,
       dateOfBirth, gender, marketingOptIn, smsOptIn,
+      dreamCar, favouriteDrive, drivingSinceYear,
     } = body
 
     if (state != null && !VALID_STATES.has(String(state).toUpperCase())) {
@@ -32,6 +33,19 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
     if (description != null && String(description).length > 2000) {
       return validationError('description must be 2000 characters or fewer.')
+    }
+    if (dreamCar != null && String(dreamCar).length > 100) {
+      return validationError('dreamCar must be 100 characters or fewer.')
+    }
+    if (favouriteDrive != null && String(favouriteDrive).length > 200) {
+      return validationError('favouriteDrive must be 200 characters or fewer.')
+    }
+    if (drivingSinceYear != null && drivingSinceYear !== '') {
+      const y = Number(drivingSinceYear)
+      const nowYear = new Date().getUTCFullYear()
+      if (!Number.isInteger(y) || y < 1900 || y > nowYear) {
+        return validationError(`drivingSinceYear must be an integer between 1900 and ${nowYear}.`)
+      }
     }
 
     const sets: string[] = ['updated_at = NOW()']
@@ -48,6 +62,20 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (gender        != null) { sets.push('gender = ?');           params.push(String(gender)) }
     if (marketingOptIn != null) { sets.push('marketing_opt_in = ?'); params.push(marketingOptIn ? 1 : 0) }
     if (smsOptIn      != null) { sets.push('sms_opt_in = ?');       params.push(smsOptIn ? 1 : 0) }
+    // Explicit `null`/empty-string clears — String() would coerce to
+    // "null" / "" which isn't what we want on nullable columns.
+    if ('dreamCar' in body) {
+      sets.push('dream_car = ?')
+      params.push(dreamCar === null || dreamCar === '' ? null : String(dreamCar).trim())
+    }
+    if ('favouriteDrive' in body) {
+      sets.push('favourite_drive = ?')
+      params.push(favouriteDrive === null || favouriteDrive === '' ? null : String(favouriteDrive).trim())
+    }
+    if ('drivingSinceYear' in body) {
+      sets.push('driving_since_year = ?')
+      params.push(drivingSinceYear === null || drivingSinceYear === '' ? null : Number(drivingSinceYear))
+    }
 
     if (params.length > 0) {
       params.push(ctx.customerId)
@@ -57,7 +85,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const [[customerRow]] = await db.query<any[]>(
       `SELECT id, first_name, last_name, email, mobile, suburb, state, postcode, description,
-              date_of_birth, gender, marketing_opt_in, sms_opt_in, avatar_image_id, created_at
+              date_of_birth, gender, marketing_opt_in, sms_opt_in, avatar_image_id, cover_image_id,
+              dream_car, favourite_drive, driving_since_year, created_at
        FROM customers WHERE id = ? AND is_active = 1 LIMIT 1`,
       [ctx.customerId],
     )

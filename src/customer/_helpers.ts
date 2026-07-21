@@ -90,6 +90,7 @@ export function buildVehicle(row: any) {
 
 export function buildCustomer(row: any, vehicles: ReturnType<typeof buildVehicleSummary>[]) {
   const avatarUrls = row.avatar_image_id ? imageUrls(row.avatar_image_id) : null
+  const coverUrls  = row.cover_image_id  ? imageUrls(row.cover_image_id)  : null
   return {
     id:             row.id          as number,
     firstName:      row.first_name  as string,
@@ -104,6 +105,11 @@ export function buildCustomer(row: any, vehicles: ReturnType<typeof buildVehicle
     gender:         row.gender        ?? null,
     avatarUrl:      avatarUrls?.public    ?? null,
     avatarThumbUrl: avatarUrls?.thumbnail ?? null,
+    coverUrl:       coverUrls?.public     ?? null,
+    coverImageId:   row.cover_image_id     ?? null,
+    dreamCar:         row.dream_car          ?? null,
+    favouriteDrive:   row.favourite_drive    ?? null,
+    drivingSinceYear: row.driving_since_year != null ? Number(row.driving_since_year) : null,
     tier:           (row.tier ?? 'free') as 'free' | 'silver' | 'gold',
     isPremium:      (row.tier ?? 'free') !== 'free',
     marketingOptIn: Boolean(row.marketing_opt_in),

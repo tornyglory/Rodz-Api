@@ -20,7 +20,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const [[customerRow]] = await db.query<any[]>(
       `SELECT id, first_name, last_name, email, mobile, suburb, state, postcode, description,
-              date_of_birth, gender, marketing_opt_in, sms_opt_in, avatar_image_id, created_at, is_premium, tier,
+              date_of_birth, gender, marketing_opt_in, sms_opt_in, avatar_image_id, cover_image_id,
+              dream_car, favourite_drive, driving_since_year,
+              created_at, is_premium, tier,
               onboarding_completed_at, voice_preference, voice_specific_name
        FROM customers WHERE id = ? AND is_active = 1 LIMIT 1`,
       [ctx.customerId],

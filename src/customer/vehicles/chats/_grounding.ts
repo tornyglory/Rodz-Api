@@ -106,6 +106,35 @@ export async function buildCustomerVehicleContext(db: mysql.Pool, vehicleId: num
     }
   }
 
+  // ── Modifications — owner-declared aftermarket parts / tunes / mods.
+  // Injected here so specialist agents (quote, vehicle, expense) know
+  // what's on the car when they answer. Enthusiast owners get frustrated
+  // fast if Rodz doesn't know they've got a turbo / different exhaust.
+  const [mods] = await db.query<any[]>(
+    `SELECT category, name, brand, installed_at, installed_by, cost_aud, status
+     FROM vehicle_modifications
+     WHERE vehicle_id = ? AND deleted_at IS NULL AND status IN ('installed','planned')
+     ORDER BY FIELD(status, 'installed', 'planned'), category ASC, id DESC`,
+    [vehicleId],
+  )
+  if (mods.length) {
+    lines.push('', '## Modifications (owner-declared aftermarket)')
+    lines.push('Fitted / planned mods the owner has told us about. Reference these when discussing performance, part compatibility, or resale value — but never guess at unstated mods.')
+    for (const m of mods) {
+      const parts = [`${m.category}: ${m.name}`]
+      if (m.brand)         parts.push(`(${m.brand})`)
+      if (m.installed_at) {
+        const d = m.installed_at instanceof Date
+          ? m.installed_at.toISOString().slice(0, 10)
+          : String(m.installed_at).slice(0, 10)
+        parts.push(`installed ${d}`)
+      }
+      if (m.installed_by)  parts.push(`by ${m.installed_by}`)
+      if (m.status === 'planned') parts.push('(planned — not yet fitted)')
+      lines.push(`- ${parts.join(' ')}`)
+    }
+  }
+
   const [logs] = await db.query<any[]>(
     `SELECT vsl.service_date, COALESCE(i.odometer_in, vsl.odometer) AS odometer,
             vsl.store, vsl.total, vsl.ai_summary

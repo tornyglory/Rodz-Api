@@ -113,6 +113,21 @@ export async function toVoiceNoteResponse(row: any, includePlayback = true): Pro
   return base
 }
 
+// Mutate a built quote in place, attaching quote-level `voiceNotes` and
+// per-item `voiceNotes`. Called by every quote read/write endpoint that
+// returns a quote object so the response shape stays consistent.
+export async function attachVoiceNotesToQuote(db: mysql.Pool, quote: any): Promise<void> {
+  const quoteId = Number(quote.id)
+  const notesMap = await fetchVoiceNotesForQuotes(db, [quoteId])
+  const bucket = notesMap.get(quoteId)
+  const quoteLevelRows = bucket?.itemGroups.get(null) ?? []
+  quote.voiceNotes = await Promise.all(quoteLevelRows.map(r => toVoiceNoteResponse(r)))
+  for (const item of quote.items ?? []) {
+    const itemRows = bucket?.itemGroups.get(Number(item.id)) ?? []
+    item.voiceNotes = await Promise.all(itemRows.map(r => toVoiceNoteResponse(r)))
+  }
+}
+
 // Fetch every live voice note for a set of quote ids, grouped by
 // quote_item_id (null bucket = quote-level). Used by the staff + public
 // quote GETs to attach notes to their items in one pass.

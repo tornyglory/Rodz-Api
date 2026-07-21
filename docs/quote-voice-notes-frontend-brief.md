@@ -133,6 +133,8 @@ Soft-deletes the row and hides it from all subsequent responses.
 
 **404:** the note doesn't exist, already deleted, or doesn't belong to this quote.
 
+**409 `QUOTE_LOCKED`:** the quote has been closed (`approved`, `declined`, `paid`, `invoiced`, `expired`, etc.). Voice notes on closed quotes can't be removed — they're part of the audit trail. Hide the delete affordance in the UI when `quote.status` isn't `draft` or `sent`.
+
 ### 4. `GET /quotes/{id}/voice-notes/{noteId}/playback-url`
 
 Refresh a short-lived playback URL after the one baked into a quote response has expired. Uses the same auth as the parent quote GET.

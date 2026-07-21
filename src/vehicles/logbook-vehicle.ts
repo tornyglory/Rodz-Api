@@ -50,6 +50,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
               c.mobile AS contact_phone,
               c.email  AS contact_email,
               c.is_premium AS is_premium,
+              c.tier AS tier,
               c.description AS owner_description
        FROM vehicle_owners vo
        JOIN customers c ON c.id = vo.customer_id
@@ -107,6 +108,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       contactPhone:    owner?.contact_phone ?? null,
       contactEmail:    owner?.contact_email ?? null,
       isPremium:       !!owner?.is_premium,
+      tier:            (owner?.tier ?? 'free') as 'free' | 'silver' | 'gold',
       publicSettings,
       images: publicSettings.photos
         ? galleryRows.map((r: any) => ({

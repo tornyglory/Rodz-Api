@@ -133,6 +133,20 @@ export class RodzApiStack3 extends Stack {
       authorizer: customerAuthorizer,
     })
 
+    // Cover photo — mirror of the existing avatar update. Uses the same
+    // shared /c/me/avatar/upload-url endpoint for the CF direct-upload
+    // URL; only the save-side handler is dedicated per field.
+    const customerMeCoverUpdateFn = new LambdaFn(this, 'CustomerMeCoverUpdate', {
+      entry: src('customer/me/cover-update.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerMeCoverUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerMeCoverUpdateInt', customerMeCoverUpdateFn),
+      routeKey: HttpRouteKey.with('/c/me/cover', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
     // ── Staff vehicle profile — upload URL + AI description enhance ────────
 
     const vehicleUploadUrlFn = new LambdaFn(this, 'VehicleUploadUrl', {
@@ -379,6 +393,89 @@ export class RodzApiStack3 extends Stack {
       authorizer: customerAuthorizer,
     })
 
+    // ── Vehicle modifications — owner-declared aftermarket parts ─────────
+
+    const customerModListFn = new LambdaFn(this, 'CustomerModList', {
+      entry: src('customer/vehicles/modifications/list.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'CustomerModListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerModListInt', customerModListFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/modifications', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerModCreateFn = new LambdaFn(this, 'CustomerModCreate', {
+      entry: src('customer/vehicles/modifications/create.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'CustomerModCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerModCreateInt', customerModCreateFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/modifications', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerModGetFn = new LambdaFn(this, 'CustomerModGet', {
+      entry: src('customer/vehicles/modifications/get.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'CustomerModGetRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerModGetInt', customerModGetFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/modifications/{modId}', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerModUpdateFn = new LambdaFn(this, 'CustomerModUpdate', {
+      entry: src('customer/vehicles/modifications/update.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'CustomerModUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerModUpdateInt', customerModUpdateFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/modifications/{modId}', HttpMethod.PATCH),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerModDeleteFn = new LambdaFn(this, 'CustomerModDelete', {
+      entry: src('customer/vehicles/modifications/delete.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'CustomerModDeleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerModDeleteInt', customerModDeleteFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/modifications/{modId}', HttpMethod.DELETE),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerModMediaCreateFn = new LambdaFn(this, 'CustomerModMediaCreate', {
+      entry: src('customer/vehicles/modifications/media-create.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'CustomerModMediaCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerModMediaCreateInt', customerModMediaCreateFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/modifications/{modId}/media', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerModMediaDeleteFn = new LambdaFn(this, 'CustomerModMediaDelete', {
+      entry: src('customer/vehicles/modifications/media-delete.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'CustomerModMediaDeleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerModMediaDeleteInt', customerModMediaDeleteFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/modifications/{modId}/media/{mediaId}', HttpMethod.DELETE),
+      authorizer: customerAuthorizer,
+    })
+
+    // Public modifications feed for the anonymous /logbook/{token} page.
+    // No auth. Gated by `public_profile_settings.modifications` + per-row `is_public`.
+    const logbookModificationsFn = new LambdaFn(this, 'LogbookModifications', {
+      entry: src('vehicles/logbook-modifications.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'LogbookModificationsRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('LogbookModificationsInt', logbookModificationsFn),
+      routeKey: HttpRouteKey.with('/logbook/{token}/modifications', HttpMethod.GET),
+    })
+
     // ── Chat message feedback — 👍 / 👎 on individual AI replies ───────────
 
     const customerChatFeedbackFn = new LambdaFn(this, 'CustomerChatFeedback', {
@@ -416,6 +513,20 @@ export class RodzApiStack3 extends Stack {
       httpApi,
       integration: new HttpLambdaIntegration('AdminChatFeedbackReviewInt', adminChatFeedbackReviewFn),
       routeKey: HttpRouteKey.with('/admin/chat-feedback/review', HttpMethod.POST),
+      authorizer,
+    })
+
+    // Per-👎 suggest-fix — one Gemini call per exchange, fast enough for
+    // the 30s API Gateway integration timeout unlike the batch review.
+    const adminChatFeedbackSuggestFixFn = new LambdaFn(this, 'AdminChatFeedbackSuggestFix', {
+      entry: src('admin/chat-feedback/suggest-fix.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(29),
+    }).fn
+
+    new HttpRoute(this, 'AdminChatFeedbackSuggestFixRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('AdminChatFeedbackSuggestFixInt', adminChatFeedbackSuggestFixFn),
+      routeKey: HttpRouteKey.with('/admin/chat-feedback/{feedbackId}/suggest-fix', HttpMethod.POST),
       authorizer,
     })
 

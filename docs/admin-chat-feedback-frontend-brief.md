@@ -63,6 +63,7 @@ Aggregated feedback for a rolling window, plus the raw 👎 list for reading thr
   ],
   "recentDown": [
     {
+      "id":            77,                          // ← feedback row id — pass to POST /admin/chat-feedback/{id}/suggest-fix
       "customerId":    3,
       "vehicleId":     4,
       "sessionId":     94,

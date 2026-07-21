@@ -77,6 +77,7 @@ Rules: **detail** goes to S3, **aggregates** into summary tables, **pointers** i
 | [Data lake index](#data-lake-index) | `s3_event_index` |
 | [Vehicle health & maintenance](#vehicle-health--maintenance) | `vehicle_health_scores`, `maintenance_schedule` |
 | [AI prompt versioning & feedback](#ai-prompt-versioning--feedback) | `prompt_versions`, `chat_message_feedback` |
+| [Vehicle modifications](#vehicle-modifications) | `vehicle_modifications`, `vehicle_modification_media` |
 
 ---
 
@@ -1889,3 +1890,83 @@ The chat handler composes the final system prompt as: `{preamble} + {base_prompt
 Foreign keys:
 - `parent_version_id → prompt_versions(id)` (ON DELETE SET NULL)
 - `saved_by → staff(id)` (ON DELETE RESTRICT — attribution must survive)
+
+---
+
+## Vehicle modifications
+
+Owner-declared aftermarket parts and tunes fitted to a vehicle — turbos, exhausts, ECU tunes, suspension, wheels, etc. Two tables: the mod itself and attached media (photos + receipts). Receipts double as expense-tracker entries: adding a receipt spawns a row in `s3_event_index` with `category = 'modification'` so the spend rolls into `vehicle_expense_summary` naturally.
+
+Migration: `docs/migrations/vehicle_modifications.sql`
+
+Endpoints (all `/c/vehicles/{id}/modifications*`, customer JWT):
+- `GET`, `POST`, `GET/{modId}`, `PATCH/{modId}`, `DELETE/{modId}`
+- `POST /{modId}/media`, `DELETE /{modId}/media/{mediaId}`
+
+Frontend brief: `docs/customer-modifications-frontend-brief.md`.
+
+**Rodz context injection:** installed + planned mods are added to the `vehicleContext` string (`src/customer/vehicles/chats/_grounding.ts`) so every specialist agent can reason about them.
+
+---
+
+### `vehicle_modifications`
+
+One row per aftermarket mod on a vehicle. Soft delete via `deleted_at` — attached receipts stay in the expense tracker even after the mod is removed from the profile.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `vehicle_id` | bigint unsigned | NO | FK → `vehicles.id` (ON DELETE CASCADE) |
+| `category` | enum | NO | See enum below |
+| `name` | varchar(200) | NO | e.g. "Garrett GTX3576R" |
+| `brand` | varchar(100) | YES | e.g. "Garrett" |
+| `description` | text | YES | Free text — install story, part specs, tune map |
+| `installed_at` | date | YES | When the mod went on |
+| `installed_by` | varchar(200) | YES | Workshop name or "self" |
+| `cost_aud` | decimal(10,2) | YES | Total paid — owner may prefer to sum receipts client-side instead |
+| `status` | enum | NO | Default `installed`. `installed` \| `removed` \| `planned` |
+| `removed_at` | date | YES | Set when `status = 'removed'` |
+| `kept_with_sale` | tinyint(1) | NO | Default `1`. `0` = "coming off before sale" — hints for resale conversations |
+| `is_public` | tinyint(1) | NO | Default `1`. Gates visibility on the `/logbook/{token}` public profile |
+| `cover_image_id` | varchar(80) | YES | Primary hero photo — Cloudflare Images id |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+| `deleted_at` | datetime | YES | Soft delete |
+
+**`category` enum:** `engine`, `forced_induction`, `exhaust`, `intake`, `fuel_system`, `ecu_tune`, `ignition`, `cooling`, `transmission`, `suspension`, `brakes`, `wheels_tyres`, `interior`, `exterior`, `audio`, `electronics`, `other`
+
+**`status` enum:** `installed`, `removed`, `planned`
+
+Indexes:
+- `idx_vehicle (vehicle_id, deleted_at)` — the "list current mods" query
+- `idx_vehicle_category (vehicle_id, category)` — filter by category
+
+---
+
+### `vehicle_modification_media`
+
+Photos + receipts attached to a modification. `kind = 'receipt'` rows carry `amount_aud`, `supplier`, `purchased_at` AND back-reference the auto-created `s3_event_index` row via `expense_event_id` so the two records stay linked.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `modification_id` | bigint unsigned | NO | FK → `vehicle_modifications.id` (ON DELETE CASCADE) |
+| `kind` | enum | NO | `photo` \| `receipt`. Default `photo` |
+| `image_id` | varchar(80) | NO | Cloudflare Images id |
+| `caption` | varchar(300) | YES | Free text |
+| `sort_order` | smallint | NO | Default `0`. For gallery ordering |
+| `amount_aud` | decimal(10,2) | YES | Receipt-only — required when `kind = 'receipt'` |
+| `supplier` | varchar(200) | YES | Receipt-only |
+| `purchased_at` | date | YES | Receipt-only — defaults to today if not sent |
+| `expense_event_id` | bigint unsigned | YES | FK → `s3_event_index.id` (ON DELETE SET NULL). Null on `photo` rows and on receipts whose expense entry has been manually deleted |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+Indexes:
+- `idx_modification (modification_id, sort_order)` — gallery listing
+- `idx_expense_event (expense_event_id)` — reverse lookup for cascade
+
+Foreign keys:
+- `modification_id → vehicle_modifications(id)` (ON DELETE CASCADE)
+- `expense_event_id → s3_event_index(id)` (ON DELETE SET NULL)
+
+**Receipt-to-expense-tracker flow:** when a `kind = 'receipt'` row is created, the handler also (a) writes the receipt to S3 via `writeToDataLake('expenses', payload)`, (b) inserts an `s3_event_index` pointer with `category = 'modification'`, (c) stores that pointer's id here as `expense_event_id`, (d) calls `refreshVehicleSummaries()` so the modification spend shows up in `vehicle_expense_summary` (bucketed as `other_spend_ytd` since it's neither fuel nor workshop). Deleting the media row cascades the `s3_event_index` delete + summary refresh.

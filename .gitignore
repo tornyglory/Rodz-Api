@@ -1,6 +1,7 @@
 node_modules/
 dist/
 cdk.out/
+cdk.out.*/
 .cdk.staging/
 *.js.map
 *.d.ts

@@ -6,6 +6,7 @@ import { ok, forbidden, serverError } from '../shared/errors'
 import { sendEmail } from '../shared/ses'
 import { pushToCustomer } from '../shared/push'
 import { QUOTE_SELECT, buildQuote, quoteError, getAllowedStoreIds, getQuoteItems } from './_helpers'
+import { attachVoiceNotesToQuote } from './voice-notes/_helpers'
 
 const ready = bootstrap()
 
@@ -110,7 +111,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const [[row]] = await db.query<any[]>(`${QUOTE_SELECT} WHERE q.id = ? LIMIT 1`, [id])
     const items = await getQuoteItems(db, Number(id))
-    return ok({ quote: buildQuote(row, items) })
+    const built = buildQuote(row, items)
+    await attachVoiceNotesToQuote(db, built)
+    return ok({ quote: built })
   } catch (err) {
     return serverError(err)
   }

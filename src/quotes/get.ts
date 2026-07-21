@@ -4,7 +4,7 @@ import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { ok, forbidden, notFound, serverError } from '../shared/errors'
 import { QUOTE_SELECT, buildQuote, getAllowedStoreIds, getQuoteItems } from './_helpers'
-import { fetchVoiceNotesForQuotes, toVoiceNoteResponse } from './voice-notes/_helpers'
+import { attachVoiceNotesToQuote } from './voice-notes/_helpers'
 
 const ready = bootstrap()
 
@@ -28,17 +28,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const items = await getQuoteItems(db, row.id)
     const built = buildQuote(row, items)
-
-    // Attach voice notes — grouped by (quote-level, item-level).
-    const notesMap = await fetchVoiceNotesForQuotes(db, [Number(row.id)])
-    const bucket = notesMap.get(Number(row.id))
-    const quoteLevelRows = bucket?.itemGroups.get(null) ?? []
-    ;(built as any).voiceNotes = await Promise.all(quoteLevelRows.map(r => toVoiceNoteResponse(r)))
-
-    for (const item of built.items) {
-      const itemRows = bucket?.itemGroups.get(Number(item.id)) ?? []
-      ;(item as any).voiceNotes = await Promise.all(itemRows.map(r => toVoiceNoteResponse(r)))
-    }
+    await attachVoiceNotesToQuote(db, built)
 
     return ok({ quote: built })
   } catch (err) {

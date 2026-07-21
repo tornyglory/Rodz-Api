@@ -52,7 +52,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     )
 
     const [recentDown] = await db.query<any[]>(
-      `SELECT customer_id, vehicle_id, session_id, message_id,
+      `SELECT id, customer_id, vehicle_id, session_id, message_id,
               reason, prompt_version, created_at
        FROM chat_message_feedback
        WHERE rating = 'down' AND created_at >= (NOW() - INTERVAL ? DAY)
@@ -66,6 +66,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       summary: shapeSummary(summary),
       byPromptVersion: byVersion.map(shapeVersionRow),
       recentDown: recentDown.map((r: any) => ({
+        id:            Number(r.id),                  // feedback row id — pass to /admin/chat-feedback/{id}/suggest-fix
         customerId:    Number(r.customer_id),
         vehicleId:     Number(r.vehicle_id),
         sessionId:     Number(r.session_id),

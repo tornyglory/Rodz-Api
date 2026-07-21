@@ -10,7 +10,7 @@ import { bumpOdometer } from '../../../shared/odometer'
 
 const ready = bootstrap()
 
-const VALID_CATEGORIES = new Set(['fuel','ev_charging','workshop','parts','car_wash','parking','tolls','registration','insurance','roadside','other'])
+const VALID_CATEGORIES = new Set(['fuel','ev_charging','workshop','parts','modification','car_wash','parking','tolls','registration','insurance','roadside','other'])
 const VALID_FUEL_TYPES = new Set(['unleaded_91','unleaded_95','unleaded_98','diesel','lpg','e10'])
 
 // Create is S3-primary: detail goes to S3, an s3_event_index pointer is
