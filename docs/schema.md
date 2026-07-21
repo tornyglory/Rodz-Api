@@ -51,19 +51,19 @@ Rules: **detail** goes to S3, **aggregates** into summary tables, **pointers** i
 |-------|--------|
 | [Core](#core) | `stores`, `staff`, `customers`, `vehicles`, `vehicle_owners` |
 | [Bookings](#bookings) | `bookings`, `booking_services` |
-| [Jobs](#jobs) | `service_jobs`, `service_job_items`, `job_parts`, `service_job_staff`, `job_card_items` |
+| [Jobs](#jobs) | `service_jobs`, `service_job_items`, `service_job_parts`, `service_job_staff`, `job_card_items` |
 | [Financials](#financials) | `invoices`, `invoice_items`, `payments`, `quotes`, `quote_items`, `purchase_orders`, `purchase_order_items` |
 | [Catalog](#catalog) | `service_types`, `catalog_items`, `parts`, `suppliers`, `part_names` |
 | [Inspections](#inspections) | `job_inspections`, `job_inspection_results`, `inspection_checklist_items`, `job_documents` |
 | [Customers — extended](#customers--extended) | `customer_tags`, `customer_communications`, `loyalty_transactions` |
-| [Vehicles — extended](#vehicles--extended) | `vehicle_service_history`, `vehicle_service_log` |
+| [Vehicles — extended](#vehicles--extended) | `vehicle_service_history`, `vehicle_service_log`, `vehicle_gallery_images`, `vehicle_policies` |
 | [Reminders & AI](#reminders--ai) | `reminders`, `vehicle_model_profiles`, `ai_milestone_rules`, `ai_recommendations`, `assistant_memory` |
 | [Vehicle chats](#vehicle-chats) | `vehicle_chats`, `vehicle_chat_messages` |
 | [Customer AI chat](#customer-ai-chat) | `customer_chat_sessions` (`customer_vehicle_chats` **dropped** — messages now in S3) |
-| [Notifications](#notifications) | `notifications`, `notification_templates`, `customer_pickup_notifications` |
+| [Notifications](#notifications) | `notifications`, `notification_templates`, `customer_pickup_notifications`, `customer_push_tokens`, `customer_notification_prefs`, `notification_events` |
 | [Loan vehicles](#loan-vehicles) | `loan_vehicles`, `loan_vehicle_bookings`, `courtesy_cars` |
-| [Operations](#operations) | `hoists`, `business_hours`, `staff_roster`, `daily_kpi_snapshots` |
-| [Auth](#auth) | `staff_auth`, `staff_sessions`, `customer_auth`, `customer_sessions`, `customer_oauth_providers` |
+| [Operations](#operations) | `hoists`, `business_hours`, `staff_roster`, `staff_leave`, `daily_kpi_snapshots`, `overheads` |
+| [Auth](#auth) | `staff_auth`, `staff_sessions`, `customer_auth`, `customer_auth_log`, `customer_sessions`, `customer_oauth_providers`, `email_verification_tokens`, `password_reset_tokens` |
 | [Permissions](#permissions) | `permissions`, `role_permissions`, `staff_permission_overrides`, `staff_store_access` |
 | [Integrations](#integrations) | `xero_connections`, `xero_sync_log` |
 | [Settings](#settings) | `email_settings`, `staff_email_settings`, `business_settings` |
@@ -78,6 +78,9 @@ Rules: **detail** goes to S3, **aggregates** into summary tables, **pointers** i
 | [Vehicle health & maintenance](#vehicle-health--maintenance) | `vehicle_health_scores`, `maintenance_schedule` |
 | [AI prompt versioning & feedback](#ai-prompt-versioning--feedback) | `prompt_versions`, `chat_message_feedback` |
 | [Vehicle modifications](#vehicle-modifications) | `vehicle_modifications`, `vehicle_modification_media` |
+| [Voice chat](#voice-chat) | `customer_voice_usage` |
+| [Quote voice notes](#quote-voice-notes) | `quote_voice_notes` |
+| [Feature flags & rate limits](#feature-flags--rate-limits) | `feature_flags`, `public_chat_rate_limits` |
 
 ---
 
@@ -155,11 +158,20 @@ Rules: **detail** goes to S3, **aggregates** into summary tables, **pointers** i
 | `postcode` | char(4) | YES | — |
 | `is_premium` | tinyint(1) | NO | `0` |
 | `tier` | enum | NO | `free` |
+| `description` | text | YES | — |
+| `avatar_image_id` | varchar(255) | YES | — |
+| `cover_image_id` | varchar(80) | YES | — |
 | `preferred_contact` | enum | NO | `mobile` |
 | `marketing_opt_in` | tinyint(1) | NO | `1` |
 | `sms_opt_in` | tinyint(1) | NO | `1` |
 | `push_opt_in` | tinyint(1) | NO | `1` |
+| `voice_preference` | enum | YES | — |
+| `voice_specific_name` | varchar(120) | YES | — |
 | `date_of_birth` | date | YES | — |
+| `gender` | enum | YES | — |
+| `dream_car` | varchar(100) | YES | — |
+| `favourite_drive` | varchar(200) | YES | — |
+| `driving_since_year` | smallint | YES | — |
 | `referral_source` | enum | YES | — |
 | `referral_detail` | varchar(255) | YES | — |
 | `customer_since` | date | YES | — |
@@ -176,6 +188,12 @@ Rules: **detail** goes to S3, **aggregates** into summary tables, **pointers** i
 **`tier` enum:** `free`, `silver`, `gold`. `is_premium` is derived: `(tier != 'free')`.
 
 **`referral_source` enum:** `word_of_mouth`, `google`, `facebook`, `instagram`, `existing_customer`, `signage`, `other`
+
+**`gender` enum:** `male`, `female`, `other`
+
+**`voice_preference` enum:** `female`, `male`. Controls the TTS voice used when Rodz reads AI responses aloud. `voice_specific_name` is an optional override — a specific voice from the provider's catalog.
+
+`avatar_image_id` / `cover_image_id` are Cloudflare Images ids. `dream_car`, `favourite_drive`, `driving_since_year` power the profile personalisation shown on the customer dashboard and public logbook page.
 
 ---
 
@@ -212,6 +230,15 @@ Rules: **detail** goes to S3, **aggregates** into summary tables, **pointers** i
 | `next_service_due_km` | int unsigned | YES | — |
 | `next_service_due_date` | date | YES | — |
 | `fleet_unit_number` | varchar(30) | YES | — |
+| `logbook_token` | varchar(64) | YES | — |
+| `avatar_image_id` | varchar(255) | YES | — |
+| `cover_image_id` | varchar(255) | YES | — |
+| `for_sale` | tinyint(1) | NO | `0` |
+| `asking_price` | decimal(10,2) | YES | — |
+| `city` | varchar(100) | YES | — |
+| `country` | varchar(100) | YES | — |
+| `description` | text | YES | — |
+| `public_profile_settings` | json | YES | — |
 | `internal_notes` | text | YES | — |
 | `is_active` | tinyint(1) | NO | `1` |
 | `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
@@ -224,6 +251,13 @@ Rules: **detail** goes to S3, **aggregates** into summary tables, **pointers** i
 **`body_type` enum:** `sedan`, `hatch`, `wagon`, `ute`, `van`, `suv`, `coupe`, `convertible`, `truck`, `other`
 
 **`drive_type` enum:** `fwd`, `rwd`, `awd`, `4wd`
+
+**Public logbook page:**
+- `logbook_token` — 64-char hex, unique per vehicle, powers `/logbook/{token}` and shareable public views. NULL until issued via `POST /customers/{customerId}/vehicles/{vehicleId}/logbook-token`.
+- `public_profile_settings` — JSON blob with per-tab visibility flags. Keys: `history`, `photos`, `chat`, `maintenance`, `modifications`. Missing keys default to `true`. Parsed via `src/shared/publicProfileSettings.ts:parsePublicProfileSettings`.
+- `avatar_image_id` / `cover_image_id` — Cloudflare Images ids for the profile avatar and hero cover.
+- `for_sale` / `asking_price` / `description` — the "for sale" banner on the public profile.
+- `city` / `country` — location shown on the public profile.
 
 ---
 
@@ -376,21 +410,21 @@ Line items on a job (labour, parts, sublets, discounts).
 
 ---
 
-### `job_parts`
+### `service_job_parts`
 
-Parts tracking on a job (requested, ordered, arrived).
+Parts tracking on a job (requested, ordered, arrived). Previously called `job_parts` in older docs — the actual table name is `service_job_parts` and the FK column is `service_job_id`.
 
-| Column | Type | Null |
-|--------|------|------|
-| `id` | bigint unsigned | NO |
-| `job_id` | bigint unsigned | NO |
-| `description` | varchar(255) | NO |
-| `part_number` | varchar(100) | YES |
-| `qty` | tinyint unsigned | NO |
-| `status` | enum | NO |
-| `eta` | varchar(50) | YES |
-| `requested_by` | bigint unsigned | YES |
-| `requested_at` | datetime | NO |
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `service_job_id` | bigint unsigned | NO | FK → `service_jobs.id` (ON DELETE CASCADE) |
+| `description` | varchar(255) | NO | |
+| `part_number` | varchar(100) | YES | |
+| `qty` | tinyint unsigned | NO | Default `1` |
+| `status` | enum | NO | Default `requested` |
+| `eta` | varchar(50) | YES | Free-form ("Fri", "next week") |
+| `requested_by` | bigint unsigned | YES | FK → `staff.id` (ON DELETE SET NULL) |
+| `requested_at` | datetime | NO | `CURRENT_TIMESTAMP` |
 
 **`status` enum:** `requested`, `ordered`, `arrived`
 
@@ -1970,3 +2004,292 @@ Foreign keys:
 - `expense_event_id → s3_event_index(id)` (ON DELETE SET NULL)
 
 **Receipt-to-expense-tracker flow:** when a `kind = 'receipt'` row is created, the handler also (a) writes the receipt to S3 via `writeToDataLake('expenses', payload)`, (b) inserts an `s3_event_index` pointer with `category = 'modification'`, (c) stores that pointer's id here as `expense_event_id`, (d) calls `refreshVehicleSummaries()` so the modification spend shows up in `vehicle_expense_summary` (bucketed as `other_spend_ytd` since it's neither fuel nor workshop). Deleting the media row cascades the `s3_event_index` delete + summary refresh.
+
+---
+
+## Voice chat
+
+### `customer_voice_usage`
+
+One row per completed voice-chat turn. Feeds the per-customer daily usage cap enforced on `POST /c/vehicles/{id}/voice/sessions/{sid}/turn`.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `customer_id` | bigint unsigned | NO | FK → `customers.id` (ON DELETE CASCADE) |
+| `session_id` | bigint unsigned | YES | FK → `customer_chat_sessions.id` (ON DELETE SET NULL) — null when the session was already archived |
+| `seconds` | int unsigned | NO | Wall-clock voice-turn duration |
+| `ended_reason` | enum | NO | See enum below |
+| `created_at` | timestamp | NO | `CURRENT_TIMESTAMP` |
+
+**`ended_reason` enum:** `user_hangup`, `timeout`, `error`, `interrupted`, `tts`
+
+Indexes:
+- `idx_customer_created (customer_id, created_at)` — the daily-cap rollup
+
+---
+
+## Quote voice notes
+
+### `quote_voice_notes`
+
+Voice-memo recordings attached to a quote (whole-quote or per-line). The audio blob lives in S3 under `quote-voice-notes/{quoteId}/{uuid}.{ext}`; this table stores the pointer + transcript.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `quote_id` | bigint unsigned | NO | FK → `quotes.id` (ON DELETE CASCADE) |
+| `quote_item_id` | bigint unsigned | YES | FK → `quote_items.id` (ON DELETE CASCADE). NULL = quote-level memo |
+| `s3_key` | varchar(500) | NO | `quote-voice-notes/{quoteId}/{uuid}.{ext}` |
+| `content_type` | varchar(80) | NO | e.g. `audio/webm`, `audio/mp4` |
+| `duration_seconds` | decimal(6,2) | NO | Client-reported |
+| `size_bytes` | int unsigned | YES | Client-reported |
+| `transcript` | text | YES | Populated by the async transcribe Lambda |
+| `transcript_status` | enum | NO | Default `pending` |
+| `recorded_by_staff_id` | bigint unsigned | YES | FK → `staff.id` (ON DELETE SET NULL) |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `deleted_at` | datetime | YES | Soft delete |
+
+**`transcript_status` enum:** `pending`, `ready`, `failed`
+
+Indexes:
+- `idx_quote (quote_id, deleted_at)` — the "list live notes on a quote" query
+- `idx_quote_item (quote_item_id, deleted_at)` — item-level bucket
+- `idx_transcript_status (transcript_status, created_at)` — retry sweep
+
+**Transcription flow:** `POST /quotes/{id}/voice-notes` inserts the row with `transcript_status = 'pending'` and fire-and-forget invokes the transcribe Lambda (`src/quotes/voice-notes/transcribe.ts`). On success the row is updated to `ready` with the transcript text; on failure it flips to `failed` and can be retried via `POST /quotes/{id}/voice-notes/{noteId}/retry-transcribe`.
+
+---
+
+## Feature flags & rate limits
+
+### `feature_flags`
+
+Global on/off switches for beta features. Super-admin managed via `/settings/feature-flags/*`. Fail-open — missing rows default to `enabled = true` in the reader helper.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `flag_key` | varchar(100) | NO | PRIMARY KEY. Convention: `namespace.feature`, e.g. `workshop.quoteVoiceNotes` |
+| `enabled` | tinyint(1) | NO | Default `1` |
+| `description` | varchar(500) | YES | Free-text — what this flag gates |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+| `updated_by` | bigint unsigned | YES | FK → `staff.id` (ON DELETE SET NULL) |
+
+---
+
+### `public_chat_rate_limits`
+
+Sliding-window counter for the anonymous `/logbook/{token}/chat` endpoint. `bucket_key` is typically an IP hash + hour. The endpoint deletes expired rows on write and counts fresh rows to decide whether to accept the request.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `bucket_key` | varchar(128) | NO | e.g. `sha256(ip):YYYY-MM-DDTHH` |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+Indexes:
+- `idx_bucket_created (bucket_key, created_at)` — count-within-window query
+- `idx_created (created_at)` — cleanup sweep
+
+---
+
+## Auth — extended
+
+### `customer_auth_log`
+
+Append-only audit trail for customer auth events (logins, logouts, password resets, lockouts). Powers the "recent activity" list on the customer's own security page and gives support enough data to triage a "was that really me?" ticket.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `customer_id` | bigint unsigned | NO | FK → `customers.id` (ON DELETE CASCADE) |
+| `event_type` | enum | NO | See enum below |
+| `ip_address` | varchar(45) | YES | IPv4 or IPv6 |
+| `user_agent` | varchar(300) | YES | |
+| `metadata` | json | YES | Event-specific extras (e.g. failed-login reason, oauth provider) |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+**`event_type` enum:** `login_success`, `login_failed`, `logout`, `password_reset_requested`, `password_reset_completed`, `email_verified`, `account_locked`, `account_unlocked`, `oauth_login`, `session_revoked`
+
+Indexes:
+- `idx_cal_customer (customer_id)`, `idx_cal_event (event_type)`, `idx_cal_created (created_at)`
+
+---
+
+### `email_verification_tokens`
+
+One-shot tokens issued when a customer signs up (or changes their email). Consumed by `POST /customer-auth/verify-email`. Hashed at rest — the raw token is only ever emailed to the customer.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `customer_id` | bigint unsigned | NO | FK → `customers.id` (ON DELETE CASCADE) |
+| `token_hash` | varchar(255) | NO | SHA-256 of the raw token. UNIQUE |
+| `expires_at` | datetime | NO | Typically 24h from issue |
+| `verified_at` | datetime | YES | Stamped when redeemed |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+---
+
+### `password_reset_tokens`
+
+Same pattern as `email_verification_tokens`. Consumed by `POST /customer-auth/reset-password`. `used_at` is stamped once and the row stays as an audit record; subsequent redemptions fail.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `customer_id` | bigint unsigned | NO | FK → `customers.id` (ON DELETE CASCADE) |
+| `token_hash` | varchar(255) | NO | SHA-256 of the raw token. UNIQUE |
+| `expires_at` | datetime | NO | Typically 1h from issue |
+| `used_at` | datetime | YES | Stamped when redeemed; single-use |
+| `ip_address` | varchar(45) | YES | IP that requested the reset |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+---
+
+## Notifications — extended
+
+### `customer_push_tokens`
+
+Device tokens for push notifications (APNs / FCM). One row per device per customer — the `token` is UNIQUE across the whole table so a device reassigning between customers only ever has one live row.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `customer_id` | bigint unsigned | NO | FK → `customers.id` (ON DELETE CASCADE) |
+| `token` | varchar(512) | NO | Raw device token. UNIQUE |
+| `platform` | enum | NO | `ios` \| `android` |
+| `label` | varchar(200) | YES | Friendly device label ("Nev's iPhone 15") |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `last_seen_at` | datetime | NO | Refreshed on every `POST /c/push/register` — used to expire dormant tokens |
+
+---
+
+### `customer_notification_prefs`
+
+Per-customer topic opt-outs + quiet hours. One row per customer (PK = `customer_id`). Missing row = all topics on, no quiet hours — handlers should defensively upsert on first read.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `customer_id` | bigint unsigned | NO | PRIMARY KEY. FK → `customers.id` (ON DELETE CASCADE) |
+| `service_due` | tinyint(1) | NO | Default `1` |
+| `rego_expiring` | tinyint(1) | NO | Default `1` |
+| `booking` | tinyint(1) | NO | Default `1` |
+| `quote` | tinyint(1) | NO | Default `1` |
+| `invoice` | tinyint(1) | NO | Default `1` |
+| `urgent_reco` | tinyint(1) | NO | Default `1` — urgent AI recommendations |
+| `workshop_message` | tinyint(1) | NO | Default `1` |
+| `quiet_hours_start` | time | YES | Local time; null = no quiet hours |
+| `quiet_hours_end` | time | YES | Wraps midnight when `end < start` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+
+---
+
+### `notification_events`
+
+Log of push notifications actually sent (or attempted) to a customer. `event_id` is the dedupe key — the sender helper checks for a matching (`customer_id`, `event_id`) before dispatching to avoid double-firing the same event (e.g. quote_ready).
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `customer_id` | bigint unsigned | NO | FK → `customers.id` (ON DELETE CASCADE) |
+| `vehicle_id` | bigint unsigned | YES | FK → `vehicles.id` (ON DELETE SET NULL) — set when the notification is scoped to a specific vehicle |
+| `event_id` | varchar(80) | NO | Idempotency key, e.g. `quote:123`, `booking:45` |
+| `type` | varchar(40) | NO | Free-form event type: `quote_ready`, `booking_confirmed`, `service_due`, … |
+| `title` | varchar(200) | NO | Push title |
+| `body` | varchar(500) | NO | Push body |
+| `deeplink` | varchar(300) | NO | e.g. `/account/paperwork?filter=quotes` |
+| `sent_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+
+Indexes:
+- `idx_customer_type_sent (customer_id, type, sent_at)` — history feed
+- `idx_event (event_id)` — dedupe lookup
+
+---
+
+## Vehicles — extended (media + policies)
+
+### `vehicle_gallery_images`
+
+Customer-uploaded gallery photos on a vehicle. Photos live in Cloudflare Images; this table stores the pointer and sort order. Distinct from `photos` (workshop-captured job photos).
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | int unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `vehicle_id` | int unsigned | NO | FK not enforced |
+| `image_id` | varchar(255) | NO | Cloudflare Images id. UNIQUE |
+| `sort_order` | smallint | NO | Default `0` — gallery order |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `deleted_at` | datetime | YES | Soft delete |
+
+Indexes:
+- `idx_vehicle (vehicle_id)` — the "list gallery for a vehicle" query
+
+---
+
+### `vehicle_policies`
+
+Registration, WoF, insurance, and roadside details for a vehicle. One live row per (vehicle, type) — the `uk_active_type` unique key uses a generated `is_active` column so soft-deleted rows don't block new ones. Powers the "Policies" tab on the customer vehicle profile and the reminders engine.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `vehicle_id` | bigint unsigned | NO | FK → `vehicles.id` (ON DELETE CASCADE) |
+| `customer_id` | bigint unsigned | NO | FK → `customers.id` (ON DELETE CASCADE) |
+| `type` | enum | NO | See enum below |
+| `provider` | varchar(200) | YES | e.g. "AAMI", "NRMA" |
+| `policy_number` | varchar(120) | YES | |
+| `cost_aud` | decimal(10,2) | YES | Annual/renewal cost — feeds the expense tracker if wired |
+| `effective_from` | date | YES | |
+| `expires_on` | date | YES | Drives renewal reminders |
+| `phone` | varchar(40) | YES | Provider hotline for claims/roadside |
+| `notes` | text | YES | |
+| `image_id` | varchar(80) | YES | Cloudflare Images id — snap of the card/certificate |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+| `deleted_at` | datetime | YES | Soft delete |
+| `is_active` | tinyint(1) | — | **Generated** — `IF(deleted_at IS NULL, 1, NULL)`. Read-only. |
+
+**`type` enum:** `registration`, `wof`, `insurance`, `roadside`
+
+Indexes / constraints:
+- `uk_active_type (vehicle_id, type, is_active)` — enforces "one live policy per type per vehicle" via the generated `is_active` (NULL slots don't collide)
+- `idx_vehicle (vehicle_id, deleted_at)` — profile tab query
+- `idx_expires (expires_on, deleted_at)` — the reminders sweeper
+
+---
+
+## Operations — extended
+
+### `staff_leave`
+
+Approved leave for a staff member. Simple ledger — no approval workflow; entries are inserted directly by managers. `days` allows half-days.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | int | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `staff_id` | bigint unsigned | NO | FK → `staff.id` (ON DELETE CASCADE) |
+| `type` | enum | NO | `annual` \| `sick` \| `personal` \| `long_service` \| `unpaid` |
+| `start_date` | date | NO | Inclusive |
+| `end_date` | date | NO | Inclusive |
+| `days` | decimal(4,1) | NO | e.g. `2.5` for two-and-a-half days |
+| `notes` | text | YES | |
+| `created_at` | timestamp | YES | `CURRENT_TIMESTAMP` |
+
+---
+
+### `overheads`
+
+Recurring monthly costs — rent, utilities, subscriptions. Used by the P&L / margin reports (`src/reports/*`) to net operating cost against workshop revenue.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `store_id` | tinyint unsigned | YES | FK → `stores.id` (ON DELETE CASCADE). NULL = business-wide overhead |
+| `category` | enum | NO | See enum below |
+| `label` | varchar(100) | NO | e.g. "Front Street rent", "AWS bill" |
+| `monthly_amount` | decimal(10,2) | NO | AUD per month |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+
+**`category` enum:** `rent`, `utilities`, `insurance`, `equipment`, `marketing`, `subscriptions`, `other`
