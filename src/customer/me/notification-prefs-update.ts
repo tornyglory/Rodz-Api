@@ -8,7 +8,7 @@ const ready = bootstrap()
 
 const TOPIC_COLS = [
   'service_due', 'rego_expiring', 'booking', 'quote',
-  'invoice', 'urgent_reco', 'workshop_message',
+  'invoice', 'urgent_reco', 'workshop_message', 'story_comment',
 ] as const
 
 const CAMEL_TO_DB: Record<string, typeof TOPIC_COLS[number]> = {
@@ -19,11 +19,12 @@ const CAMEL_TO_DB: Record<string, typeof TOPIC_COLS[number]> = {
   invoice:         'invoice',
   urgentReco:      'urgent_reco',
   workshopMessage: 'workshop_message',
+  storyComment:    'story_comment',
 }
 
 // PATCH /c/me/notification-prefs — partial update. Body is any subset of:
 //   { serviceDue, regoExpiring, booking, quote, invoice, urgentReco,
-//     workshopMessage, quietHoursStart, quietHoursEnd }
+//     workshopMessage, storyComment, quietHoursStart, quietHoursEnd }
 // Time fields are 'HH:MM' strings, or null to clear.
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready

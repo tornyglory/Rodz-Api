@@ -13,7 +13,16 @@ export const STORY_LIMITS = {
   PHOTO_MAX:            20,
   VIDEO_MAX_DURATION:   180,             // seconds (3 min)
   VIDEO_MAX_BYTES:      100 * 1024 * 1024, // 100 MB
+  COMMENT_MAX_CHARS:    1000,
+  COMMENT_PAGE_SIZE:    20,              // default initial page embedded on story GET
 } as const
+
+export const REACTION_KINDS = ['like', 'love', 'fire', 'wow', 'thinking'] as const
+export type ReactionKind = (typeof REACTION_KINDS)[number]
+
+export function isReactionKind(v: unknown): v is ReactionKind {
+  return typeof v === 'string' && (REACTION_KINDS as readonly string[]).includes(v)
+}
 
 // Ownership guard shared by every story handler.
 export async function customerOwnsVehicle(
@@ -26,6 +35,21 @@ export async function customerOwnsVehicle(
     [vehicleId, customerId],
   )
   return !!row
+}
+
+// Load a story that any authenticated customer may comment/react on —
+// must be published and not soft-deleted. Ownership is NOT required here.
+export async function loadCommentableStory(
+  db: mysql.Pool,
+  storyId: number,
+): Promise<any | null> {
+  const [[row]] = await db.query<any[]>(
+    `SELECT s.* FROM stories s
+     WHERE s.id = ? AND s.deleted_at IS NULL AND s.status = 'published'
+     LIMIT 1`,
+    [storyId],
+  )
+  return row ?? null
 }
 
 // Load a story + verify the caller owns it. Returns null if either the
@@ -209,4 +233,102 @@ export function coerceStoryPatch(body: Record<string, unknown>, opts: { requireT
   }
 
   return { columns, values }
+}
+
+// Reactions summary — counts per kind + this viewer's own reaction if any.
+// Zero-fills so the response always carries all five keys.
+export interface ReactionsSummary {
+  counts:     Record<ReactionKind, number>
+  myReaction: ReactionKind | null
+}
+
+const ZERO_REACTIONS: Record<ReactionKind, number> = {
+  like: 0, love: 0, fire: 0, wow: 0, thinking: 0,
+}
+
+export async function loadReactionsSummary(
+  db: mysql.Pool,
+  storyId: number,
+  viewerCustomerId: number | null,
+): Promise<ReactionsSummary> {
+  const [rows] = await db.query<any[]>(
+    'SELECT kind, COUNT(*) AS cnt FROM story_reactions WHERE story_id = ? GROUP BY kind',
+    [storyId],
+  )
+  const counts: Record<ReactionKind, number> = { ...ZERO_REACTIONS }
+  for (const r of rows) {
+    const kind = r.kind as unknown
+    if (isReactionKind(kind)) counts[kind] = Number(r.cnt)
+  }
+
+  let myReaction: ReactionKind | null = null
+  if (viewerCustomerId != null) {
+    const [[mine]] = await db.query<any[]>(
+      'SELECT kind FROM story_reactions WHERE story_id = ? AND customer_id = ? LIMIT 1',
+      [storyId, viewerCustomerId],
+    )
+    if (mine && isReactionKind(mine.kind)) myReaction = mine.kind
+  }
+
+  return { counts, myReaction }
+}
+
+// Comment shape returned on GET /c/stories/:id + comments-list endpoints.
+export interface CommentResponse {
+  id:         number
+  body:       string
+  author:     { name: string; avatarUrl: string | null }
+  createdAt:  string
+  updatedAt:  string
+  isEdited:   boolean
+  isMine:     boolean
+}
+
+function toIsoDateTimeNonNull(v: any): string {
+  const d = v instanceof Date ? v : new Date(String(v))
+  return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString()
+}
+
+export function shapeComment(row: any, viewerCustomerId: number | null): CommentResponse {
+  const createdAt = toIsoDateTimeNonNull(row.created_at)
+  const updatedAt = toIsoDateTimeNonNull(row.updated_at)
+  const authorName = `${(row.first_name || '').charAt(0)}. ${row.last_name || ''}`.trim() || 'Unknown'
+  const avatarUrl = row.avatar_image_id ? imageUrls(String(row.avatar_image_id)).public : null
+  return {
+    id:         Number(row.id),
+    body:       String(row.body ?? ''),
+    author:     { name: authorName, avatarUrl },
+    createdAt,
+    updatedAt,
+    isEdited:   new Date(updatedAt).getTime() > new Date(createdAt).getTime() + 1000,
+    isMine:     viewerCustomerId != null && Number(row.customer_id) === viewerCustomerId,
+  }
+}
+
+// Fetch first page of comments (newest first) + total count. Cheap enough
+// to embed on every story GET; further pages via a dedicated list endpoint.
+export async function loadCommentsPage(
+  db: mysql.Pool,
+  storyId: number,
+  viewerCustomerId: number | null,
+  limit = STORY_LIMITS.COMMENT_PAGE_SIZE,
+): Promise<{ comments: CommentResponse[]; total: number }> {
+  const [[cnt]] = await db.query<any[]>(
+    'SELECT COUNT(*) AS n FROM story_comments WHERE story_id = ? AND deleted_at IS NULL',
+    [storyId],
+  )
+  const [rows] = await db.query<any[]>(
+    `SELECT c.id, c.customer_id, c.body, c.created_at, c.updated_at,
+            cust.first_name, cust.last_name, cust.avatar_image_id
+     FROM story_comments c
+     JOIN customers cust ON cust.id = c.customer_id
+     WHERE c.story_id = ? AND c.deleted_at IS NULL
+     ORDER BY c.created_at DESC, c.id DESC
+     LIMIT ?`,
+    [storyId, Number(limit)],
+  )
+  return {
+    total:    Number(cnt?.n ?? 0),
+    comments: rows.map(r => shapeComment(r, viewerCustomerId)),
+  }
 }

@@ -3,13 +3,15 @@ import { bootstrap } from '../../../shared/bootstrap'
 import { getPool } from '../../../shared/db'
 import { ok, notFound, validationError, serverError } from '../../../shared/errors'
 import { getCustomerContext } from '../../_helpers'
-import { loadOwnedStory, shapeStory, loadMediaForStory } from './_helpers'
+import {
+  loadOwnedStory, shapeStory, loadMediaForStory,
+  loadReactionsSummary, loadCommentsPage,
+} from './_helpers'
 
 const ready = bootstrap()
 
 // GET /c/stories/{id}
-// Full story detail — media + placeholder for comments/reactions summary
-// (Sprint 2 adds the real summaries).
+// Full story detail — media, reactions summary, and first page of comments.
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
   const db  = getPool()
@@ -21,17 +23,19 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const row = await loadOwnedStory(db, storyId, ctx.customerId)
     if (!row) return notFound('Story')
 
-    const media = await loadMediaForStory(db, storyId)
+    const [media, reactions, commentsPage] = await Promise.all([
+      loadMediaForStory(db, storyId),
+      loadReactionsSummary(db, storyId, ctx.customerId),
+      loadCommentsPage(db, storyId, ctx.customerId),
+    ])
 
     return ok({
       story: {
         ...shapeStory(row),
         media,
-        // Sprint 2 will populate these — placeholders keep the response
-        // shape stable for the frontend.
-        reactions: { counts: { like: 0, love: 0, fire: 0, wow: 0, thinking: 0 }, myReaction: null },
-        commentCount: 0,
-        comments:     [],
+        reactions,
+        commentCount: commentsPage.total,
+        comments:     commentsPage.comments,
       },
     })
   } catch (err) {

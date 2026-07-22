@@ -558,6 +558,84 @@ export class RodzApiStack3 extends Stack {
       authorizer: customerAuthorizer,
     })
 
+    // ── Story comments + reactions (Sprint 2) ─────────────────────────────
+    // Async notifier Lambda invoked (Event) from comment-create when a
+    // non-owner leaves a comment. Wires push via pushToCustomer.
+    const customerStoryNotifyCommentFn = new LambdaFn(this, 'CustomerStoryNotifyComment', {
+      entry: src('customer/vehicles/stories/notify-comment.ts'), vpc, sharedEnv,
+    }).fn
+
+    const storyCommentEnv = {
+      ...sharedEnv,
+      STORY_COMMENT_NOTIFY_FN: customerStoryNotifyCommentFn.functionArn,
+    }
+
+    const customerStoryCommentCreateFn = new LambdaFn(this, 'CustomerStoryCommentCreate', {
+      entry: src('customer/vehicles/stories/comment-create.ts'), vpc, sharedEnv: storyCommentEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerStoryCommentCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoryCommentCreateInt', customerStoryCommentCreateFn),
+      routeKey: HttpRouteKey.with('/c/stories/{id}/comments', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerStoryCommentListFn = new LambdaFn(this, 'CustomerStoryCommentList', {
+      entry: src('customer/vehicles/stories/comment-list.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerStoryCommentListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoryCommentListInt', customerStoryCommentListFn),
+      routeKey: HttpRouteKey.with('/c/stories/{id}/comments', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerStoryCommentUpdateFn = new LambdaFn(this, 'CustomerStoryCommentUpdate', {
+      entry: src('customer/vehicles/stories/comment-update.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerStoryCommentUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoryCommentUpdateInt', customerStoryCommentUpdateFn),
+      routeKey: HttpRouteKey.with('/c/stories/{id}/comments/{commentId}', HttpMethod.PATCH),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerStoryCommentDeleteFn = new LambdaFn(this, 'CustomerStoryCommentDelete', {
+      entry: src('customer/vehicles/stories/comment-delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerStoryCommentDeleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoryCommentDeleteInt', customerStoryCommentDeleteFn),
+      routeKey: HttpRouteKey.with('/c/stories/{id}/comments/{commentId}', HttpMethod.DELETE),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerStoryReactionSetFn = new LambdaFn(this, 'CustomerStoryReactionSet', {
+      entry: src('customer/vehicles/stories/reaction-set.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerStoryReactionSetRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoryReactionSetInt', customerStoryReactionSetFn),
+      routeKey: HttpRouteKey.with('/c/stories/{id}/reactions', HttpMethod.PUT),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerStoryReactionRemoveFn = new LambdaFn(this, 'CustomerStoryReactionRemove', {
+      entry: src('customer/vehicles/stories/reaction-remove.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerStoryReactionRemoveRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoryReactionRemoveInt', customerStoryReactionRemoveFn),
+      routeKey: HttpRouteKey.with('/c/stories/{id}/reactions', HttpMethod.DELETE),
+      authorizer: customerAuthorizer,
+    })
+
     // ── Customer vehicle policies — rego / WoF / insurance / roadside ──────
 
     const customerPolicyListFn = new LambdaFn(this, 'CustomerPolicyList', {

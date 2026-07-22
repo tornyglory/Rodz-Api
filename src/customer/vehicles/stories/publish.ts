@@ -3,7 +3,10 @@ import { bootstrap } from '../../../shared/bootstrap'
 import { getPool } from '../../../shared/db'
 import { ok, notFound, validationError, serverError } from '../../../shared/errors'
 import { getCustomerContext } from '../../_helpers'
-import { loadOwnedStory, shapeStory, loadMediaForStory } from './_helpers'
+import {
+  loadOwnedStory, shapeStory, loadMediaForStory,
+  loadReactionsSummary, loadCommentsPage,
+} from './_helpers'
 
 const ready = bootstrap()
 
@@ -57,15 +60,19 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     )
 
     const [[row]] = await db.query<any[]>('SELECT * FROM stories WHERE id = ? LIMIT 1', [storyId])
-    const media = await loadMediaForStory(db, storyId)
+    const [media, reactions, commentsPage] = await Promise.all([
+      loadMediaForStory(db, storyId),
+      loadReactionsSummary(db, storyId, ctx.customerId),
+      loadCommentsPage(db, storyId, ctx.customerId),
+    ])
 
     return ok({
       story: {
         ...shapeStory(row),
         media,
-        reactions: { counts: { like: 0, love: 0, fire: 0, wow: 0, thinking: 0 }, myReaction: null },
-        commentCount: 0,
-        comments:     [],
+        reactions,
+        commentCount: commentsPage.total,
+        comments:     commentsPage.comments,
       },
     })
   } catch (err) {

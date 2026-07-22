@@ -23,6 +23,7 @@ export type PushType =
   | 'urgent_reco'
   | 'workshop_message'
   | 'assistant_followup'
+  | 'story_comment'
   | 'test'
 
 export interface PushMessage {
@@ -48,6 +49,7 @@ const PREF_COLUMN: Record<PushType, string | null> = {
   urgent_reco:       'urgent_reco',
   workshop_message:  'workshop_message',
   assistant_followup: 'workshop_message',
+  story_comment:     'story_comment',
   test:              null,
 }
 

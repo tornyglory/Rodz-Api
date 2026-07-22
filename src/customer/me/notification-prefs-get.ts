@@ -16,7 +16,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   try {
     const [[row]] = await db.query<any[]>(
       `SELECT service_due, rego_expiring, booking, quote, invoice,
-              urgent_reco, workshop_message, quiet_hours_start, quiet_hours_end
+              urgent_reco, workshop_message, story_comment,
+              quiet_hours_start, quiet_hours_end
        FROM customer_notification_prefs WHERE customer_id = ? LIMIT 1`,
       [ctx.customerId],
     )
@@ -29,6 +30,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       invoice:          row ? !!row.invoice           : true,
       urgentReco:       row ? !!row.urgent_reco       : true,
       workshopMessage:  row ? !!row.workshop_message  : true,
+      storyComment:     row ? !!row.story_comment     : true,
       quietHoursStart:  row?.quiet_hours_start ? String(row.quiet_hours_start).slice(0, 5) : null,
       quietHoursEnd:    row?.quiet_hours_end   ? String(row.quiet_hours_end).slice(0, 5)   : null,
     })
