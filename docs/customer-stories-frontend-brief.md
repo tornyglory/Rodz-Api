@@ -29,7 +29,7 @@ Base URL: same customer API root the app already uses. Routes shown below start 
 | Method | Path | Notes |
 |--------|------|-------|
 | `POST` | `/c/vehicles/{vehicleId}/stories` | Create draft. Body: `{ title, description?, eventDate, isPublic? }`. Returns `201 { story }`. |
-| `GET`  | `/c/vehicles/{vehicleId}/stories` | List all own-stories on the vehicle (drafts + published). Returns `{ stories: [...] }` — same shape as list endpoints elsewhere. |
+| `GET`  | `/c/vehicles/{vehicleId}/stories` | List all own-stories on the vehicle (drafts + published). Card-ready payload per story: base fields + first 4 `media`, `mediaCount`, `reactions`, `commentCount`, and the 2 most recent `comments`. See `docs/customer-vehicle-stories-tab-frontend-brief.md` for the full shape and card design. |
 | `GET`  | `/c/stories/{id}` | Full detail — includes media + reactions summary + first page of comments. Ownership-gated (returns 404 for non-owners in v1). |
 | `PATCH` | `/c/stories/{id}` | Partial update. Any subset of `{ title, description, eventDate, isPublic }`. |
 | `POST` | `/c/stories/{id}/publish` | Draft → published. **422** with `pendingVideoAssetIds` if any attached video is still processing — poll and retry. |
