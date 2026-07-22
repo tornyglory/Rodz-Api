@@ -81,6 +81,7 @@ Rules: **detail** goes to S3, **aggregates** into summary tables, **pointers** i
 | [Voice chat](#voice-chat) | `customer_voice_usage` |
 | [Quote voice notes](#quote-voice-notes) | `quote_voice_notes` |
 | [Feature flags & rate limits](#feature-flags--rate-limits) | `feature_flags`, `public_chat_rate_limits` |
+| [Vehicle stories](#vehicle-stories) | `stories`, `story_media`, `story_comments`, `story_reactions` |
 
 ---
 
@@ -2179,6 +2180,7 @@ Per-customer topic opt-outs + quiet hours. One row per customer (PK = `customer_
 | `invoice` | tinyint(1) | NO | Default `1` |
 | `urgent_reco` | tinyint(1) | NO | Default `1` — urgent AI recommendations |
 | `workshop_message` | tinyint(1) | NO | Default `1` |
+| `story_comment` | tinyint(1) | NO | Default `1` — gates `story_comment` push (someone commented on the customer's story) |
 | `quiet_hours_start` | time | YES | Local time; null = no quiet hours |
 | `quiet_hours_end` | time | YES | Wraps midnight when `end < start` |
 | `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
@@ -2300,3 +2302,100 @@ Recurring monthly costs — rent, utilities, subscriptions. Used by the P&L / ma
 | `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
 
 **`category` enum:** `rent`, `utilities`, `insurance`, `equipment`, `marketing`, `subscriptions`, `other`
+
+---
+
+## Vehicle stories
+
+Facebook-style event posts anchored to a vehicle: title + description + user-picked event date + attached photos/videos. Owned by a customer, shown on their public logbook page when both `publicProfileSettings.stories` (section-level toggle in `public_profile_settings`) and `stories.is_public` (per-row toggle) are true. Authenticated Rodz customers can comment and react.
+
+Full plan: `docs/vehicle-stories-plan.md`. Frontend spec: `docs/customer-stories-frontend-brief.md`.
+
+### `stories`
+
+The main story row. Two-stage lifecycle — `draft` while the owner is composing (owner-only visibility), `published` once they're happy with the media. Publish is gated on all attached videos having reached `video_assets.process_status = 'ready'`.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `vehicle_id` | bigint unsigned | NO | FK → `vehicles.id` (ON DELETE CASCADE) |
+| `customer_id` | bigint unsigned | NO | FK → `customers.id` (ON DELETE CASCADE) — owner (must currently own the vehicle at create time) |
+| `title` | varchar(200) | NO | Max 200 chars |
+| `description` | text | YES | Max 2000 chars (enforced at handler) |
+| `event_date` | date | NO | User-picked date — "when it happened" |
+| `is_public` | tinyint(1) | NO | Default `1` — per-row public gate. Combined with `publicProfileSettings.stories` |
+| `status` | enum | NO | `draft` \| `published`. Default `draft` |
+| `published_at` | datetime | YES | Set on first publish; unchanged on subsequent edits. Used with `updated_at` to compute the "(edited)" flag |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+| `deleted_at` | datetime | YES | Soft delete |
+
+Indexes:
+- `idx_vehicle_event (vehicle_id, deleted_at, event_date DESC)` — the public logbook feed query
+- `idx_customer (customer_id, deleted_at)` — "my stories" list
+- `idx_status (status, deleted_at, published_at)` — cross-vehicle admin views
+
+**"(edited)" detection:** `status = 'published' AND updated_at > published_at`. Handler-side derived, not stored.
+
+---
+
+### `story_media`
+
+One row per attached photo or video. Discriminated by `media_type` — exactly one of `cf_image_id` or `video_asset_id` is set (enforced at handler, not DB).
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `story_id` | bigint unsigned | NO | FK → `stories.id` (ON DELETE CASCADE) |
+| `media_type` | enum | NO | `image` \| `video` |
+| `cf_image_id` | varchar(80) | YES | Cloudflare Images id — set when `media_type = 'image'` |
+| `video_asset_id` | bigint unsigned | YES | FK-ish to `video_assets.id` — set when `media_type = 'video'`. `video_assets.context_type = 'story'`, `context_id = story_id` |
+| `sort_order` | smallint unsigned | NO | Default `0`. Ordered by owner via `/media/reorder` |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `deleted_at` | datetime | YES | Soft delete. Draft-story media deletes cascade to R2 object removal; published-story media keeps the R2 object for audit |
+
+Indexes:
+- `idx_story (story_id, deleted_at, sort_order)` — the "load media for a story" query
+
+**Limits (enforced at handler):** 20 media per story, 5 videos, 20 photos. Video: 100 MB, 3 min max duration.
+
+---
+
+### `story_comments`
+
+Flat threading (no `parent_comment_id`) — replies-to-replies are deferred until real usage demands them. Soft-delete via `deleted_at`. Only authenticated Rodz customers can comment.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `story_id` | bigint unsigned | NO | FK → `stories.id` (ON DELETE CASCADE) |
+| `customer_id` | bigint unsigned | NO | FK → `customers.id` (ON DELETE CASCADE) — the comment author |
+| `body` | text | NO | Max 1000 chars (enforced at handler) |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE`. Used with `created_at` to compute the "(edited)" flag |
+| `deleted_at` | datetime | YES | Soft delete. Allowed for the comment author OR the story owner (moderation) |
+
+Indexes:
+- `idx_story (story_id, deleted_at, created_at DESC)` — the comments-list-newest-first query
+- `idx_customer (customer_id, deleted_at)` — "my comments" lookups
+
+**"(edited)" detection:** `updated_at > created_at + 1s` (the 1s slack absorbs the DEFAULT-CURRENT_TIMESTAMP + ON-UPDATE clock skew that MySQL emits on the same INSERT).
+
+---
+
+### `story_reactions`
+
+One-per-viewer emoji reaction on a story. Switching kinds replaces the existing row via `INSERT ... ON DUPLICATE KEY UPDATE`. No soft-delete — removing the reaction hard-deletes the row.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `story_id` | bigint unsigned | NO | FK → `stories.id` (ON DELETE CASCADE) |
+| `customer_id` | bigint unsigned | NO | FK → `customers.id` (ON DELETE CASCADE) |
+| `kind` | enum | NO | `like` \| `love` \| `fire` \| `wow` \| `thinking` |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` — refreshed on kind-switch |
+
+Indexes / constraints:
+- `uk_story_customer (story_id, customer_id)` — enforces one reaction per viewer per story; drives the upsert
+- `idx_story (story_id, kind)` — the reactions-summary aggregate query

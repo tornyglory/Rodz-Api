@@ -4,7 +4,7 @@ Facebook-style event posts anchored to a vehicle: title + description + user-pic
 
 **Product framing:** enthusiast documentation surface — "here's what happened to my car." A 6-month respray. New wheels reveal. Track-day video montage. Discovery via URL sharing (car forum posts, Facebook Marketplace listing, DM to a friend, QR code at a car meet).
 
-Not built yet. Design locked via 7-question walkthrough — see § Design decisions below.
+**Status (2026-07-23):** Sprint 1 (draft/publish + media) and Sprint 2 (comments + reactions + push) **DELIVERED**. Sprint 3 (public logbook endpoints) still pending. Frontend brief lives at `docs/customer-stories-frontend-brief.md`.
 
 ---
 
@@ -177,18 +177,19 @@ All under the customer JWT authorizer unless noted.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/c/stories/{id}/comments` | Add — body carries `body`. Fires push notification to story owner (unless owner muted). |
-| `GET`  | `/c/stories/{id}/comments` | List — paginated, newest first. Returns commenter first-name-last-initial + avatar. |
-| `PATCH` | `/c/stories/{id}/comments/{commentId}` | Edit — commenter only |
-| `DELETE` | `/c/stories/{id}/comments/{commentId}` | Delete — commenter OR story owner (moderation power on own turf) |
+| `POST` | `/c/stories/{id}/comments` | Add — body carries `body`. Fires async push to story owner (skipped when commenter is the owner). |
+| `GET`  | `/c/stories/{id}/comments?before={commentId}&limit={n}` | List — keyset pagination, newest first. Returns commenter first-name-last-initial + avatar. Response includes `nextBefore` cursor (null on last page). |
+| `PATCH` | `/c/stories/{id}/comments/{commentId}` | Edit — comment author only (403 for non-authors, even the story owner) |
+| `DELETE` | `/c/stories/{id}/comments/{commentId}` | Soft-delete — comment author OR story owner (owner moderation power) |
 
 ### Reactions
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/c/stories/{id}/reactions` | Set/change — body carries `kind`. Idempotent per customer via UNIQUE key. |
-| `DELETE` | `/c/stories/{id}/reactions` | Remove own reaction |
-| `GET`  | `/c/stories/{id}/reactions/summary` | Not usually called separately; embedded on story GET. Returns `{ like: 12, love: 3, fire: 8, wow: 1, thinking: 2, myReaction: 'fire' }` |
+| `PUT`  | `/c/stories/{id}/reactions` | Upsert — body carries `kind`. Switching kinds replaces the row via `ON DUPLICATE KEY UPDATE`. Returns full summary + viewer's new `myReaction`. |
+| `DELETE` | `/c/stories/{id}/reactions` | Remove own reaction. Idempotent — always returns 200 with the current summary regardless of whether a row existed. |
+
+No separate `GET /reactions/summary` endpoint — the summary is always embedded on the story GET response (and returned by PUT/DELETE reactions so the frontend can update optimistic state without a re-fetch).
 
 ### Public (via logbook token)
 
@@ -292,27 +293,29 @@ Draft-first + this guard eliminates the "half-processed video" edge case entirel
 
 ## Sprint plan
 
-### Sprint 1 — schema + core CRUD + media
+### Sprint 1 — schema + core CRUD + media — **DELIVERED (commit `f78ad1b`)**
 
 - `docs/migrations/stories_and_story_media.sql`
 - `docs/migrations/story_video_context_type.sql` (ALTER video_assets.context_type)
 - `docs/migrations/notification_prefs_story_comment.sql` (ALTER customer_notification_prefs)
-- Extend `src/shared/publicProfileSettings.ts` with `stories: boolean`
+- Extended `src/shared/publicProfileSettings.ts` with `stories: boolean`
 - `src/customer/vehicles/stories/{_helpers,create,list,get,update,publish,delete}.ts`
-- `src/customer/vehicles/stories/{videos/upload-url,media/attach,media/reorder,media/delete}.ts`
+- `src/customer/vehicles/stories/{video-upload-url,media-attach,media-reorder,media-delete}.ts`
 - CDK routes in Stack 3 with customer authorizer
 
-**Ships**: customer can create a draft story on their vehicle, attach photos + videos, reorder, and publish. Not yet visible on the public logbook. No interactions.
+Shipped: customer can create a draft story on their vehicle, attach photos + videos, reorder, and publish.
 
-### Sprint 2 — comments + reactions + notifications
+### Sprint 2 — comments + reactions + notifications — **DELIVERED (commit `4652049`)**
 
 - `docs/migrations/story_comments_and_reactions.sql`
-- Comment handlers (add/list/patch/delete)
-- Reaction handlers (set/remove/summary)
-- Push notification when a comment lands on a story where owner has `story_comment: true` (default)
-- Extend `getCustomerNotificationPrefs` type + defaults to include `storyComment`
+- Comment handlers: `comment-create.ts`, `comment-list.ts`, `comment-update.ts`, `comment-delete.ts`
+- Reaction handlers: `reaction-set.ts` (PUT upsert), `reaction-remove.ts` (DELETE)
+- `notify-comment.ts` async Lambda invoked (`InvocationType: Event`) from comment-create — routes through the shared `pushToCustomer` helper for prefs/dedupe/rate-limits
+- `story_comment` added to `PushType` union + `PREF_COLUMN` map in `src/shared/push.ts`
+- `GET /c/me/notification-prefs` + `PATCH` extended for `storyComment`
+- `GET /c/stories/:id` + `POST /c/stories/:id/publish` now return real `reactions.counts`, `reactions.myReaction`, `commentCount`, and first page of `comments` (Sprint 1 placeholders removed)
 
-**Ships**: Rodz customers browsing another customer's published stories can comment + react. Owners get push notifications when someone comments.
+Verified 45/45 checks in `scripts/smoke-stories-sprint2.mjs` against prod.
 
 ### Sprint 3 — public logbook + frontend brief
 
