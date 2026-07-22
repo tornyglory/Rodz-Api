@@ -440,6 +440,124 @@ export class RodzApiStack3 extends Stack {
       authorizer,
     })
 
+    // ── Customer stories — Facebook-style event posts per vehicle ─────────
+    //
+    // Reuses `videoEnv` (defined above with QUOTE_VIDEO_POST_PROCESS_FN_ARN)
+    // so story video attaches fire the same post-process Lambda that handles
+    // quote clips — one thumbnail/dimension pipeline for every video surface.
+
+    const customerStoryCreateFn = new LambdaFn(this, 'CustomerStoryCreate', {
+      entry: src('customer/vehicles/stories/create.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerStoryCreateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoryCreateInt', customerStoryCreateFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{vehicleId}/stories', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerStoryListFn = new LambdaFn(this, 'CustomerStoryList', {
+      entry: src('customer/vehicles/stories/list.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerStoryListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoryListInt', customerStoryListFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{vehicleId}/stories', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerStoryGetFn = new LambdaFn(this, 'CustomerStoryGet', {
+      entry: src('customer/vehicles/stories/get.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerStoryGetRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoryGetInt', customerStoryGetFn),
+      routeKey: HttpRouteKey.with('/c/stories/{id}', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerStoryUpdateFn = new LambdaFn(this, 'CustomerStoryUpdate', {
+      entry: src('customer/vehicles/stories/update.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerStoryUpdateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoryUpdateInt', customerStoryUpdateFn),
+      routeKey: HttpRouteKey.with('/c/stories/{id}', HttpMethod.PATCH),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerStoryPublishFn = new LambdaFn(this, 'CustomerStoryPublish', {
+      entry: src('customer/vehicles/stories/publish.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerStoryPublishRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoryPublishInt', customerStoryPublishFn),
+      routeKey: HttpRouteKey.with('/c/stories/{id}/publish', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerStoryDeleteFn = new LambdaFn(this, 'CustomerStoryDelete', {
+      entry: src('customer/vehicles/stories/delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerStoryDeleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoryDeleteInt', customerStoryDeleteFn),
+      routeKey: HttpRouteKey.with('/c/stories/{id}', HttpMethod.DELETE),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerStoryVideoUploadUrlFn = new LambdaFn(this, 'CustomerStoryVideoUploadUrl', {
+      entry: src('customer/vehicles/stories/video-upload-url.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerStoryVideoUploadUrlRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoryVideoUploadUrlInt', customerStoryVideoUploadUrlFn),
+      routeKey: HttpRouteKey.with('/c/stories/{id}/videos/upload-url', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    // The media-attach handler needs the video post-process ARN so it can
+    // invoke it fire-and-forget for video attachments.
+    const customerStoryMediaAttachFn = new LambdaFn(this, 'CustomerStoryMediaAttach', {
+      entry: src('customer/vehicles/stories/media-attach.ts'), vpc, sharedEnv: videoEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerStoryMediaAttachRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoryMediaAttachInt', customerStoryMediaAttachFn),
+      routeKey: HttpRouteKey.with('/c/stories/{id}/media', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerStoryMediaReorderFn = new LambdaFn(this, 'CustomerStoryMediaReorder', {
+      entry: src('customer/vehicles/stories/media-reorder.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerStoryMediaReorderRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoryMediaReorderInt', customerStoryMediaReorderFn),
+      routeKey: HttpRouteKey.with('/c/stories/{id}/media/reorder', HttpMethod.PATCH),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerStoryMediaDeleteFn = new LambdaFn(this, 'CustomerStoryMediaDelete', {
+      entry: src('customer/vehicles/stories/media-delete.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerStoryMediaDeleteRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerStoryMediaDeleteInt', customerStoryMediaDeleteFn),
+      routeKey: HttpRouteKey.with('/c/stories/{id}/media/{mediaId}', HttpMethod.DELETE),
+      authorizer: customerAuthorizer,
+    })
+
     // ── Customer vehicle policies — rego / WoF / insurance / roadside ──────
 
     const customerPolicyListFn = new LambdaFn(this, 'CustomerPolicyList', {

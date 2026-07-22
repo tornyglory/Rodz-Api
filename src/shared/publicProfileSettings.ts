@@ -6,6 +6,7 @@ export interface PublicProfileSettings {
   chat:          boolean
   maintenance:   boolean
   modifications: boolean
+  stories:       boolean
 }
 
 export const PUBLIC_PROFILE_DEFAULTS: PublicProfileSettings = {
@@ -14,6 +15,7 @@ export const PUBLIC_PROFILE_DEFAULTS: PublicProfileSettings = {
   chat:          true,
   maintenance:   true,
   modifications: true,
+  stories:       true,
 }
 
 export function parsePublicProfileSettings(raw: unknown): PublicProfileSettings {
@@ -27,6 +29,7 @@ export function parsePublicProfileSettings(raw: unknown): PublicProfileSettings 
     chat:          o.chat          === false ? false : true,
     maintenance:   o.maintenance   === false ? false : true,
     modifications: o.modifications === false ? false : true,
+    stories:       o.stories       === false ? false : true,
   }
 }
 
@@ -47,6 +50,7 @@ export function sanitiseSettingsPatch(input: unknown): Partial<PublicProfileSett
   if (typeof src.chat          === 'boolean') out.chat          = src.chat
   if (typeof src.maintenance   === 'boolean') out.maintenance   = src.maintenance
   if (typeof src.modifications === 'boolean') out.modifications = src.modifications
+  if (typeof src.stories       === 'boolean') out.stories       = src.stories
   return Object.keys(out).length ? out : null
 }
 
