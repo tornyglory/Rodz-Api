@@ -2187,7 +2187,11 @@ Per-customer topic opt-outs + quiet hours. One row per customer (PK = `customer_
 
 ### `notification_events`
 
-Log of push notifications actually sent (or attempted) to a customer. `event_id` is the dedupe key — the sender helper checks for a matching (`customer_id`, `event_id`) before dispatching to avoid double-firing the same event (e.g. quote_ready).
+Log of push notifications actually sent (or attempted) to a customer. Doubles as the source of truth for the customer portal's notification centre — `GET /c/notifications` reads directly from here.
+
+`event_id` is the dedupe key — the sender helper checks for a matching (`customer_id`, `event_id`) before dispatching to avoid double-firing the same event (e.g. quote_ready).
+
+**Important:** `pushToCustomer()` writes a row for every message that passes the suppression checks (prefs, quiet hours, dedupe, rate limits), **even if the customer has no push tokens registered**. That way the portal notification centre still renders the notification when a customer hasn't installed the mobile app.
 
 | Column | Type | Null | Notes |
 |--------|------|------|-------|
@@ -2200,10 +2204,13 @@ Log of push notifications actually sent (or attempted) to a customer. `event_id`
 | `body` | varchar(500) | NO | Push body |
 | `deeplink` | varchar(300) | NO | e.g. `/account/paperwork?filter=quotes` |
 | `sent_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `read_at` | datetime | YES | Set when the customer marks it read in the portal. Missing/NULL = unread. |
 
 Indexes:
-- `idx_customer_type_sent (customer_id, type, sent_at)` — history feed
+- `idx_customer_type_sent (customer_id, type, sent_at)` — rate-limit rollups
 - `idx_event (event_id)` — dedupe lookup
+- `idx_customer_read (customer_id, read_at)` — portal unread-count query
+- `idx_customer_sent (customer_id, sent_at)` — portal list-newest-first query
 
 ---
 

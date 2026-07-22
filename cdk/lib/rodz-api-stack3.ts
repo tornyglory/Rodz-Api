@@ -134,6 +134,48 @@ export class RodzApiStack3 extends Stack {
       authorizer: customerAuthorizer,
     })
 
+    // Notification centre — portal bell-icon feed. Backed by notification_events
+    // (already written by pushToCustomer). Adds read_at tracking + pagination.
+    const customerNotifListFn = new LambdaFn(this, 'CustomerNotifList', {
+      entry: src('customer/notifications/list.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'CustomerNotifListRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerNotifListInt', customerNotifListFn),
+      routeKey: HttpRouteKey.with('/c/notifications', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerNotifUnreadCountFn = new LambdaFn(this, 'CustomerNotifUnreadCount', {
+      entry: src('customer/notifications/unread-count.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'CustomerNotifUnreadCountRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerNotifUnreadCountInt', customerNotifUnreadCountFn),
+      routeKey: HttpRouteKey.with('/c/notifications/unread-count', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerNotifMarkReadFn = new LambdaFn(this, 'CustomerNotifMarkRead', {
+      entry: src('customer/notifications/mark-read.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'CustomerNotifMarkReadRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerNotifMarkReadInt', customerNotifMarkReadFn),
+      routeKey: HttpRouteKey.with('/c/notifications/{id}/read', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
+    const customerNotifMarkAllReadFn = new LambdaFn(this, 'CustomerNotifMarkAllRead', {
+      entry: src('customer/notifications/mark-all-read.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'CustomerNotifMarkAllReadRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerNotifMarkAllReadInt', customerNotifMarkAllReadFn),
+      routeKey: HttpRouteKey.with('/c/notifications/read-all', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
     // Cover photo — mirror of the existing avatar update. Uses the same
     // shared /c/me/avatar/upload-url endpoint for the CF direct-upload
     // URL; only the save-side handler is dedicated per field.

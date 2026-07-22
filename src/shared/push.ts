@@ -126,12 +126,16 @@ export async function pushToCustomer(
     }
   }
 
-  // 5. Get tokens
+  // 5. Get tokens — but we still audit the notification even if the customer
+  // has no mobile tokens, so the portal notification centre can render it.
   const [tokens] = await db.query<any[]>(
     `SELECT id, token, platform FROM customer_push_tokens WHERE customer_id = ?`,
     [customerId],
   )
-  if (tokens.length === 0) return { sent: 0, suppressed: 0, reason: 'no_tokens' }
+  if (tokens.length === 0) {
+    await insertAuditRow(db, customerId, msg)
+    return { sent: 0, suppressed: 0, reason: 'no_tokens' }
+  }
 
   // 6. Fan out per platform
   const iosArn     = process.env.IOS_PLATFORM_APP_ARN
@@ -183,16 +187,19 @@ export async function pushToCustomer(
 
   // Track successes AND simulated sends (no platform ARN) in the audit
   // table so dedupe + rate-limits work end-to-end before credentials land.
-  const attempted = tokens.length - deadTokenIds.length
-  if (attempted > 0) {
-    await db.query(
-      `INSERT INTO notification_events (customer_id, vehicle_id, event_id, type, title, body, deeplink)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [customerId, msg.vehicleId ?? null, msg.eventId, msg.type, msg.title, msg.body, msg.deeplink],
-    )
-  }
+  // The `no_tokens` early-return above also inserts, so the portal centre
+  // shows something even when the customer hasn't installed the app.
+  await insertAuditRow(db, customerId, msg)
 
   return { sent, suppressed: 0 }
+}
+
+async function insertAuditRow(db: mysql.Pool, customerId: number, msg: PushMessage): Promise<void> {
+  await db.query(
+    `INSERT INTO notification_events (customer_id, vehicle_id, event_id, type, title, body, deeplink)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [customerId, msg.vehicleId ?? null, msg.eventId, msg.type, msg.title, msg.body, msg.deeplink],
+  )
 }
 
 function buildPlatformPayload(platform: 'ios' | 'android', msg: PushMessage, platformArn: string): Record<string, string> {
