@@ -7,3 +7,12 @@ cdk.out.*/
 *.d.ts
 .env
 .DS_Store
+
+# Test output
+coverage/
+.vitest/
+
+# ffmpeg Lambda layer binaries — 76 MB each, fetched via
+# scripts/fetch-ffmpeg-layer.sh before `cdk deploy`. See
+# layers/ffmpeg/README.md.
+layers/ffmpeg/bin/

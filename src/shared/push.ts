@@ -235,14 +235,19 @@ function buildPlatformPayload(platform: 'ios' | 'android', msg: PushMessage, pla
   }
 }
 
+// Exported for unit tests. Given a Melbourne 'HH:MM' snapshot, returns
+// whether we're inside the [start, end) window. Handles overnight wrap.
+export function isTimeInQuietHours(hhmm: string, startTime: string, endTime: string): boolean {
+  const s = startTime.slice(0, 5)
+  const e = endTime.slice(0, 5)
+  if (s <= e) return hhmm >= s && hhmm < e   // same-day window
+  return hhmm >= s || hhmm < e                // overnight wrap
+}
+
 function nowInQuietHours(startTime: string, endTime: string): boolean {
   // startTime / endTime are 'HH:MM:SS'. Compare against Melbourne local time
   // rather than UTC so the customer's "10pm" means what they meant.
   const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Australia/Melbourne' }))
   const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
-  const s = startTime.slice(0, 5)
-  const e = endTime.slice(0, 5)
-  // Handle overnight windows (e.g. 22:00 → 07:00)
-  if (s <= e) return hhmm >= s && hhmm < e
-  return hhmm >= s || hhmm < e
+  return isTimeInQuietHours(hhmm, startTime, endTime)
 }

@@ -368,16 +368,20 @@ export class RodzApiStack3 extends Stack {
     // ── Quote videos — record / play back with thumbnails ──────────────────
     //
     // Storage: Cloudflare R2 via S3-compatible API (see src/shared/r2.ts).
-    // ffmpeg + ffprobe come from a Lambda layer (thumbnail extraction).
-    // Layer ARN must be set in the FFMPEG_LAYER_ARN env var — pointing at
-    // any public ffmpeg-for-lambda layer (e.g. serverlesspub's, or one we
-    // publish ourselves). If unset, post-process Lambda still deploys but
-    // ffmpeg calls will fail at runtime — safe (row lands as 'failed').
+    // ffmpeg + ffprobe live in a self-published Lambda layer built from
+    // ../../layers/ffmpeg/ — Linux x86_64 static binaries from John Van
+    // Sickle's builds (johnvansickle.com/ffmpeg). Self-owned so we don't
+    // depend on cross-account resource policies from public layers.
+    //
+    // Layer content maps to /opt/ at runtime. `layers/ffmpeg/bin/ffmpeg`
+    // becomes `/opt/bin/ffmpeg`, matching FFMPEG_PATH in post-process.ts.
 
-    const ffmpegLayerArn = process.env.FFMPEG_LAYER_ARN
-    const ffmpegLayer = ffmpegLayerArn
-      ? lambda.LayerVersion.fromLayerVersionArn(this, 'FfmpegLayer', ffmpegLayerArn)
-      : undefined
+    const ffmpegLayer = new lambda.LayerVersion(this, 'FfmpegLayer', {
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../layers/ffmpeg')),
+      compatibleRuntimes: [lambda.Runtime.NODEJS_20_X],
+      compatibleArchitectures: [lambda.Architecture.X86_64],
+      description: 'ffmpeg + ffprobe static binaries for video post-processing',
+    })
 
     // Async post-process Lambda — extracts thumbnail via ffmpeg, verifies
     // duration + width/height via ffprobe. Longer timeout + memory
@@ -386,7 +390,7 @@ export class RodzApiStack3 extends Stack {
       entry: src('quotes/videos/post-process.ts'), vpc, sharedEnv,
       timeout: Duration.seconds(90), memorySize: 1024,
       ephemeralStorageSize: 1024,   // /tmp for the video file + thumbnail scratch space
-      layers: ffmpegLayer ? [ffmpegLayer] : undefined,
+      layers: [ffmpegLayer],
     }).fn
 
     // Create handler needs the post-process ARN to invoke it fire-and-forget.

@@ -5,9 +5,15 @@
   "scripts": {
     "build": "tsc --noEmit",
     "deploy": "cdk deploy",
+    "fetch:ffmpeg": "./scripts/fetch-ffmpeg-layer.sh",
     "diff": "cdk diff",
     "synth": "cdk synth",
     "hotswap": "cdk deploy --hotswap",
+    "test": "vitest run tests/unit",
+    "test:watch": "vitest tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:all": "vitest run",
+    "test:coverage": "vitest run tests/unit --coverage",
     "agent:schema": "claude --dangerously-skip-permissions --agent schema",
     "agent:api": "claude --dangerously-skip-permissions --agent api",
     "agent:test": "claude --dangerously-skip-permissions --agent test",
@@ -20,10 +26,12 @@
     "@types/dotenv": "^8.2.0",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "aws-cdk": "2.160.0",
     "esbuild": "^0.28.0",
     "ts-node": "^10.9.2",
     "typescript": "~5.7.0",
+    "vitest": "^4.1.10",
     "ws": "^8.21.0"
   },
   "dependencies": {
