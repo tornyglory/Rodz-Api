@@ -4,7 +4,7 @@ Facebook-style event posts anchored to a vehicle: title + description + user-pic
 
 **Product framing:** enthusiast documentation surface — "here's what happened to my car." A 6-month respray. New wheels reveal. Track-day video montage. Discovery via URL sharing (car forum posts, Facebook Marketplace listing, DM to a friend, QR code at a car meet).
 
-**Status (2026-07-23):** Sprint 1 (draft/publish + media) and Sprint 2 (comments + reactions + push) **DELIVERED**. Sprint 3 (public logbook endpoints) still pending. Frontend brief lives at `docs/customer-stories-frontend-brief.md`.
+**Status (2026-07-23):** Sprints 1–3 **DELIVERED**. Full authenticated CRUD, comments + reactions with push, and public logbook endpoints all live. Frontend brief lives at `docs/customer-stories-frontend-brief.md`.
 
 ---
 
@@ -317,14 +317,16 @@ Shipped: customer can create a draft story on their vehicle, attach photos + vid
 
 Verified 45/45 checks in `scripts/smoke-stories-sprint2.mjs` against prod.
 
-### Sprint 3 — public logbook + frontend brief
+### Sprint 3 — public logbook + frontend brief — **DELIVERED**
 
-- `src/vehicles/logbook-stories.ts` — public list + detail endpoints
-- Extend `parsePublicProfileSettings` + defaults with `stories: true` (already covered in Sprint 1)
-- Update the public-profile-visibility brief with the new toggle
-- New `docs/customer-stories-frontend-brief.md` — full frontend spec (record UX, upload flow, story-composer UI, comment/reaction UX)
+- `src/vehicles/logbook-stories.ts` — `GET /logbook/{token}/stories` (list)
+- `src/vehicles/logbook-story-detail.ts` — `GET /logbook/{token}/stories/{id}` (detail)
+- `shapeAuthor`, `shapePublicComment`, `loadPublicCommentsPage`, `loadPublicReactionsSummary` added to `src/customer/vehicles/stories/_helpers.ts` — strip `customerId`, `myReaction`, `isMine` and emit a light `author` card
+- CDK routes in Stack 3 (no authorizer)
+- Cross-vehicle guessing guard: detail endpoint requires the story's `vehicle_id` to match the token's vehicle
+- Frontend brief lives at `docs/customer-stories-frontend-brief.md`
 
-**Ships**: stories visible on `/logbook/:token/stories` for anyone with the URL. Frontend engineer has a spec to build against.
+Verified 25/25 checks in `scripts/smoke-stories-sprint3.mjs` against prod — covers the two-level gate (per-row `is_public`, `status='published'`, and vehicle-level `public_profile_settings.stories`), the cross-vehicle guard, and the public response shape.
 
 ### Later — post-v1 ideas (not doing yet)
 

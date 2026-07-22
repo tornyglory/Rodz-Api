@@ -790,6 +790,27 @@ export class RodzApiStack3 extends Stack {
       routeKey: HttpRouteKey.with('/logbook/{token}/modifications', HttpMethod.GET),
     })
 
+    // Public stories feed + detail for the anonymous /logbook/{token} page.
+    // No auth. Two-level gate: `public_profile_settings.stories` + per-row
+    // `is_public = 1 AND status = 'published'`.
+    const logbookStoriesFn = new LambdaFn(this, 'LogbookStories', {
+      entry: src('vehicles/logbook-stories.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'LogbookStoriesRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('LogbookStoriesInt', logbookStoriesFn),
+      routeKey: HttpRouteKey.with('/logbook/{token}/stories', HttpMethod.GET),
+    })
+
+    const logbookStoryDetailFn = new LambdaFn(this, 'LogbookStoryDetail', {
+      entry: src('vehicles/logbook-story-detail.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'LogbookStoryDetailRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('LogbookStoryDetailInt', logbookStoryDetailFn),
+      routeKey: HttpRouteKey.with('/logbook/{token}/stories/{id}', HttpMethod.GET),
+    })
+
     // ── Chat message feedback — 👍 / 👎 on individual AI replies ───────────
 
     const customerChatFeedbackFn = new LambdaFn(this, 'CustomerChatFeedback', {

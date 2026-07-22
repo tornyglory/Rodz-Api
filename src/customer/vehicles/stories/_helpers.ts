@@ -332,3 +332,63 @@ export async function loadCommentsPage(
     comments: rows.map(r => shapeComment(r, viewerCustomerId)),
   }
 }
+
+// Shape a customer row prefix into the public { name, avatarUrl } author card.
+// Uses first-initial + last-name convention so nobody's full first name leaks.
+export function shapeAuthor(row: any): { name: string; avatarUrl: string | null } {
+  const first = String(row.first_name ?? '')
+  const last  = String(row.last_name  ?? '')
+  const name  = `${first.charAt(0)}. ${last}`.trim() || 'Unknown'
+  const avatarUrl = row.avatar_image_id ? imageUrls(String(row.avatar_image_id)).public : null
+  return { name, avatarUrl }
+}
+
+// Public comment shape — same as CommentResponse but without `isMine`
+// (no viewer identity on public endpoints).
+export interface PublicCommentResponse {
+  id:         number
+  body:       string
+  author:     { name: string; avatarUrl: string | null }
+  createdAt:  string
+  updatedAt:  string
+  isEdited:   boolean
+}
+
+export function shapePublicComment(row: any): PublicCommentResponse {
+  const { isMine, ...rest } = shapeComment(row, null)
+  return rest
+}
+
+export async function loadPublicCommentsPage(
+  db: mysql.Pool,
+  storyId: number,
+  limit = STORY_LIMITS.COMMENT_PAGE_SIZE,
+): Promise<{ comments: PublicCommentResponse[]; total: number }> {
+  const [[cnt]] = await db.query<any[]>(
+    'SELECT COUNT(*) AS n FROM story_comments WHERE story_id = ? AND deleted_at IS NULL',
+    [storyId],
+  )
+  const [rows] = await db.query<any[]>(
+    `SELECT c.id, c.customer_id, c.body, c.created_at, c.updated_at,
+            cust.first_name, cust.last_name, cust.avatar_image_id
+     FROM story_comments c
+     JOIN customers cust ON cust.id = c.customer_id
+     WHERE c.story_id = ? AND c.deleted_at IS NULL
+     ORDER BY c.created_at DESC, c.id DESC
+     LIMIT ?`,
+    [storyId, Number(limit)],
+  )
+  return {
+    total:    Number(cnt?.n ?? 0),
+    comments: rows.map(shapePublicComment),
+  }
+}
+
+// Public reactions summary — same counts, but no `myReaction` (no viewer identity).
+export async function loadPublicReactionsSummary(
+  db: mysql.Pool,
+  storyId: number,
+): Promise<{ counts: Record<ReactionKind, number> }> {
+  const { counts } = await loadReactionsSummary(db, storyId, null)
+  return { counts }
+}

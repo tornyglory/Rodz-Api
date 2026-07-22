@@ -1,6 +1,6 @@
 # Vehicle Stories — Frontend brief
 
-Frontend spec for the Vehicle Stories feature. Backend delivered end-to-end (Sprint 1 + Sprint 2). Public logbook endpoints (Sprint 3) still pending — this brief covers everything in the authenticated customer app only.
+Frontend spec for the Vehicle Stories feature. Backend delivered end-to-end — Sprint 1 (draft/publish + media), Sprint 2 (comments + reactions + push), and Sprint 3 (public logbook endpoints) are all live.
 
 **Backing plan / schema:** `docs/vehicle-stories-plan.md`, `docs/schema.md` (§ Vehicle stories).
 
@@ -70,6 +70,65 @@ No separate `GET /reactions/summary` — the summary is embedded on `GET /c/stor
 | `PATCH` | `/c/me/notification-prefs` | Body: `{ storyComment: false }` (any subset). Mutes the story-comment push. |
 
 Add "Story comments" as a toggle to the existing notification-prefs settings screen alongside "Booking updates", "Quote ready", etc.
+
+### Public logbook (no auth)
+
+Anonymous endpoints served under the shared logbook token — the same URL space as `/logbook/{token}/vehicle`, `/logbook/{token}/modifications`, etc. **No JWT.** Used by anyone with the shareable link.
+
+| Method | Path | Notes |
+|--------|------|-------|
+| `GET`  | `/logbook/{token}/stories` | List all **published + public** stories on the vehicle. Two-level gate: `publicProfileSettings.stories` must not be false AND per-story `is_public = 1`. Response shape below. |
+| `GET`  | `/logbook/{token}/stories/{id}` | Full detail — media + reactions counts + first 20 comments. 404 if the token doesn't own the story (cross-vehicle guessing guard) or if the story is draft / not public. |
+
+**Interaction endpoints stay JWT-gated.** A public viewer without a Rodz account can read the story, watch the video, and see counts — but they can't comment or react. The frontend should show a "Sign in with Rodz to react or comment" CTA at that point.
+
+The public response omits `customerId`, `reactions.myReaction`, and comment `isMine` fields — there's no viewer identity. It **adds** an `author: { name, avatarUrl }` card so viewers know whose story they're on (name is first-initial + last name, e.g. "S. Rodda").
+
+```json
+// GET /logbook/{token}/stories/{id}
+{
+  "story": {
+    "id":            42,
+    "vehicleId":     24,
+    "title":         "6-month respray finally done",
+    "description":   "Started stripping in January…",
+    "eventDate":     "2026-06-30",
+    "isPublic":      true,
+    "status":        "published",
+    "publishedAt":   "2026-07-05T10:22:14.000Z",
+    "createdAt":     "2026-06-01T09:00:00.000Z",
+    "updatedAt":     "2026-07-05T10:22:14.000Z",
+    "isEdited":      false,
+
+    "author": {
+      "name":       "S. Rodda",
+      "avatarUrl":  "https://cdn.rodz.com.au/avatars/…"
+    },
+
+    "media": [ /* same shape as authenticated */ ],
+
+    "reactions": {
+      "counts": { "like": 12, "love": 3, "fire": 8, "wow": 1, "thinking": 2 }
+      // note: no myReaction on public
+    },
+
+    "commentCount": 7,
+    "comments": [
+      {
+        "id":        501,
+        "body":      "Colour looks incredible",
+        "author":    { "name": "N. Rodda", "avatarUrl": "…" },
+        "createdAt": "2026-07-05T11:15:22.000Z",
+        "updatedAt": "2026-07-05T11:15:22.000Z",
+        "isEdited":  false
+        // note: no isMine on public
+      }
+    ]
+  }
+}
+```
+
+The list endpoint returns `{ stories: [...] }` where each entry has the same shape as `story` above but **without** the `comments` array (only `commentCount`) — keeps the list response light. Fetch the detail endpoint when the user opens a specific story.
 
 ---
 
@@ -256,4 +315,3 @@ Enforce the same limits in the frontend as `maxLength` on inputs and pre-upload 
 - Reactions on comments (👍 a reply)
 - Replies-to-comments (threaded)
 - Sharing via native share sheet with Open Graph metadata
-- Public logbook view of stories (Sprint 3 — backend not yet built)
