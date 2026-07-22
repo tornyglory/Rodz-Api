@@ -81,6 +81,7 @@ Rules: **detail** goes to S3, **aggregates** into summary tables, **pointers** i
 | [Voice chat](#voice-chat) | `customer_voice_usage` |
 | [Quote voice notes](#quote-voice-notes) | `quote_voice_notes` |
 | [Feature flags & rate limits](#feature-flags--rate-limits) | `feature_flags`, `public_chat_rate_limits` |
+| [Video assets](#video-assets) | `video_assets` |
 | [Vehicle stories](#vehicle-stories) | `stories`, `story_media`, `story_comments`, `story_reactions` |
 
 ---
@@ -2302,6 +2303,47 @@ Recurring monthly costs — rent, utilities, subscriptions. Used by the P&L / ma
 | `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
 
 **`category` enum:** `rent`, `utilities`, `insurance`, `equipment`, `marketing`, `subscriptions`, `other`
+
+---
+
+## Video assets
+
+Polymorphic video registry — every uploaded video (quote clip, story clip, and future contexts) lives in one row here. The `context_type + context_id` discriminator routes ownership; `context_item_id` optionally references a sub-item (e.g. a specific quote line item). Objects live in Cloudflare R2 under a context-specific prefix (e.g. `quote-clips/{quoteId}/…`, `story-clips/{storyId}/…`).
+
+Post-processing (thumbnail extraction, dimension + duration verification) runs on a shared ffmpeg Lambda layer — see `layers/ffmpeg/` and `src/quotes/videos/post-process.ts`.
+
+### `video_assets`
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `r2_key` | varchar(500) | NO | Full R2 object key, e.g. `story-clips/42/abc123.mp4` |
+| `content_type` | varchar(80) | NO | Original MIME, e.g. `video/mp4` |
+| `duration_seconds` | decimal(7,2) | YES | Set by ffprobe on post-process |
+| `size_bytes` | bigint unsigned | YES | Set by post-process from R2 HEAD |
+| `width` | smallint unsigned | YES | Set by ffprobe |
+| `height` | smallint unsigned | YES | Set by ffprobe |
+| `thumbnail_r2_key` | varchar(500) | YES | Thumbnail JPEG extracted by ffmpeg |
+| `process_status` | enum | NO | `pending` \| `ready` \| `failed`. Default `pending`. Guards story-publish + quote-send |
+| `process_error` | varchar(500) | YES | Failure detail — set when `process_status = 'failed'` |
+| `context_type` | enum | NO | `quote` \| `chat` \| `vehicle` \| `modification` \| `invoice` \| `story` — the owning surface |
+| `context_id` | bigint unsigned | NO | Id of the row in the owning table (e.g. `stories.id`) |
+| `context_item_id` | bigint unsigned | YES | Optional sub-item id (e.g. a quote line item) |
+| `visibility` | enum | NO | `private` \| `shared_link` \| `public`. Default `private`. Drives whether playback uses a presigned URL or a plain `cdn.rodz.com.au` URL |
+| `uploaded_by_staff_id` | bigint unsigned | YES | FK-ish → `staff.id` — set for staff uploads (quote clips) |
+| `uploaded_by_customer_id` | bigint unsigned | YES | FK-ish → `customers.id` — set for customer uploads (story clips) |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+| `deleted_at` | datetime | YES | Soft delete. Draft-context deletes cascade to the R2 object; published-context deletes retain the object for audit |
+
+Indexes:
+- `idx_context (context_type, context_id, deleted_at)` — "load videos for this quote/story"
+- `idx_context_item (context_type, context_item_id, deleted_at)` — "load clips for a specific line item"
+- `idx_process (process_status, created_at)` — sweeper for stuck `pending` rows
+- `idx_uploader_staff (uploaded_by_staff_id)` — audit lookups
+- `idx_uploader_customer (uploaded_by_customer_id)` — audit lookups
+
+**FKs are handler-enforced, not DB-enforced.** The polymorphic `context_type + context_id` design means no single foreign-key constraint can point at the "right" table.
 
 ---
 
