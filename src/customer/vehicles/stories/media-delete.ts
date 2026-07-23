@@ -49,15 +49,23 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       // orphan queries. Hard-delete R2 objects only for drafts.
       await db.query('UPDATE video_assets SET deleted_at = NOW() WHERE id = ?', [row.video_asset_id])
       if (isDraft) {
+        // Awaited — Lambda freezes pending promises when the handler
+        // returns, so a fire-and-forget R2 delete would leave orphaned
+        // objects paying storage indefinitely. ~30-50ms per delete is
+        // a fine trade for correctness.
         if (row.r2_key) {
-          deleteObject(String(row.r2_key)).catch(err =>
-            console.warn('[stories/media-delete] R2 delete failed:', row.r2_key, err),
-          )
+          try {
+            await deleteObject(String(row.r2_key))
+          } catch (err) {
+            console.warn('[stories/media-delete] R2 delete failed:', row.r2_key, err)
+          }
         }
         if (row.thumbnail_r2_key) {
-          deleteObject(String(row.thumbnail_r2_key)).catch(err =>
-            console.warn('[stories/media-delete] R2 thumbnail delete failed:', row.thumbnail_r2_key, err),
-          )
+          try {
+            await deleteObject(String(row.thumbnail_r2_key))
+          } catch (err) {
+            console.warn('[stories/media-delete] R2 thumbnail delete failed:', row.thumbnail_r2_key, err)
+          }
         }
       }
     }
