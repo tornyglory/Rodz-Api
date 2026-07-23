@@ -149,6 +149,32 @@ The list endpoint returns `{ stories: [...] }` where each entry has the same sha
 
 ## Response shapes
 
+### Mutation response contract (2026-07-23)
+
+**Every** story read + mutation endpoint returns the exact same `{ story: {…} }` envelope described below — base fields + `media[]` + `reactions` (counts + `myReaction`) + `commentCount` + `comments[first-page]`. Zero-filled reaction counts, empty arrays where applicable. Same code path as `GET`, so the shape can't drift.
+
+Endpoints covered by this contract:
+
+| Method | Path |
+|--------|------|
+| `POST` | `/c/vehicles/:vehicleId/stories` (create) |
+| `GET`  | `/c/stories/:id` |
+| `PATCH` | `/c/stories/:id` (update) |
+| `POST` | `/c/stories/:id/publish` |
+| `POST` | `/c/stories/:id/media` (attach) |
+| `PATCH` | `/c/stories/:id/media/reorder` |
+
+`DELETE /c/stories/:id/media/:mediaId` still returns `{ ok: true }` — no story envelope, as before.
+
+**Two shape changes to migrate off the old response shapes:**
+
+- `POST /c/stories/:id/media` (attach) — previously `{ media: [...] }`, now `{ story: { media: [...], … } }`. Read `resp.story.media`.
+- `PATCH /c/stories/:id/media/reorder` — same change. `{ media }` → `{ story }`.
+
+**Refetches can be dropped.** The composer's post-mutation `GET /c/stories/:id` calls after attach / patch / publish / reorder are no longer needed — the mutation response is now byte-identical to what the GET would return. Just consume `resp.story` directly.
+
+---
+
 ### Story (from `GET /c/stories/:id`, `POST /publish`, `POST /media`, etc.)
 
 ```json
