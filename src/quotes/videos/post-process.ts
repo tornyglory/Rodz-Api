@@ -30,11 +30,13 @@ const FFMPEG  = process.env.FFMPEG_PATH  ?? '/opt/bin/ffmpeg'
 const FFPROBE = process.env.FFPROBE_PATH ?? '/opt/bin/ffprobe'
 const LOGO    = process.env.WATERMARK_LOGO_PATH ?? '/opt/assets/rodz-logo.png'
 
-// Bottom-right position with a small margin. Overlay is scaled to
-// WATERMARK_WIDTH_RATIO of the video width, preserving aspect ratio.
-const WATERMARK_WIDTH_RATIO = 0.15   // 15% of frame width
+// Bottom-right position with a comfortable margin so the logo doesn't
+// touch the frame edge (some players / social re-hosts crop the outer
+// pixels). Overlay is scaled to WATERMARK_WIDTH_RATIO of the video width,
+// preserving aspect ratio.
+const WATERMARK_WIDTH_RATIO = 0.10   // 10% of frame width
 const WATERMARK_OPACITY     = 0.35   // 35% — visible on re-shares, not obnoxious
-const WATERMARK_MARGIN_PX   = 24
+const WATERMARK_MARGIN_PX   = 48
 
 export interface PostProcessEvent {
   videoId: number
