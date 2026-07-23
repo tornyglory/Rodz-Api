@@ -42,6 +42,16 @@ function client(): S3Client {
     endpoint:    ENDPOINT,
     credentials: KEY_ID && SECRET ? { accessKeyId: KEY_ID, secretAccessKey: SECRET } : undefined,
     forcePathStyle: true,
+
+    // AWS SDK v3.729+ defaults to WHEN_SUPPORTED, which bakes a
+    // x-amz-sdk-checksum-algorithm=CRC32 + x-amz-checksum-crc32=<empty-crc>
+    // pair into every presigned PUT URL. Browsers can't reproduce that
+    // checksum against the file bytes at upload time, so R2 rejects the
+    // PUT with a signature mismatch. WHEN_REQUIRED tells the SDK to
+    // only add checksum machinery when the operation strictly needs it —
+    // presigned URLs for browser upload don't.
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
   })
   return clientCache
 }
