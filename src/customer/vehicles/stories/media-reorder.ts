@@ -3,7 +3,7 @@ import { bootstrap } from '../../../shared/bootstrap'
 import { getPool } from '../../../shared/db'
 import { ok, notFound, validationError, serverError } from '../../../shared/errors'
 import { getCustomerContext } from '../../_helpers'
-import { loadOwnedStory, loadMediaForStory } from './_helpers'
+import { loadOwnedStory, loadFullStory } from './_helpers'
 
 const ready = bootstrap()
 
@@ -50,8 +50,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     )
     await db.query('UPDATE stories SET updated_at = NOW() WHERE id = ?', [storyId])
 
-    const media = await loadMediaForStory(db, storyId)
-    return ok({ media })
+    return ok({ story: await loadFullStory(db, storyId, ctx.customerId) })
   } catch (err) {
     return serverError(err)
   }

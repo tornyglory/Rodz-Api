@@ -3,7 +3,7 @@ import { bootstrap } from '../../../shared/bootstrap'
 import { getPool } from '../../../shared/db'
 import { ok, notFound, validationError, serverError } from '../../../shared/errors'
 import { getCustomerContext } from '../../_helpers'
-import { loadOwnedStory, coerceStoryPatch, shapeStory } from './_helpers'
+import { loadOwnedStory, coerceStoryPatch, loadFullStory } from './_helpers'
 
 const ready = bootstrap()
 
@@ -38,8 +38,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [...patch.values, storyId],
     )
 
-    const [[row]] = await db.query<any[]>('SELECT * FROM stories WHERE id = ? LIMIT 1', [storyId])
-    return ok({ story: shapeStory(row) })
+    return ok({ story: await loadFullStory(db, storyId, ctx.customerId) })
   } catch (err) {
     return serverError(err)
   }

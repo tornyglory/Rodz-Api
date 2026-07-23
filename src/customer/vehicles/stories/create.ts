@@ -3,7 +3,7 @@ import { bootstrap } from '../../../shared/bootstrap'
 import { getPool } from '../../../shared/db'
 import { created, forbidden, validationError, serverError } from '../../../shared/errors'
 import { getCustomerContext } from '../../_helpers'
-import { customerOwnsVehicle, coerceStoryPatch, shapeStory } from './_helpers'
+import { customerOwnsVehicle, coerceStoryPatch, loadFullStory } from './_helpers'
 
 const ready = bootstrap()
 
@@ -41,8 +41,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     )
     const storyId = Number(ins.insertId)
 
-    const [[row]] = await db.query<any[]>('SELECT * FROM stories WHERE id = ? LIMIT 1', [storyId])
-    return created({ story: shapeStory(row) })
+    return created({ story: await loadFullStory(db, storyId, ctx.customerId) })
   } catch (err) {
     return serverError(err)
   }

@@ -5,7 +5,7 @@ import { getPool } from '../../../shared/db'
 import { created, notFound, validationError, serverError } from '../../../shared/errors'
 import { getCustomerContext } from '../../_helpers'
 import { isSupportedVideoContentType, objectExists } from '../../../shared/r2'
-import { loadOwnedStory, STORY_LIMITS, loadMediaForStory } from './_helpers'
+import { loadOwnedStory, STORY_LIMITS, loadFullStory } from './_helpers'
 
 const ready = bootstrap()
 const lambdaClient = new LambdaClient({ region: process.env.REGION ?? 'ap-southeast-2' })
@@ -136,8 +136,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     // appropriately for published stories.
     await db.query('UPDATE stories SET updated_at = NOW() WHERE id = ?', [storyId])
 
-    const media = await loadMediaForStory(db, storyId)
-    return created({ media })
+    return created({ story: await loadFullStory(db, storyId, ctx.customerId) })
   } catch (err) {
     return serverError(err)
   }

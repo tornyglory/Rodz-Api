@@ -333,6 +333,34 @@ export async function loadCommentsPage(
   }
 }
 
+// Canonical "full story" envelope — same shape every read + mutation
+// endpoint returns. Assembles the base story fields + media + reactions
+// summary + first-page comments in parallel. Callers that already have
+// the story row (post-INSERT / post-UPDATE) can pass it in via `row`;
+// otherwise this reloads it.
+export async function loadFullStory(
+  db: mysql.Pool,
+  storyId: number,
+  viewerCustomerId: number,
+  row?: any,
+): Promise<Record<string, unknown>> {
+  const [[loaded]] = row
+    ? [[row]]
+    : await db.query<any[]>('SELECT * FROM stories WHERE id = ? LIMIT 1', [storyId])
+  const [media, reactions, commentsPage] = await Promise.all([
+    loadMediaForStory(db, storyId),
+    loadReactionsSummary(db, storyId, viewerCustomerId),
+    loadCommentsPage(db, storyId, viewerCustomerId),
+  ])
+  return {
+    ...shapeStory(loaded),
+    media,
+    reactions,
+    commentCount: commentsPage.total,
+    comments:     commentsPage.comments,
+  }
+}
+
 // Shape a customer row prefix into the public { name, avatarUrl } author card.
 // Uses first-initial + last-name convention so nobody's full first name leaks.
 export function shapeAuthor(row: any): { name: string; avatarUrl: string | null } {
