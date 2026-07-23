@@ -176,6 +176,19 @@ export class RodzApiStack3 extends Stack {
       authorizer: customerAuthorizer,
     })
 
+    // Staff-side rescue: unlock a customer who's hit the login-lockout.
+    // Clears failed_login_attempts + locked_until. Password unchanged.
+    // Managers + super admins only (guard inside the handler).
+    const customerUnlockFn = new LambdaFn(this, 'CustomerUnlock', {
+      entry: src('customers/unlock.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'CustomerUnlockRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerUnlockInt', customerUnlockFn),
+      routeKey: HttpRouteKey.with('/customers/{id}/unlock', HttpMethod.POST),
+      authorizer,   // staff JWT
+    })
+
     // Cover photo — mirror of the existing avatar update. Uses the same
     // shared /c/me/avatar/upload-url endpoint for the CF direct-upload
     // URL; only the save-side handler is dedicated per field.

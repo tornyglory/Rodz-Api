@@ -49,16 +49,18 @@ export function customerEvent(customerId: number, opts: EventOpts = {}): APIGate
 }
 
 export function staffEvent(
-  ctx: { staffId: string; role: 'super_admin' | 'store_manager' | 'technician'; storeId?: number },
+  ctx: { staffId: string; role: 'super_admin' | 'store_manager' | 'technician'; storeId?: number; permissions?: string[] },
   opts: EventOpts = {},
 ): APIGatewayProxyEventV2 {
   const ev = base(opts)
+  // Shape matches what the JWT authorizer injects — `sub` is the staff id
+  // (from JWT claim), `permissions` is a JSON string that getAuthContext parses.
   ;(ev.requestContext as any).authorizer = {
     lambda: {
-      staffId:     ctx.staffId,
+      sub:         ctx.staffId,
       role:        ctx.role,
       storeId:     String(ctx.storeId ?? 0),
-      permissions: '[]',
+      permissions: JSON.stringify(ctx.permissions ?? []),
     },
   }
   return ev
