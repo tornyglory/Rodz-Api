@@ -42,7 +42,22 @@ Base URL: same customer API root the app already uses. Routes shown below start 
 | `GET`  | `/c/stories/{id}/videos/upload-url?contentType=video/mp4` | Returns `{ uploadUrl, r2Key, videoAssetId }`. PUT the file to `uploadUrl` directly from the browser. |
 | `POST` | `/c/stories/{id}/media` | Attach. Body: `{ imageId }` (Cloudflare image id — reuse existing upload flow) OR `{ videoAssetId }` (the id returned by upload-url). Fires the video post-process Lambda for video attachments (thumbnail + duration). |
 | `PATCH` | `/c/stories/{id}/media/reorder` | Body: `{ mediaIds: [id, id, ...] }` — full ordered array. |
-| `DELETE` | `/c/stories/{id}/media/{mediaId}` | Detach. Drafts hard-delete the underlying R2 object; published stories retain it for audit. |
+| `DELETE` | `/c/stories/{id}/media/{mediaId}` | Detach + storage cleanup. See "Media delete behaviour" below. |
+
+#### Media delete behaviour
+
+`DELETE /c/stories/{id}/media/{mediaId}` behaves differently depending on the story's status. The endpoint itself is the same — the backend inspects the parent story:
+
+| Story status | Photo (`cf_image_id`) | Video (`r2_key` + thumbnail) |
+|--------------|-----------------------|------------------------------|
+| `draft`      | **Purged from Cloudflare Images** — the underlying blob is gone. | **Purged from R2** — video file + poster thumbnail both gone. |
+| `published`  | `story_media` soft-deleted; the CF image is retained for audit. | `story_media` soft-deleted; R2 objects retained for audit. |
+
+**UX implication for the composer:** owners can freely add + remove media while a story is still a draft. Every DELETE fully reclaims the storage — no orphans, no follow-up cleanup step needed. Frontend does **not** need a separate "finalise" or "commit" flow to purge unused uploads at publish time. Just call the same DELETE endpoint the moment the owner removes a tile.
+
+Once published, DELETE becomes a soft-detach (still removes the tile from the story) but the underlying blob stays for audit. That's fine — no different UX behaviour needed for the delete UI itself.
+
+Both draft cleanups are awaited server-side, so the DELETE response only returns after the storage has actually been reclaimed (~30–100 ms extra vs. a soft-detach). Handle it exactly like any other network call.
 
 ### Comments
 
