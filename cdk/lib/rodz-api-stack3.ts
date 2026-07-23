@@ -383,13 +383,15 @@ export class RodzApiStack3 extends Stack {
       description: 'ffmpeg + ffprobe static binaries for video post-processing',
     })
 
-    // Async post-process Lambda — extracts thumbnail via ffmpeg, verifies
-    // duration + width/height via ffprobe. Longer timeout + memory
-    // because ffmpeg needs a real budget on a video read + JPEG encode.
+    // Async post-process Lambda — extracts thumbnail, then bakes the Rodz
+    // watermark into the video and replaces the R2 object. The watermark
+    // step is a full h264 re-encode so the CPU/timeout budget is much
+    // bigger than a thumbnail-only pass would need. 2 GB RAM roughly
+    // doubles CPU allocation vs. 1 GB (Lambda scales linearly).
     const quoteVideoPostProcessFn = new LambdaFn(this, 'QuoteVideoPostProcess', {
       entry: src('quotes/videos/post-process.ts'), vpc, sharedEnv,
-      timeout: Duration.seconds(90), memorySize: 1024,
-      ephemeralStorageSize: 1024,   // /tmp for the video file + thumbnail scratch space
+      timeout: Duration.seconds(300), memorySize: 2048,
+      ephemeralStorageSize: 2048,   // /tmp for original + watermarked + thumbnail scratch
       layers: [ffmpegLayer],
     }).fn
 

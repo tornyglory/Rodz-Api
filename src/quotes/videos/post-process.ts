@@ -28,6 +28,13 @@ const ready = bootstrap()
 
 const FFMPEG  = process.env.FFMPEG_PATH  ?? '/opt/bin/ffmpeg'
 const FFPROBE = process.env.FFPROBE_PATH ?? '/opt/bin/ffprobe'
+const LOGO    = process.env.WATERMARK_LOGO_PATH ?? '/opt/assets/rodz-logo.png'
+
+// Bottom-right position with a small margin. Overlay is scaled to
+// WATERMARK_WIDTH_RATIO of the video width, preserving aspect ratio.
+const WATERMARK_WIDTH_RATIO = 0.15   // 15% of frame width
+const WATERMARK_OPACITY     = 0.35   // 35% — visible on re-shares, not obnoxious
+const WATERMARK_MARGIN_PX   = 24
 
 export interface PostProcessEvent {
   videoId: number
@@ -87,6 +94,42 @@ async function extractThumbnail(inputPath: string, outputPath: string, atSeconds
   ])
 }
 
+// Re-encode the input with the Rodz logo overlaid bottom-right, scaled
+// to WATERMARK_WIDTH_RATIO of the video width and blended at
+// WATERMARK_OPACITY. Audio track is stream-copied (no re-encode).
+async function applyWatermark(
+  inputPath: string,
+  outputPath: string,
+  videoWidth: number,
+): Promise<void> {
+  // Compute overlay width in pixels from the video's width. -1 in the
+  // second slot keeps aspect ratio. Falls back to 200px if we don't
+  // have a probed width (portrait/rotated videos sometimes report 0).
+  const overlayWidth = Math.max(48, Math.floor(videoWidth * WATERMARK_WIDTH_RATIO)) || 200
+
+  // Filter graph:
+  //   [1:v] logo → scale to target width → set alpha to WATERMARK_OPACITY
+  //   [0:v][wm] main video ← overlay at bottom-right with margin
+  const filter =
+    `[1:v]scale=${overlayWidth}:-1,` +
+    `format=rgba,colorchannelmixer=aa=${WATERMARK_OPACITY}[wm];` +
+    `[0:v][wm]overlay=W-w-${WATERMARK_MARGIN_PX}:H-h-${WATERMARK_MARGIN_PX}`
+
+  await runCommand(FFMPEG, [
+    '-y',
+    '-i', inputPath,
+    '-i', LOGO,
+    '-filter_complex', filter,
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',    // Lambda CPU is limited; veryfast is a good size/speed tradeoff
+    '-crf', '23',             // Visually indistinguishable from original at typical viewing distances
+    '-pix_fmt', 'yuv420p',    // Broadest player compatibility
+    '-movflags', '+faststart',// moov atom at the start so browser seek works while streaming
+    '-c:a', 'copy',           // Keep the audio track byte-identical
+    outputPath,
+  ])
+}
+
 export const handler = async (event: PostProcessEvent): Promise<{ ok: boolean; reason?: string }> => {
   await ready
   const db = getPool()
@@ -94,7 +137,8 @@ export const handler = async (event: PostProcessEvent): Promise<{ ok: boolean; r
   if (!videoId) throw new Error('videoId is required')
 
   const [[row]] = await db.query<any[]>(
-    'SELECT id, r2_key, content_type, process_status FROM video_assets WHERE id = ? LIMIT 1',
+    `SELECT id, r2_key, content_type, process_status
+     FROM video_assets WHERE id = ? LIMIT 1`,
     [videoId],
   )
   if (!row) {
@@ -105,9 +149,10 @@ export const handler = async (event: PostProcessEvent): Promise<{ ok: boolean; r
     return { ok: true, reason: 'already_ready' }
   }
 
-  const workDir      = `/tmp/video-${videoId}`
-  const inputPath    = path.join(workDir, 'input')
+  const workDir       = `/tmp/video-${videoId}`
+  const inputPath     = path.join(workDir, 'input')
   const thumbnailPath = path.join(workDir, 'thumb.jpg')
+  const watermarkedPath = path.join(workDir, 'watermarked.mp4')
 
   try {
     // 1. Fetch video bytes and write to /tmp
@@ -129,17 +174,38 @@ export const handler = async (event: PostProcessEvent): Promise<{ ok: boolean; r
     const thumbnailBytes = await fs.readFile(thumbnailPath)
     await putObjectBytes(thumbnailKey, thumbnailBytes, 'image/jpeg')
 
-    // 5. Update row
+    // 5. Watermark — bake the Rodz logo into the video and replace the
+    // original R2 object. This is the slowest step (full re-encode) but
+    // means the branding survives when the file is downloaded or
+    // re-shared on Facebook / forums / etc.
+    await applyWatermark(inputPath, watermarkedPath, Number(probe.width ?? 0))
+    const watermarkedBytes = await fs.readFile(watermarkedPath)
+    await putObjectBytes(String(row.r2_key), watermarkedBytes, String(row.content_type))
+
+    // 6. Re-probe the watermarked output — dimensions may shift slightly
+    // due to yuv420p even-dim requirements, and size_bytes definitely
+    // changed. Keep the DB in sync so playback URLs report the truth.
+    const outProbe = await probeVideo(watermarkedPath)
+
+    // 7. Update row
     await db.query(
       `UPDATE video_assets SET
          duration_seconds = COALESCE(?, duration_seconds),
          width            = COALESCE(?, width),
          height           = COALESCE(?, height),
+         size_bytes       = ?,
          thumbnail_r2_key = ?,
          process_status   = 'ready',
          process_error    = NULL
        WHERE id = ?`,
-      [probe.durationSec, probe.width, probe.height, thumbnailKey, videoId],
+      [
+        outProbe.durationSec ?? probe.durationSec,
+        outProbe.width       ?? probe.width,
+        outProbe.height      ?? probe.height,
+        watermarkedBytes.length,
+        thumbnailKey,
+        videoId,
+      ],
     )
 
     return { ok: true }

@@ -1,7 +1,12 @@
 # ffmpeg Lambda layer
 
 Static ffmpeg + ffprobe binaries used by `src/quotes/videos/post-process.ts`
-(thumbnail extraction + duration/dimension verification).
+for thumbnail extraction, duration/dimension verification, and baking the
+Rodz watermark into every uploaded video.
+
+The Rodz logo PNG at `assets/rodz-logo.png` **is committed** — it's small
+(~450 KB) and the source of truth for the watermark overlay. Update it in
+place if the brand refreshes; `cdk deploy` will republish the layer.
 
 The binaries themselves are **gitignored** — they're 76 MB each and don't
 change often. Run the fetch script once locally before `cdk deploy`:
@@ -20,9 +25,12 @@ places them at:
 - `layers/ffmpeg/bin/ffprobe`
 
 CDK's `LayerVersion` construct bundles this directory at synth time and
-publishes it as a Lambda layer attached to the post-process function. The
-binaries end up at `/opt/bin/{ffmpeg,ffprobe}` inside the Lambda runtime,
-matching the `FFMPEG_PATH` / `FFPROBE_PATH` defaults in `post-process.ts`.
+publishes it as a Lambda layer attached to the post-process function. Layer
+content maps to `/opt/` inside the Lambda runtime:
+
+- `/opt/bin/ffmpeg`             — matches `FFMPEG_PATH`
+- `/opt/bin/ffprobe`            — matches `FFPROBE_PATH`
+- `/opt/assets/rodz-logo.png`   — matches `WATERMARK_LOGO_PATH`
 
 ## Why not commit the binaries?
 
