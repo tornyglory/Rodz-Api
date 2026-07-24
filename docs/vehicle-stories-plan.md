@@ -13,7 +13,7 @@ Facebook-style event posts anchored to a vehicle: title + description + user-pic
 | # | Decision | Chosen |
 |---|----------|--------|
 | 1 | Commenter identity | **Authenticated Rodz customers only** — comment/react endpoints require customer JWT |
-| 2 | Reaction set | Fixed 5 emojis — 👍 like, ❤️ love, 🔥 fire, 😲 wow, 🤔 thinking. One per viewer per story (Facebook-style). |
+| 2 | Reaction set | Fixed 6 emojis — 👍 like, ❤️ love, 😂 laugh, 🔥 fire, 😲 wow, 🤔 thinking. One per viewer per story (Facebook-style). |
 | 3 | New-story default | **`draft`** — owner explicitly hits Publish. Publish rejects if any attached video is still `process_status !== 'ready'` |
 | 4 | Notifications | Push on new comment; reactions silent. New `story_comment` topic in `customer_notification_prefs` (default on, mute-able) |
 | 5 | Post-publish editing | Editable freely, viewers see "(edited)" when `updated_at > published_at` — standard modern-social pattern |
@@ -103,7 +103,7 @@ CREATE TABLE story_reactions (
   id                BIGINT UNSIGNED   NOT NULL AUTO_INCREMENT PRIMARY KEY,
   story_id          BIGINT UNSIGNED   NOT NULL,
   customer_id       BIGINT UNSIGNED   NOT NULL,
-  kind              ENUM('like','love','fire','wow','thinking') NOT NULL,
+  kind              ENUM('like','love','laugh','fire','wow','thinking') NOT NULL,
   created_at        DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at        DATETIME          NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
@@ -251,7 +251,7 @@ Interaction endpoints (comment/react) always require customer JWT — a public v
   ],
 
   "reactions": {
-    "counts":     { "like": 12, "love": 3, "fire": 8, "wow": 1, "thinking": 2 },
+    "counts":     { "like": 12, "love": 3, "laugh": 5, "fire": 8, "wow": 1, "thinking": 2 },
     "myReaction": "fire"    // null on the public endpoint when the viewer has no account
   },
 

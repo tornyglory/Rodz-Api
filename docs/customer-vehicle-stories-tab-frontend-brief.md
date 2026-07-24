@@ -89,7 +89,7 @@ Each row is **card-ready** — the endpoint returns the first 4 media items (ful
       "mediaCount": 12,
 
       "reactions": {
-        "counts":     { "like": 12, "love": 3, "fire": 8, "wow": 1, "thinking": 2 },
+        "counts":     { "like": 12, "love": 3, "laugh": 5, "fire": 8, "wow": 1, "thinking": 2 },
         "myReaction": null
       },
 
@@ -222,7 +222,7 @@ Use `media` array from the response. Rendering rules:
 
 #### 4. Reactions bar
 
-Renders the five emoji chips: 👍 like, ❤️ love, 🔥 fire, 😲 wow, 🤔 thinking.
+Renders the six emoji chips: 👍 like, ❤️ love, 😂 laugh, 🔥 fire, 😲 wow, 🤔 thinking.
 
 - Show each chip with its count from `reactions.counts`. Chips with 0 count still render — the whole set is always visible.
 - The chip matching `reactions.myReaction` is highlighted (filled background, primary tint).

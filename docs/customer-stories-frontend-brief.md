@@ -72,7 +72,7 @@ Both draft cleanups are awaited server-side, so the DELETE response only returns
 
 | Method | Path | Notes |
 |--------|------|-------|
-| `PUT`  | `/c/stories/{id}/reactions` | Body: `{ kind }` — one of `like`, `love`, `fire`, `wow`, `thinking`. Upsert — switching kinds replaces the existing row. Returns `{ reactions }` (full summary + viewer's new `myReaction`). |
+| `PUT`  | `/c/stories/{id}/reactions` | Body: `{ kind }` — one of `like`, `love`, `laugh`, `fire`, `wow`, `thinking`. Upsert — switching kinds replaces the existing row. Returns `{ reactions }` (full summary + viewer's new `myReaction`). |
 | `DELETE` | `/c/stories/{id}/reactions` | Removes viewer's reaction. Idempotent — returns 200 even if none existed. Returns `{ reactions }`. |
 
 No separate `GET /reactions/summary` — the summary is embedded on `GET /c/stories/{id}` and returned by every PUT/DELETE reaction call. Use those responses to update optimistic UI state.
@@ -123,7 +123,7 @@ The public response omits `customerId`, `reactions.myReaction`, and comment `isM
     "media": [ /* same shape as authenticated */ ],
 
     "reactions": {
-      "counts": { "like": 12, "love": 3, "fire": 8, "wow": 1, "thinking": 2 }
+      "counts": { "like": 12, "love": 3, "laugh": 5, "fire": 8, "wow": 1, "thinking": 2 }
       // note: no myReaction on public
     },
 
@@ -218,7 +218,7 @@ Endpoints covered by this contract:
     ],
 
     "reactions": {
-      "counts":     { "like": 12, "love": 3, "fire": 8, "wow": 1, "thinking": 2 },
+      "counts":     { "like": 12, "love": 3, "laugh": 5, "fire": 8, "wow": 1, "thinking": 2 },
       "myReaction": "fire"
     },
 

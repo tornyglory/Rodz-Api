@@ -17,7 +17,7 @@ export const STORY_LIMITS = {
   COMMENT_PAGE_SIZE:    20,              // default initial page embedded on story GET
 } as const
 
-export const REACTION_KINDS = ['like', 'love', 'fire', 'wow', 'thinking'] as const
+export const REACTION_KINDS = ['like', 'love', 'laugh', 'fire', 'wow', 'thinking'] as const
 export type ReactionKind = (typeof REACTION_KINDS)[number]
 
 export function isReactionKind(v: unknown): v is ReactionKind {
@@ -243,7 +243,7 @@ export interface ReactionsSummary {
 }
 
 const ZERO_REACTIONS: Record<ReactionKind, number> = {
-  like: 0, love: 0, fire: 0, wow: 0, thinking: 0,
+  like: 0, love: 0, laugh: 0, fire: 0, wow: 0, thinking: 0,
 }
 
 export async function loadReactionsSummary(

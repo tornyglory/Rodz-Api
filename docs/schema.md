@@ -2434,7 +2434,7 @@ One-per-viewer emoji reaction on a story. Switching kinds replaces the existing 
 | `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
 | `story_id` | bigint unsigned | NO | FK → `stories.id` (ON DELETE CASCADE) |
 | `customer_id` | bigint unsigned | NO | FK → `customers.id` (ON DELETE CASCADE) |
-| `kind` | enum | NO | `like` \| `love` \| `fire` \| `wow` \| `thinking` |
+| `kind` | enum | NO | `like` \| `love` \| `laugh` \| `fire` \| `wow` \| `thinking` |
 | `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
 | `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` — refreshed on kind-switch |
 

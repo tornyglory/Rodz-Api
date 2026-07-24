@@ -8,7 +8,7 @@ import { loadCommentableStory, isReactionKind, loadReactionsSummary } from './_h
 const ready = bootstrap()
 
 // PUT /c/stories/{id}/reactions
-// Body: { kind: 'like' | 'love' | 'fire' | 'wow' | 'thinking' }
+// Body: { kind: 'like' | 'love' | 'laugh' | 'fire' | 'wow' | 'thinking' }
 // Upserts the viewer's reaction — switching kinds replaces the old row.
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
@@ -23,7 +23,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
     if (!isReactionKind(body.kind)) {
-      return validationError('kind must be one of: like, love, fire, wow, thinking.')
+      return validationError('kind must be one of: like, love, laugh, fire, wow, thinking.')
     }
 
     await db.query(

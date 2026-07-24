@@ -67,7 +67,7 @@ Lists every published + public story on the vehicle. Newest event date first.
       ],
 
       "reactions": {
-        "counts": { "like": 12, "love": 3, "fire": 8, "wow": 1, "thinking": 2 }
+        "counts": { "like": 12, "love": 3, "laugh": 5, "fire": 8, "wow": 1, "thinking": 2 }
       },
 
       "commentCount": 7
@@ -107,7 +107,7 @@ Full detail for one story — media + reactions counts + first page of comments.
     "media": [ /* full array — photos + videos in sort order */ ],
 
     "reactions": {
-      "counts": { "like": 12, "love": 3, "fire": 8, "wow": 1, "thinking": 2 }
+      "counts": { "like": 12, "love": 3, "laugh": 5, "fire": 8, "wow": 1, "thinking": 2 }
     },
 
     "commentCount": 7,
