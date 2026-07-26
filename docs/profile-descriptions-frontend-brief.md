@@ -162,8 +162,14 @@ Same shape as customer enhance. Owner-only (`403` otherwise). Rate limit shares 
 
 **Request**
 ```json
-{ "description": "great car for sale" }
+{
+  "description": "great car for sale",
+  "tone": "sale"
+}
 ```
+
+- `description` — the current draft (or `""` for generate mode).
+- `tone` — optional. One of `neutral`, `nostalgic`, `sale`, `enthusiast`, `casual`, `concise`. Missing / `null` → defaults to `neutral`.
 
 **Response — 200**
 ```json
@@ -173,9 +179,42 @@ Same shape as customer enhance. Owner-only (`403` otherwise). Rate limit shares 
 }
 ```
 
-The generate prompt uses: year, make, model, series, colour, body type, fuel, transmission, engine size, odometer, workshop service count, and (if listed) asking price + location. It won't invent facts beyond those.
+The generate prompt uses: year, make, model, series, colour, body type, fuel, transmission, engine size, odometer, workshop service count, and (if listed) asking price + location. It won't invent facts beyond those — that guarantee holds regardless of tone.
 
-**Errors** — same as customer enhance, plus `403 FORBIDDEN` if the caller doesn't own this vehicle.
+#### Tone options
+
+| Value        | When to use it                                                                                     |
+|--------------|----------------------------------------------------------------------------------------------------|
+| `neutral`    | Default. Balanced, warm, factual, first-person. Same voice as v1 of this endpoint.                 |
+| `nostalgic`  | Owner's love-letter — memories, roads driven, sentimentality. First-person, past tense.            |
+| `sale`       | Sale-listing voice — condition, provenance, service history. Third-person, buyer-facing.           |
+| `enthusiast` | Car-nerd audience — comfortable using jargon (LSD, coilovers, trim codes, drivetrain names).       |
+| `casual`     | Friendly and punchy. Two short sentences max.                                                      |
+| `concise`    | Strip filler. One sentence, ≤ 30 words.                                                            |
+
+Tone only shifts *voice*, not *facts*. Polish mode still won't invent details even under `sale` or `enthusiast`.
+
+Backend enforces the enum server-side — the frontend should never send a free-text tone. Sending anything not in the enum returns `422 INVALID_TONE`.
+
+**Errors** — same as customer enhance, plus:
+- `403 FORBIDDEN` if the caller doesn't own this vehicle.
+- `422 INVALID_TONE` if `tone` is present but not one of the enum values.
+
+#### UI recommendation
+
+Render a chip row above the "Draft/Polish with AI" button:
+
+```
+[ Neutral ] [ Nostalgic ] [ Sale ] [ Enthusiast ] [ Casual ] [ Concise ]
+```
+
+Selected chip persists for the session so the owner can iterate — no need to re-tap after every polish. Fires `enhance(id, draft, tone)`.
+
+---
+
+### Staff AI enhance — `POST /customers/{customerId}/vehicles/{vehicleId}/description/enhance`
+
+Same request/response shape and same tone enum as the customer endpoint above. Rate-limited per-vehicle (20/hr) and per-staff (60/hr) so a manager helping several customers doesn't get boxed out.
 
 ---
 

@@ -4,6 +4,7 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { ok, validationError, forbidden, notFound, serverError } from '../../shared/errors'
 import { checkAndRecord } from '../../shared/rateLimit'
+import { isTone, toneStyle, type Tone } from '../../shared/descriptionEnhance'
 import { getCustomerContext } from '../_helpers'
 
 const ready = bootstrap()
@@ -32,6 +33,20 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const draft = typeof body.description === 'string' ? body.description.trim() : ''
     if (draft.length > MAX_DRAFT_LEN) {
       return validationError(`description must be ${MAX_DRAFT_LEN} characters or fewer.`)
+    }
+
+    // Tone is optional — missing means 'neutral'. If present, it MUST be one
+    // of the enum values. Fail loud rather than silently downgrading so a
+    // frontend/backend mismatch is immediately visible.
+    let tone: Tone = 'neutral'
+    if ('tone' in body && body.tone !== undefined && body.tone !== null) {
+      if (!isTone(body.tone)) {
+        return json(422, { error: {
+          code:    'INVALID_TONE',
+          message: 'tone must be one of: neutral, nostalgic, sale, enthusiast, casual, concise.',
+        }})
+      }
+      tone = body.tone
     }
 
     // Rate limit: 20/hour per customer
@@ -71,8 +86,14 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const mode = draft.length < GENERATE_THRESHOLD ? 'generate' : 'polish'
 
+    const voice = toneStyle(tone)
+
     const prompt = mode === 'generate'
-      ? `Write a short, warm description for a car listing on Rodz. Speak in the first person from the owner's perspective ("She's been..."). Keep it 3-5 sentences. Highlight the vehicle's character and history — NOT a spec sheet (the specs are shown separately on the profile). Do not invent details beyond what's provided.
+      ? `Write a description for this car listing on Rodz.
+
+Voice: ${voice}
+
+Highlight the vehicle's character and history — NOT a spec sheet (the specs are shown separately on the profile). Do not invent details beyond what's provided.
 
 Vehicle facts:
 - ${v.year} ${v.make} ${v.model}${v.series ? ` ${v.series}` : ''}
@@ -83,7 +104,11 @@ Vehicle facts:
 - ${listing}
 
 Return ONLY the description text — no preamble, no quotes, no markdown headings.`
-      : `Polish this car listing description. Fix grammar, tighten wording, keep the same voice and meaning. Do NOT add facts that aren't in the original. Keep it 3-5 sentences, first person from the owner's perspective. Under 600 characters.
+      : `Polish this car listing description.
+
+Voice: ${voice}
+
+Fix grammar, tighten wording. Do NOT add facts that aren't in the original. Under 600 characters.
 
 Original:
 """
