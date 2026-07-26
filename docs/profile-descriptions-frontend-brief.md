@@ -218,6 +218,98 @@ Same request/response shape and same tone enum as the customer endpoint above. R
 
 ---
 
+## AI vehicle-details profile regenerate — `POST /c/vehicles/{id}/profile/regenerate`
+
+Regenerates the **voice-bearing** fields of the AI-generated vehicle profile (the make/model narrative on `/logbook/{token}/profile`) in the caller's chosen tone. Owner-only. Structured fields — `engineSpecs`, `tyreSpecs`, `commonRepairs` — are **never** touched by this endpoint. They stay shared per (make, model, year) and byte-identical across regens.
+
+### Storage model
+
+- Structured fields live in `vehicle_model_profiles`, shared per (make, model, year). One row covers every 2017 Suzuki Vitara in the system.
+- Voice-bearing fields (`overview`, `serviceNotes[]`, `knownIssues[].description`) can be overridden per-vehicle in `vehicle_profile_overrides`. Each owner gets their own override, so Alice regenerating her Vitara doesn't affect Bob's.
+
+Every profile GET (public magic-link + staff) checks for an override and merges it into the response, so the frontend doesn't need to fetch both — one request, one shape.
+
+### Request body
+
+```jsonc
+{
+  "tone": "enthusiast"   // optional; same enum as description enhance. Missing → "neutral".
+}
+```
+
+### Response 200
+
+Same shape as `GET /logbook/{token}/profile`, plus a `tone` field indicating which voice the override was regenerated with:
+
+```json
+{
+  "status":       "ready",
+  "make":         "Subaru",
+  "model":        "WRX STi",
+  "year":         2026,
+  "generatedAt":  "2026-07-26T00:33:12.000Z",
+  "tone":         "enthusiast",
+  "overview":     "Strap in — the 2026 WRX STi carries on Subaru's rally-bred AWD legacy...",
+  "engineSpecs":  { /* byte-identical to base */ },
+  "tyreSpecs":    { /* byte-identical to base */ },
+  "serviceNotes": [ /* rewritten in the tone */ ],
+  "knownIssues":  [ /* title + severity preserved; description rewritten */ ],
+  "commonRepairs": [ /* byte-identical to base */ ]
+}
+```
+
+`generatedAt` reflects the most recent write (override wins over base), so cache-bust headers stay honest.
+
+### Voice guarantees enforced server-side
+
+- Facts don't change — the LLM is instructed to preserve information; the tone shapes voice only.
+- `knownIssues[].title` and `knownIssues[].severity` are **restored from the base** after the LLM call, byte-identically. If the model tries to invent new titles or shift severities, those changes are discarded.
+- `serviceNotes[]` length is capped at the base length. If the LLM drops notes, we fall back to the base list.
+- `engineSpecs`, `tyreSpecs`, `commonRepairs`, `make`, `model`, `year` come from the base row and can never be overwritten by this endpoint.
+
+### Errors
+
+| Status | Code               | When                                                                     |
+|--------|--------------------|--------------------------------------------------------------------------|
+| `403`  | `NOT_OWNER`        | JWT customer doesn't own this vehicle.                                   |
+| `404`  | `NOT_FOUND`        | Vehicle missing / soft-deleted.                                          |
+| `409`  | `PROFILE_PENDING`  | Base profile hasn't been generated yet — async engine is still running.  |
+| `422`  | `INVALID_TONE`     | `tone` present but not one of the enum values.                           |
+| `429`  | `RATE_LIMITED`     | 5-per-hour per-vehicle bucket exceeded. Body contains `retryAfterSeconds`; `Retry-After` header set too. |
+| `503`  | `AI_UNAVAILABLE`   | Upstream LLM unreachable / errored — retry hint in body.                 |
+
+### Rate limits
+
+- **5 regens per hour per vehicle**, sliding window.
+- Independent of the description-enhance bucket — a user can polish descriptions and regenerate the profile without one starving the other.
+
+### Cache purge
+
+The response is served on the public magic-link page (`/logbook/{token}/profile`) which is expected to be edge-cached. The frontend / edge team should purge that cache key on a successful regen (or key off `generatedAt` for a natural bust). Backend-side purge hook isn't wired yet — call out if you need one.
+
+### Frontend UI recommendation
+
+Render a chip row at the top of the Vehicle Details card (same chips as the description enhance):
+
+```
+[ Neutral ] [ Nostalgic ] [ Sale ] [ Enthusiast ] [ Casual ] [ Concise ]
+```
+
+Tapping a chip:
+1. Optimistically dim the card body.
+2. POST to `/c/vehicles/{id}/profile/regenerate` with `{ tone }`.
+3. On success, replace local `aiProfile` state with the response body directly (no follow-up GET needed).
+4. On `429`, restore previous state, show inline "Too many regens for this vehicle — try again in Xs" using `retryAfterSeconds`.
+5. On `503`, restore previous state, toast "AI unavailable, try again shortly."
+
+Persist the last-selected chip in `localStorage` keyed on `vehicleId` so opening the card later highlights the current tone.
+
+### Staff equivalent
+
+Not built. If workshop staff need to regenerate on behalf of a customer later, add `POST /customers/{customerId}/vehicles/{vehicleId}/profile/regenerate` with the same shape.
+
+---
+
 ## UI suggestions (non-binding)
 
 ### On the profile edit screen

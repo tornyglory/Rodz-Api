@@ -227,6 +227,20 @@ export class RodzApiStack3 extends Stack {
       authorizer,
     })
 
+    // Customer-portal profile regenerate — owner rewrites the voice-bearing
+    // fields of the AI profile with a chosen tone. Per-vehicle override,
+    // structured fields stay shared per (make, model, year).
+    const customerVehicleProfileRegenerateFn = new LambdaFn(this, 'CustomerVehicleProfileRegenerate', {
+      entry: src('customer/vehicles/profile-regenerate.ts'), vpc, sharedEnv,
+    }).fn
+
+    new HttpRoute(this, 'CustomerVehicleProfileRegenerateRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerVehicleProfileRegenerateInt', customerVehicleProfileRegenerateFn),
+      routeKey: HttpRouteKey.with('/c/vehicles/{id}/profile/regenerate', HttpMethod.POST),
+      authorizer: customerAuthorizer,
+    })
+
     // ── Feature flags — v1 global on/off, super_admin-managed ──────────────
 
     const featureFlagsListFn = new LambdaFn(this, 'FeatureFlagsList', {

@@ -4,6 +4,7 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { getAuthContext } from '../../shared/auth'
 import { ok, notFound, serverError } from '../../shared/errors'
+import { loadProfileForVehicle, shapeProfile } from '../../shared/vehicleProfile'
 
 const ready = bootstrap()
 const lambdaClient = new LambdaClient({ region: process.env.REGION ?? 'ap-southeast-2' })
@@ -47,15 +48,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       if (customer?.store_id !== ctx.storeId) return notFound('Vehicle')
     }
 
-    const [[row]] = await db.query<any[]>(
-      `SELECT overview, engine_specs, tyre_specs, service_notes, known_issues, common_repairs, generated_at
-       FROM vehicle_model_profiles
-       WHERE make = ? AND model = ? AND year = ?
-       LIMIT 1`,
-      [vehicle.make, vehicle.model, vehicle.year],
-    )
+    const { base, override } = await loadProfileForVehicle(db, vehicle)
 
-    if (!row) {
+    if (!base) {
       await triggerProfileGeneration(Number(vehicleId))
       return {
         statusCode: 202,
@@ -64,19 +59,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       }
     }
 
-    return ok({
-      status:       'ready',
-      make:         vehicle.make,
-      model:        vehicle.model,
-      year:         vehicle.year,
-      generatedAt:  new Date(row.generated_at).toISOString(),
-      overview:     row.overview,
-      engineSpecs:  row.engine_specs,
-      tyreSpecs:    row.tyre_specs,
-      serviceNotes: row.service_notes,
-      knownIssues:  row.known_issues,
-      commonRepairs: row.common_repairs,
-    })
+    return ok(shapeProfile(vehicle, base, override))
   } catch (err) {
     return serverError(err)
   }

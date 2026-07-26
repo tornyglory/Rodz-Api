@@ -2,6 +2,7 @@ import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
 import { ok, notFound, serverError } from '../shared/errors'
+import { loadProfileForVehicle, shapeProfile } from '../shared/vehicleProfile'
 
 const ready = bootstrap()
 
@@ -12,7 +13,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const [[vehicle]] = await db.query<any[]>(
-      `SELECT v.make, v.model, v.year
+      `SELECT v.id, v.make, v.model, v.year
        FROM vehicles v
        WHERE v.logbook_token = ? AND v.is_active = 1
        LIMIT 1`,
@@ -20,29 +21,10 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     )
     if (!vehicle) return notFound('Vehicle')
 
-    const [[row]] = await db.query<any[]>(
-      `SELECT overview, engine_specs, tyre_specs, service_notes, known_issues, common_repairs, generated_at
-       FROM vehicle_model_profiles
-       WHERE make = ? AND model = ? AND year = ?
-       LIMIT 1`,
-      [vehicle.make, vehicle.model, vehicle.year],
-    )
+    const { base, override } = await loadProfileForVehicle(db, vehicle)
+    if (!base) return notFound('Profile')
 
-    if (!row) return notFound('Profile')
-
-    return ok({
-      status:        'ready',
-      make:          vehicle.make,
-      model:         vehicle.model,
-      year:          vehicle.year,
-      generatedAt:   new Date(row.generated_at).toISOString(),
-      overview:      row.overview,
-      engineSpecs:   row.engine_specs,
-      tyreSpecs:     row.tyre_specs,
-      serviceNotes:  row.service_notes,
-      knownIssues:   row.known_issues,
-      commonRepairs: row.common_repairs,
-    })
+    return ok(shapeProfile(vehicle, base, override))
   } catch (err) {
     return serverError(err)
   }
