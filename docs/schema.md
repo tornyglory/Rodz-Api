@@ -256,7 +256,7 @@ Rules: **detail** goes to S3, **aggregates** into summary tables, **pointers** i
 
 **Public logbook page:**
 - `logbook_token` — 64-char hex, unique per vehicle, powers `/logbook/{token}` and shareable public views. NULL until issued via `POST /customers/{customerId}/vehicles/{vehicleId}/logbook-token`.
-- `public_profile_settings` — JSON blob with per-tab visibility flags. Keys: `history`, `photos`, `chat`, `maintenance`, `modifications`. Missing keys default to `true`. Parsed via `src/shared/publicProfileSettings.ts:parsePublicProfileSettings`.
+- `public_profile_settings` — JSON blob with per-tab visibility flags. Keys: `history`, `photos`, `chat`, `maintenance`, `modifications`, `stories`, `searchIndex`. Missing keys default to `true`. `searchIndex` controls whether the Cloudflare Pages Function emits a `noindex` meta on the SSR shell for `/vehicle/:token`. Parsed via `src/shared/publicProfileSettings.ts:parsePublicProfileSettings`.
 - `avatar_image_id` / `cover_image_id` — Cloudflare Images ids for the profile avatar and hero cover.
 - `for_sale` / `asking_price` / `description` — the "for sale" banner on the public profile.
 - `city` / `country` — location shown on the public profile.

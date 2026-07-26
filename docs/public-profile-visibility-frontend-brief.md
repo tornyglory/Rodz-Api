@@ -27,6 +27,7 @@ Customer-side endpoints require a customer JWT. Public logbook endpoints are ope
 | `chat` | Ask AI chat about the vehicle | ✅ visible |
 | `maintenance` | AI-generated maintenance schedule (`ai_recommendations`) | ✅ visible |
 | `modifications` | Modifications section — aftermarket parts / tunes the owner has declared | ✅ visible |
+| `searchIndex` | Search-engine indexing of the public profile — governs the `noindex` meta tag emitted by the Cloudflare Pages Function on `/vehicle/:token`. Backend just carries the flag; no data is hidden when `false`. | ✅ indexable |
 
 Individual mods also carry a per-row `isPublic` flag (see `customer-modifications-frontend-brief.md`). Both gates apply:
 - **`publicProfileSettings.modifications === false`** hides the whole section on the public profile.
@@ -57,12 +58,13 @@ Response now includes:
     "photos":        true,
     "chat":          true,
     "maintenance":   true,
-    "modifications": true
+    "modifications": true,
+    "searchIndex":   true
   }
 }
 ```
 
-If never toggled, all five default to `true`. Always populated — no null.
+If never toggled, all keys default to `true`. Always populated — no null.
 
 **Public profile page:** `GET /logbook/:token/vehicle`
 
@@ -76,7 +78,8 @@ Response now includes:
     "photos":        true,
     "chat":          true,
     "maintenance":   true,
-    "modifications": true
+    "modifications": true,
+    "searchIndex":   true
   },
   "images": [ ... ]
 }
@@ -118,7 +121,8 @@ Can be sent alongside the other profile fields (`forSale`, `askingPrice`, etc.) 
     "photos":        true,
     "chat":          false,
     "maintenance":   true,
-    "modifications": true
+    "modifications": true,
+    "searchIndex":   true
   }
 }
 ```
@@ -158,6 +162,7 @@ export interface PublicProfileSettings {
   chat:          boolean
   maintenance:   boolean
   modifications: boolean
+  searchIndex:   boolean
 }
 
 // Add to CustomerVehicle

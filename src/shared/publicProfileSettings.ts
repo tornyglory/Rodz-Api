@@ -7,6 +7,7 @@ export interface PublicProfileSettings {
   maintenance:   boolean
   modifications: boolean
   stories:       boolean
+  searchIndex:   boolean
 }
 
 export const PUBLIC_PROFILE_DEFAULTS: PublicProfileSettings = {
@@ -16,6 +17,7 @@ export const PUBLIC_PROFILE_DEFAULTS: PublicProfileSettings = {
   maintenance:   true,
   modifications: true,
   stories:       true,
+  searchIndex:   true,
 }
 
 export function parsePublicProfileSettings(raw: unknown): PublicProfileSettings {
@@ -30,6 +32,7 @@ export function parsePublicProfileSettings(raw: unknown): PublicProfileSettings 
     maintenance:   o.maintenance   === false ? false : true,
     modifications: o.modifications === false ? false : true,
     stories:       o.stories       === false ? false : true,
+    searchIndex:   o.searchIndex   === false ? false : true,
   }
 }
 
@@ -51,6 +54,7 @@ export function sanitiseSettingsPatch(input: unknown): Partial<PublicProfileSett
   if (typeof src.maintenance   === 'boolean') out.maintenance   = src.maintenance
   if (typeof src.modifications === 'boolean') out.modifications = src.modifications
   if (typeof src.stories       === 'boolean') out.stories       = src.stories
+  if (typeof src.searchIndex   === 'boolean') out.searchIndex   = src.searchIndex
   return Object.keys(out).length ? out : null
 }
 

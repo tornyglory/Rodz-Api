@@ -42,6 +42,15 @@ describe('parsePublicProfileSettings', () => {
     expect(r.photos).toBe(true)
     expect(r.history).toBe(true)
   })
+
+  it('searchIndex defaults to true when key is absent', () => {
+    expect(parsePublicProfileSettings({}).searchIndex).toBe(true)
+    expect(parsePublicProfileSettings({ photos: false }).searchIndex).toBe(true)
+  })
+
+  it('searchIndex: false is preserved', () => {
+    expect(parsePublicProfileSettings({ searchIndex: false }).searchIndex).toBe(false)
+  })
 })
 
 describe('sanitiseSettingsPatch', () => {
@@ -73,5 +82,11 @@ describe('sanitiseSettingsPatch', () => {
     expect(r).toEqual({
       history: false, photos: true, chat: false, maintenance: true, modifications: false,
     })
+  })
+
+  it('searchIndex passes through when boolean, rejected otherwise', () => {
+    expect(sanitiseSettingsPatch({ searchIndex: false })).toEqual({ searchIndex: false })
+    expect(sanitiseSettingsPatch({ searchIndex: true  })).toEqual({ searchIndex: true  })
+    expect(sanitiseSettingsPatch({ searchIndex: 'false' })).toBeNull()
   })
 })

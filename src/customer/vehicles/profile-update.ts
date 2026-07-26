@@ -8,6 +8,7 @@ import {
   sanitiseSettingsPatch,
   mergePublicProfileSettings,
   loadPublicProfileSettings,
+  PUBLIC_PROFILE_DEFAULTS,
 } from '../../shared/publicProfileSettings'
 
 const ready = bootstrap()
@@ -34,7 +35,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const settingsPatch = publicProfileSettings !== undefined ? sanitiseSettingsPatch(publicProfileSettings) : null
     if (publicProfileSettings !== undefined && !settingsPatch) {
-      return validationError('publicProfileSettings must be an object of boolean keys (history, photos, chat).')
+      const keyList = Object.keys(PUBLIC_PROFILE_DEFAULTS).join(', ')
+      return validationError(`publicProfileSettings must be an object of boolean keys (${keyList}).`)
     }
 
     const sets: string[] = []

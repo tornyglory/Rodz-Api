@@ -184,8 +184,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     let settingsPatch: ReturnType<typeof sanitiseSettingsPatch> = null
     if ('publicProfileSettings' in body) {
       const raw = body.publicProfileSettings
+      const keyList = [...PUBLIC_SETTINGS_KEYS].join(', ')
       if (!raw || typeof raw !== 'object') {
-        return validationError('publicProfileSettings must be an object of boolean keys (history, photos, chat, maintenance).')
+        return validationError(`publicProfileSettings must be an object of boolean keys (${keyList}).`)
       }
       for (const key of Object.keys(raw as Record<string, unknown>)) {
         if (!PUBLIC_SETTINGS_KEYS.has(key)) {
@@ -194,7 +195,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       }
       settingsPatch = sanitiseSettingsPatch(raw)
       if (!settingsPatch) {
-        return validationError('publicProfileSettings must contain at least one boolean key (history, photos, chat, maintenance).')
+        return validationError(`publicProfileSettings must contain at least one boolean key (${keyList}).`)
       }
     }
 
