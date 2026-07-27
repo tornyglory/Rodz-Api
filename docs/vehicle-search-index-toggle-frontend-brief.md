@@ -139,5 +139,7 @@ public logbook response and:
   `<meta name="robots" content="noindex, nofollow">` in the head. The
   page still works for anyone with the link, but crawlers won't index it.
 
-Function implementation lives in a separate brief — see
-`docs/endpoints/vehicle-prerender-pages-function.md` (todo).
+Function implementation lives on the Cloudflare Pages side. The
+consolidated read endpoint it consumes is documented at
+[`vehicle-seo-payload-endpoint.md`](./vehicle-seo-payload-endpoint.md)
+(also includes the sitemap feed endpoint).

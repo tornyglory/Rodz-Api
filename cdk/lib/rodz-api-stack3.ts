@@ -949,5 +949,29 @@ export class RodzApiStack3 extends Stack {
       authorizer,
     })
 
+    // ── SEO prerender payload — consolidated read for the Cloudflare
+    //    Pages Function that server-renders /vehicle/{token} for search
+    //    engines. Public (token-gated). Full payload when searchIndex=true,
+    //    minimal (noindex-ready) when searchIndex=false.
+    const logbookSeoPayloadFn = new LambdaFn(this, 'LogbookSeoPayload', {
+      entry: src('vehicles/logbook-seo-payload.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'LogbookSeoPayloadRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('LogbookSeoPayloadInt', logbookSeoPayloadFn),
+      routeKey: HttpRouteKey.with('/logbook/{token}/seo-payload', HttpMethod.GET),
+    })
+
+    // ── Sitemap index — feed for the Cloudflare Pages Function that emits
+    //    /sitemap.xml. Only vehicles opted in for search indexing.
+    const vehiclesPublicIndexFn = new LambdaFn(this, 'VehiclesPublicIndex', {
+      entry: src('vehicles/public-index.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'VehiclesPublicIndexRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('VehiclesPublicIndexInt', vehiclesPublicIndexFn),
+      routeKey: HttpRouteKey.with('/vehicles/public-index', HttpMethod.GET),
+    })
+
   }
 }
