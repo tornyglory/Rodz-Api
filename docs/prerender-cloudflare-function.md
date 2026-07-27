@@ -483,15 +483,28 @@ ${urls}
 
 ## File 3 — `functions/robots.txt.ts`
 
+Covers both API-shaped paths (`/logbook/`, `/c/`, `/admin/`) and the SPA's
+authenticated `/account/*` surfaces. Signup and login are explicit `Allow`
+entries so they can be discovered as landing pages.
+
 ```ts
 interface Env { SITE_URL: string }
 
 export const onRequestGet: PagesFunction<Env> = ({ env }) => {
   const body = `User-agent: *
 Allow: /vehicle/
+Allow: /account/signup
+Allow: /account/login
+
 Disallow: /logbook/
 Disallow: /c/
 Disallow: /admin/
+Disallow: /account/vehicles/
+Disallow: /account/settings
+Disallow: /account/paperwork
+Disallow: /account/notifications
+Disallow: /account/magic-link
+Disallow: /account/reset-password
 
 Sitemap: ${env.SITE_URL}/sitemap.xml
 `
@@ -502,6 +515,42 @@ Sitemap: ${env.SITE_URL}/sitemap.xml
     },
   })
 }
+```
+
+**Note on precedence:** the explicit `Allow: /account/signup` and
+`Allow: /account/login` aren't strictly necessary given the specific
+`Disallow` entries below them (there's no broad `Disallow: /account/`), but
+they document intent — it's easier for future us to see that those pages
+are meant to be indexed than to reason about which rules match which paths.
+
+---
+
+## `_redirects` — required so the Function runs before the SPA catch-all
+
+By default Cloudflare Pages will serve the SPA's `index.html` for every
+route via the `/*` fallback. Without an explicit force-route, the SPA
+catch-all wins and the Function at `functions/vehicle/[token].ts` is
+never invoked. Add this at the **project root**:
+
+```
+/vehicle/*    /vehicle/:splat   200!
+/*            /index.html       200
+```
+
+The `200!` on the first line is a force override — it tells Pages to
+route `/vehicle/*` requests through the matching Function, bypassing the
+SPA fallback. Existing static assets (`/assets/*`, favicons, etc.) still
+resolve directly because they hit real files before the redirect rules
+apply.
+
+Confirm after deploy:
+
+```bash
+# Should return HTML with our injected meta tags:
+curl -sS https://{preview-url}/vehicle/{real-token} | grep -Ei 'og:title|application/ld\+json'
+
+# Should return the raw SPA (no injected meta):
+curl -sS https://{preview-url}/some-other-route | grep -c 'og:title'   # → 0
 ```
 
 ---

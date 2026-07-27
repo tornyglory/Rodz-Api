@@ -205,11 +205,14 @@ GET /vehicles/public-index
 ```json
 {
   "items": [
-    { "token": "5c06f294…", "updatedAt": "2026-07-26T12:34:56.000Z" },
-    { "token": "a1b2c3d4…", "updatedAt": "2026-07-25T09:14:20.000Z" }
+    { "token": "7d44f7a9214bb8c888434a07a7dcec7a8814529e367ce21f03e86f78e227c90c", "updatedAt": "2026-07-26T12:34:56.000Z" },
+    { "token": "d6d5421466a95691f046bfc92327c9e1e5e990e7efcd83810194b3dd46f696c1", "updatedAt": "2026-07-25T09:14:20.000Z" }
   ]
 }
 ```
+
+Tokens are 64-character lowercase hex — matches the `logbook_token`
+column definition (`varchar(64)`). Frontend regex: `/^[a-f0-9]{64}$/i`.
 
 Filter is `is_active = 1 AND logbook_token IS NOT NULL AND
 public_profile_settings.searchIndex IS NOT false`. Missing key
