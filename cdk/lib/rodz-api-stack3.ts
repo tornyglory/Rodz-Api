@@ -962,6 +962,19 @@ export class RodzApiStack3 extends Stack {
       routeKey: HttpRouteKey.with('/logbook/{token}/seo-payload', HttpMethod.GET),
     })
 
+    // Story-scoped SEO prerender payload — mirrors the vehicle version but
+    // for individual /vehicle/{token}/stories/{storyId} pages. Enables the
+    // Worker to SSR any published story, not just the top 3 from the
+    // vehicle-scoped storiesPreview.
+    const logbookStorySeoPayloadFn = new LambdaFn(this, 'LogbookStorySeoPayload', {
+      entry: src('vehicles/logbook-story-seo-payload.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'LogbookStorySeoPayloadRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('LogbookStorySeoPayloadInt', logbookStorySeoPayloadFn),
+      routeKey: HttpRouteKey.with('/logbook/{token}/stories/{storyId}/seo-payload', HttpMethod.GET),
+    })
+
     // ── Sitemap index — feed for the Cloudflare Pages Function that emits
     //    /sitemap.xml. Only vehicles opted in for search indexing.
     const vehiclesPublicIndexFn = new LambdaFn(this, 'VehiclesPublicIndex', {
