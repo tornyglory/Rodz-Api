@@ -1048,5 +1048,21 @@ export class RodzApiStack3 extends Stack {
       routeKey: HttpRouteKey.with('/vehicles/public-index', HttpMethod.GET),
     })
 
+    // ── Public vehicle catalog — year → make → model → series cascade
+    //    for the guest booking flow. Consolidated onto ONE HttpApi route
+    //    (/public/vehicle-catalog/{action}) because the shared HttpApi
+    //    is at the 300-route cap; a separate route per endpoint would
+    //    exceed it. The Lambda dispatches internally to the five
+    //    handlers by inspecting {action}.
+
+    const catalogDispatchFn = new LambdaFn(this, 'CatalogDispatch', {
+      entry: src('public/vehicle-catalog/dispatch.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'CatalogDispatchRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CatalogDispatchInt', catalogDispatchFn),
+      routeKey: HttpRouteKey.with('/public/vehicle-catalog/{action}', HttpMethod.GET),
+    })
+
   }
 }
