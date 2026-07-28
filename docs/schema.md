@@ -84,6 +84,7 @@ Rules: **detail** goes to S3, **aggregates** into summary tables, **pointers** i
 | [Booking slots](#booking-slots) | `store_booking_slots`, `store_schedule_exceptions` |
 | [Video assets](#video-assets) | `video_assets` |
 | [Vehicle stories](#vehicle-stories) | `stories`, `story_media`, `story_comments`, `story_reactions` |
+| [Vehicle catalog](#vehicle-catalog) | `vehicle_makes`, `vehicle_models`, `vehicle_model_series` |
 
 ---
 
@@ -2492,3 +2493,75 @@ Per-date overrides for `business_hours`. Two flavours: full closure (`is_closed 
 Indexes:
 - `uk_store_date (store_id, date)` — one exception per store per date; enforces the "already exists" error
 - `idx_store_date_range (store_id, date)` — powers the list-in-range query
+
+---
+
+## Vehicle catalog
+
+Canonical make/model/series taxonomy. Backs the guest booking flow's
+year → make → model → series cascade and the workshop staff catalog
+admin UI. Replaces the freeform `vehicles.make` / `vehicles.model`
+strings as the source of truth for "which cars exist" — real customer
+vehicles carry both the freeform text (legacy) and nullable FKs
+(`make_id`, `model_id`, `series_id`) into these tables.
+
+Seeded via `scripts/seed-vehicle-catalog.ts` (Gemini, year-by-year,
+additive-only). Staff can edit / add rows through the admin CRUD
+endpoints (step 3 of the catalog rollout).
+
+Migrations: `docs/migrations/vehicle_catalog.sql`, `docs/migrations/vehicle_catalog_series.sql`.
+
+### `vehicle_makes`
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PK, AUTO_INCREMENT |
+| `slug` | varchar(60) | NO | Lowercase kebab-case. UNIQUE. Examples: `toyota`, `mercedes-benz`, `mg`. |
+| `name` | varchar(100) | NO | Human-readable, e.g. "Mercedes-Benz". |
+| `popular` | tinyint(1) | NO | Default `0`. Top 8 by AU market share — drives the guest picker's quick chips. Hard-coded false for makes only present pre-1990. |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+
+Indexes: `uk_slug (slug)`, `idx_popular (popular, name)`.
+
+### `vehicle_models`
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PK |
+| `make_id` | bigint unsigned | NO | FK → `vehicle_makes.id` ON DELETE RESTRICT |
+| `slug` | varchar(80) | NO | Lowercase kebab-case. UNIQUE per make. |
+| `name` | varchar(120) | NO | Base nameplate only. "Corolla" not "Corolla ZR", "Falcon" not "Falcon XR8". |
+| `year_start` | smallint unsigned | NO | First year the model was sold new in AU. |
+| `year_end` | smallint unsigned | NO | Last year sold new (or current year if still current). |
+| `popular` | tinyint(1) | NO | Default `0`. Top 3–5 per make. Forced false for models present only pre-1990. |
+| `notes` | varchar(500) | YES | Freeform staff notes. |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+
+Indexes: `uk_make_slug (make_id, slug)`, `idx_year_range (make_id, year_start, year_end)`, `idx_popular (popular, name)`.
+
+### `vehicle_model_series`
+
+Optional third level. Populated for models with meaningful series/generation distinctions (Ford Falcon XA/XB/XC/…, Nissan Skyline R32/R34, BMW 3 Series E30/E36/E46/…, Toyota LandCruiser 40/60/70/…). Empty for models with no meaningful series distinction (Toyota Corolla, Kia Cerato). The guest booking picker skips the series step when a model has no matching series rows for the selected year.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PK |
+| `model_id` | bigint unsigned | NO | FK → `vehicle_models.id` ON DELETE RESTRICT |
+| `slug` | varchar(60) | NO | Lowercase kebab-case. UNIQUE per model. Examples: `xa`, `xb`, `r32`, `e46`, `80-series`. |
+| `name` | varchar(80) | NO | Human-readable, e.g. "XA", "R32", "80 Series". |
+| `year_start` | smallint unsigned | NO | First year the series was sold. |
+| `year_end` | smallint unsigned | NO | Last year sold. |
+| `popular` | tinyint(1) | NO | Default `0`. `true` for high-demand collector / workshop targets. |
+| `notes` | varchar(500) | YES | Freeform staff notes. |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+
+Indexes: `uk_model_slug (model_id, slug)`, `idx_year_range (model_id, year_start, year_end)`.
+
+### Vehicle FK columns
+
+`vehicles` gains three nullable FKs (`make_id`, `model_id`, `series_id`) alongside the existing freeform `make` / `model` / `series` strings. During migration the strings are the source of truth; a backfill script will populate the FKs by case-insensitive match. Once FK coverage is ≥99%, the freeform columns can be retired.
+
+`vehicle_model_profiles` also gains a nullable `model_id` FK for future join-based lookups; the existing `(make, model, year)` string key stays as the primary lookup path until the FK is fully populated.
