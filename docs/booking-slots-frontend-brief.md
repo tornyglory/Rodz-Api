@@ -186,7 +186,46 @@ PATCH /stores/1/business-hours
 
 Response is the updated single-day row.
 
-**Suggested UI:** 7-row table in Settings → Store → Hours. Toggle `isClosed`; time pickers for open + close; number input for `lastBookingOffsetMins` (defaults to 60, valid 0–240 — the "no bookings within N min of close" rule).
+### Recurring patterns
+
+The `business_hours` table is a **weekly template**. One row = one day-of-week, applies forever. Every recurring "the shop does X every Sunday" pattern is handled here — no per-date rows, no cron, no separate "recurrence" model.
+
+Common patterns and how to configure them:
+
+| Real-world rule | PATCH body |
+|---|---|
+| "Closed every Sunday" | `{ "dayOfWeek": 0, "isClosed": true }` |
+| "Closed every Saturday afternoon" (open Sat mornings only) | `{ "dayOfWeek": 6, "openTime": "08:30", "closeTime": "13:00", "isClosed": false }` |
+| "Wednesdays start at 09:00 instead of 08:30" | `{ "dayOfWeek": 3, "openTime": "09:00" }` |
+| "Closed on Fridays now" | `{ "dayOfWeek": 5, "isClosed": true }` |
+| "Reopened Sundays 10:00–14:00" | `{ "dayOfWeek": 0, "isClosed": false, "openTime": "10:00", "closeTime": "14:00" }` |
+
+**How "Saturday afternoons closed" works under the hood** — there's no separate "afternoon closed" concept. Set `close_time` to when you want to stop taking bookings (say `'13:00'`). The availability endpoint marks any slot whose end time is after that as `available: false, reason: "after_close"`. Customers see the 08:30 and 11:00 buttons enabled and the 14:00 button greyed out — automatically, no per-Saturday setup.
+
+### Suggested workshop UI — Settings → Store → Hours
+
+Render the 7 days as a table. Two-column controls per row:
+
+```
+┌──────────┬────────────────────────────────────────────────────────────┐
+│ Sunday   │ [🚫 Closed]                                                │
+│ Monday   │ Open  [08:30]  →  Close  [17:30]   Last booking offset [60]│
+│ Tuesday  │ Open  [08:30]  →  Close  [17:30]   Last booking offset [60]│
+│ Wednesday│ Open  [08:30]  →  Close  [17:30]   Last booking offset [60]│
+│ Thursday │ Open  [08:30]  →  Close  [17:30]   Last booking offset [60]│
+│ Friday   │ Open  [08:30]  →  Close  [17:30]   Last booking offset [60]│
+│ Saturday │ Open  [08:30]  →  Close  [13:00]   Last booking offset [60]│
+└──────────┴────────────────────────────────────────────────────────────┘
+```
+
+- **"Closed" toggle** per row — flips `isClosed`. When on, hide the time pickers and grey out the row.
+- **Open / close time pickers** — send `openTime` and `closeTime` on change (HH:MM). To make "Saturday afternoon closed" a one-click pattern, add a "Mornings only" preset button that sets `closeTime = '13:00'`.
+- **Last booking offset** — number input, defaults to 60. Tooltip: "No bookings whose start is within N minutes of close." Common values: 30–90 min.
+- Each change fires an immediate PATCH — no explicit save button needed. Debounce time-picker changes ~500 ms so a scrubbed value doesn't hammer the endpoint.
+
+### Sequencing tip
+
+For "closed every Sunday" the customer app doesn't need to render Sunday at all — the date picker can just skip it. Read `GET /stores/{id}/business-hours` once on app load and cache which days-of-week are closed; grey those out in the calendar client-side without waiting for the availability endpoint. The availability call is the source of truth (and handles one-off exceptions too), so also use it on selection — but the day-picker UX feels snappier if closed weekdays are pre-hidden.
 
 ## Closures + custom-hours days — `/stores/{id}/schedule-exceptions`
 
@@ -266,5 +305,19 @@ Custom-hours days keep `storeOpen: true` and simply narrow which slots come back
 
 Under **Settings → Store**:
 
-- **Hours** — 7-row table (existing above).
+- **Hours** — 7-row weekly table (see above).
 - **Closures & special days** — a calendar or table with "Add closure" + "Add special hours" buttons. Table columns: Date · Type · Hours · Reason · ✎ 🗑.
+- **Booking slots** — the times-of-day table from the first half of this brief.
+
+### Where each pattern lives
+
+| Frontend need | Backend table | Screen |
+|---|---|---|
+| "Closed every Sunday" | `business_hours` row (dow=0, is_closed=1) | Hours |
+| "Closed Saturday afternoons" | `business_hours` row (dow=6, close_time='13:00') | Hours |
+| "Closed 25 Dec 2026" | `store_schedule_exceptions` row | Closures & special days |
+| "Custom hours on Christmas Eve" | `store_schedule_exceptions` row (isClosed=false + times) | Closures & special days |
+| "First slot at 08:30, 60 min" | `store_booking_slots` row | Booking slots |
+| "Add a 15:15 slot for a while" | `store_booking_slots` row | Booking slots |
+
+The customer date picker uses **all three** through the single `GET /c/stores/{id}/booking-slots?date=…` call — the workshop UI is where staff configure them separately.
