@@ -30,9 +30,9 @@ Returns the available slots for a store on a given date. **Auth: customer JWT.**
   "storeOpen": true,
   "reason":    null,
   "slots": [
-    { "id": 1, "time": "08:30", "label": "Morning 1", "sortOrder": 0, "available": true,  "reason": null },
-    { "id": 2, "time": "11:00", "label": "Morning 2", "sortOrder": 1, "available": true,  "reason": null },
-    { "id": 3, "time": "14:00", "label": "Afternoon", "sortOrder": 2, "available": false, "reason": "full" }
+    { "id": 1, "time": "08:30", "endTime": "09:30", "label": "Morning 1", "sortOrder": 0, "available": true,  "reason": null },
+    { "id": 2, "time": "11:00", "endTime": "12:00", "label": "Morning 2", "sortOrder": 1, "available": true,  "reason": null },
+    { "id": 3, "time": "14:00", "endTime": "15:00", "label": "Afternoon", "sortOrder": 2, "available": false, "reason": "full" }
   ]
 }
 ```
@@ -104,14 +104,16 @@ Lists **all** slots for a store — active + inactive. **Auth: staff JWT.** `sup
 
 Body:
 ```jsonc
-{ "time": "09:45", "label": "Extra morning", "sortOrder": 1, "isActive": true }
+{ "time": "09:45", "endTime": "10:15", "label": "Extra morning", "sortOrder": 1, "isActive": true }
 ```
 
-`label`, `sortOrder`, `isActive` all optional (default null / 0 / true). Duplicate time → `422 already exists`.
+`time` + `endTime` are **required**; `endTime` must be strictly greater than `time`. Slots may have different durations — a 30-min tyre-check slot and a 2-hour service slot coexist happily.
+
+`label`, `sortOrder`, `isActive` all optional (default null / 0 / true). Duplicate `time` → `422 already exists`. Overlap with another active slot at the same store → `422 overlaps`.
 
 ### `PATCH /stores/{id}/booking-slots/{slotId}` — edit
 
-Any subset of `{ time, label, sortOrder, isActive }`. Send `isActive: false` to hide a slot from customers without deleting history.
+Any subset of `{ time, endTime, label, sortOrder, isActive }`. Send `isActive: false` to hide a slot from customers without deleting history. The overlap check is skipped when the patched slot is going inactive — makes it possible to "park" a slot at a temporarily-overlapping time.
 
 ### `DELETE /stores/{id}/booking-slots/{slotId}` — remove
 
@@ -121,11 +123,13 @@ Hard-deletes the row. Existing bookings referencing that time keep their `bookin
 
 Under **Settings → Store → Booking slots**, a small table:
 
-| Time | Label | Active | ↕ | ✎ | 🗑 |
-|---|---|---|---|---|---|
-| 08:30 | Morning 1 | ● | — | edit | delete |
+| Start | End | Label | Active | ↕ | ✎ | 🗑 |
+|---|---|---|---|---|---|---|
+| 08:30 | 09:30 | Morning 1 | ● | — | edit | delete |
 
-Plus an "Add slot" button that opens a modal with `time` (time picker), `label` (text), `isActive` (checkbox). Reorder via drag → PATCH the affected rows' `sortOrder`.
+Plus an "Add slot" button that opens a modal with `time` (start time picker), `endTime` (end time picker), `label` (text), `isActive` (checkbox). Reorder via drag → PATCH the affected rows' `sortOrder`.
+
+**Durations are variable.** A 30-min "warrant check" slot and a 2-hour "full service" slot can coexist on the same day.
 
 ---
 

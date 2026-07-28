@@ -26,7 +26,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!store) return notFound('Store')
 
     const [rows] = await db.query<any[]>(
-      `SELECT id, store_id, slot_time, label, sort_order, is_active, created_at, updated_at
+      `SELECT id, store_id, slot_time, end_time, label, sort_order, is_active, created_at, updated_at
        FROM store_booking_slots WHERE store_id = ? ORDER BY sort_order ASC, slot_time ASC`,
       [storeId],
     )

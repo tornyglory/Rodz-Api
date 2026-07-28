@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { handler as hoursHandler } from '../../src/stores/business-hours'
 import { staffEvent, parse } from '../_setup/apigw'
 import { db } from '../_setup/db'
@@ -26,7 +26,11 @@ async function restore() {
   }
 }
 
-beforeEach(async () => { snapshot = await snapAll() })
+// Snapshot ONCE before any test in this file runs (business_hours is a
+// small fixed set of rows we want to preserve). Restore after every
+// test so any mutations don't leak into the next test.
+beforeAll(async () => { snapshot = await snapAll() })
+afterEach(async () => { await restore() })
 afterAll(async () => { await restore() })
 
 const admin   = { staffId: '1', role: 'super_admin' as const, storeId: 1 }

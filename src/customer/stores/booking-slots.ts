@@ -41,6 +41,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       slots:           result.slots.map(s => ({
         id:        s.id,
         time:      toHHMM(s.time),
+        endTime:   toHHMM(s.endTime),
         label:     s.label,
         sortOrder: s.sortOrder,
         available: s.available,

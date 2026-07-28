@@ -2451,18 +2451,21 @@ Indexes / constraints:
 
 Staff-configurable bookable times per store. The customer app renders one button per active slot for the requested date, filtered against `business_hours` + hoist capacity by `computeSlotAvailability()` in `src/shared/bookingSlots.ts`.
 
-Default seed on migration = four slots per active store: **08:30, 11:00, 13:30, 15:00** — spaced to leave a 60-min lunch (12:00–13:00) and a short afternoon smoko (14:30–15:00).
+Default seed on migration = three slots per active store: **08:30, 11:00, 14:00** — sized around a 60-min lunch (12:00–13:00) and 60-min default booking duration. Staff can add / edit / deactivate / delete freely; no code cap on slot count. Each slot has an explicit `end_time`, so slot lengths can vary within one store.
 
 | Column | Type | Null | Notes |
 |--------|------|------|-------|
 | `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
 | `store_id` | tinyint unsigned | NO | FK → `stores.id` (ON DELETE CASCADE) |
-| `slot_time` | time | NO | 'HH:MM:00'; unique within a store |
+| `slot_time` | time | NO | Start of the slot, `'HH:MM:00'`; unique within a store |
+| `end_time` | time | NO | End of the slot; must be strictly greater than `slot_time` |
 | `label` | varchar(40) | YES | Optional display label (e.g. 'Morning 1') |
 | `sort_order` | smallint | NO | Default `0`; drives order returned to the customer |
 | `is_active` | tinyint(1) | NO | Default `1`; `0` hides from the customer app without deleting history |
 | `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
 | `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+
+Overlap between two active slots at the same store is rejected on create/update — the availability check assumes non-overlapping slots.
 
 Indexes:
 - `uk_store_time (store_id, slot_time)` — enforces one slot per time per store; drives duplicate detection on create

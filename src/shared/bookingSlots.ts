@@ -7,22 +7,33 @@ import type { Pool } from 'mysql2/promise'
 export interface Slot {
   id:         number
   storeId:    number
-  time:       string    // 'HH:MM:SS' as stored
+  time:       string    // start, 'HH:MM:SS' as stored
+  endTime:    string    // end,   'HH:MM:SS'
   label:      string | null
   sortOrder:  number
   isActive:   boolean
 }
 
+function toHHMMSS(v: any): string {
+  return v instanceof Date ? v.toISOString().slice(11, 19) : String(v).slice(0, 8)
+}
+
 export function shapeSlot(row: any): Slot {
-  const t = row.slot_time
   return {
     id:        Number(row.id),
     storeId:   Number(row.store_id),
-    time:      t instanceof Date ? t.toISOString().slice(11, 19) : String(t).slice(0, 8),
+    time:      toHHMMSS(row.slot_time),
+    endTime:   toHHMMSS(row.end_time),
     label:     row.label ?? null,
     sortOrder: Number(row.sort_order),
     isActive:  Number(row.is_active) === 1,
   }
+}
+
+// Minutes-from-midnight helper for TIME arithmetic.
+export function minsFromHHMM(hhmm: string): number {
+  const [h, m] = hhmm.slice(0, 5).split(':').map(Number)
+  return h * 60 + m
 }
 
 // Returns HH:MM for the client — the storage-form is HH:MM:SS.
@@ -33,7 +44,7 @@ export function toHHMM(time: string): string {
 // Load every active slot for a store, ordered as staff configured them.
 export async function loadActiveSlots(db: Pool, storeId: number): Promise<Slot[]> {
   const [rows] = await db.query<any[]>(
-    `SELECT id, store_id, slot_time, label, sort_order, is_active
+    `SELECT id, store_id, slot_time, end_time, label, sort_order, is_active
      FROM store_booking_slots
      WHERE store_id = ? AND is_active = 1
      ORDER BY sort_order ASC, slot_time ASC`,
@@ -51,7 +62,7 @@ export async function findActiveSlotByTime(
 ): Promise<Slot | null> {
   if (!/^\d{2}:\d{2}$/.test(hhmm)) return null
   const [[row]] = await db.query<any[]>(
-    `SELECT id, store_id, slot_time, label, sort_order, is_active
+    `SELECT id, store_id, slot_time, end_time, label, sort_order, is_active
      FROM store_booking_slots
      WHERE store_id = ? AND is_active = 1 AND slot_time = ?
      LIMIT 1`,
@@ -165,12 +176,13 @@ export async function computeSlotAvailability(
   const openMin   = oh * 60 + om
 
   const withAvailability = slots.map(s => {
-    const [sh, sm] = s.time.slice(0, 5).split(':').map(Number)
-    const startMin = sh * 60 + sm
+    const startMin = minsFromHHMM(s.time)
+    const endMin   = minsFromHHMM(s.endTime)
+    const closeMin = cutoffMin + offsetMin   // actual close time-of-day
 
-    if (startMin < openMin)       return { ...s, available: false, reason: 'before_open' }
-    if (startMin + 60 > cutoffMin + offsetMin) return { ...s, available: false, reason: 'after_close' }
-    if (startMin > cutoffMin)     return { ...s, available: false, reason: 'past_cutoff' }
+    if (startMin < openMin)   return { ...s, available: false, reason: 'before_open' }
+    if (endMin > closeMin)    return { ...s, available: false, reason: 'after_close' }
+    if (startMin > cutoffMin) return { ...s, available: false, reason: 'past_cutoff' }
 
     const booked = bookedByTime.get(`${s.time.slice(0, 5)}:00`) ?? 0
     if (hoistCount > 0 && booked >= hoistCount) {

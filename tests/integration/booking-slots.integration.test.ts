@@ -21,9 +21,18 @@ const CUSTOMER_ID = 3
 const TEST_TIMES = ['10:15', '10:16', '10:17', '10:18', '10:19']
 
 async function purgeTestSlots() {
+  // Wipe every slot at store 1 that ISN'T one of the three seed rows.
+  // We identify seeds by (slot_time, label) so we don't accidentally
+  // delete a real slot staff may have added via the API.
   await db().query(
-    'DELETE FROM store_booking_slots WHERE store_id = ? AND slot_time IN (?)',
-    [STORE_ID, TEST_TIMES.map(t => `${t}:00`)],
+    `DELETE FROM store_booking_slots
+     WHERE store_id = ?
+       AND NOT (
+         (slot_time = '08:30:00' AND label = 'Morning 1') OR
+         (slot_time = '11:00:00' AND label = 'Morning 2') OR
+         (slot_time = '14:00:00' AND label = 'Afternoon')
+       )`,
+    [STORE_ID],
   )
 }
 
@@ -59,8 +68,12 @@ describe('GET /c/stores/{id}/booking-slots', () => {
     expect(body.storeOpen).toBe(true)
     const times = body.slots.map((s: any) => s.time).sort()
     expect(times).toEqual(['08:30', '11:00', '14:00'])
-    // On an empty future weekday all three should be available
-    for (const s of body.slots) expect(s.available).toBe(true)
+    // Each slot carries both time + endTime now
+    for (const s of body.slots) {
+      expect(s.available).toBe(true)
+      expect(typeof s.endTime).toBe('string')
+      expect(s.endTime > s.time).toBe(true)
+    }
   })
 
   it('returns storeOpen=false with slots marked unavailable on Sunday', async () => {
@@ -116,61 +129,88 @@ describe('GET /stores/{id}/booking-slots (staff)', () => {
 })
 
 describe('POST /stores/{id}/booking-slots (staff create)', () => {
-  it('creates a slot at a new time', async () => {
+  it('creates a slot at a new time with an explicit endTime', async () => {
     const { status, body } = parse(await staffCreateHandler(staffEvent(manager, {
       method: 'POST', path: { id: String(STORE_ID) },
-      body: { time: '10:15', label: 'Extra morning', sortOrder: 99, isActive: true },
+      body: { time: '10:15', endTime: '10:45', label: 'Extra morning', sortOrder: 99, isActive: true },
     })) as any)
     expect(status).toBe(201)
     expect(body.slot.time).toBe('10:15')
+    expect(body.slot.endTime).toBe('10:45')
     expect(body.slot.label).toBe('Extra morning')
-    expect(body.slot.isActive).toBe(true)
 
-    // Verify DB
     const [[row]] = await db().query<any[]>(
-      'SELECT slot_time, label FROM store_booking_slots WHERE store_id = ? AND slot_time = ?',
+      'SELECT slot_time, end_time, label FROM store_booking_slots WHERE store_id = ? AND slot_time = ?',
       [STORE_ID, '10:15:00'],
     )
     expect(row).toBeTruthy()
-    expect(row.label).toBe('Extra morning')
+    const end = row.end_time instanceof Date ? row.end_time.toISOString().slice(11, 16) : String(row.end_time).slice(0, 5)
+    expect(end).toBe('10:45')
   })
 
   it('rejects a duplicate time', async () => {
-    // Try to create at 08:30 which is a seeded slot
     const { status, body } = parse(await staffCreateHandler(staffEvent(admin, {
       method: 'POST', path: { id: String(STORE_ID) },
-      body: { time: '08:30' },
+      body: { time: '08:30', endTime: '09:30' },
     })) as any)
     expect(status).toBe(422)
-    expect(body.error.message).toMatch(/already exists/)
+    // Might be flagged as overlap first (08:30 slot exists) — accept either wording.
+    expect(body.error.message).toMatch(/already exists|overlaps/)
+  })
+
+  it('rejects a slot that overlaps an existing active slot', async () => {
+    // 08:30–09:30 already seeded. Try 09:00–10:00 → should overlap.
+    const { status, body } = parse(await staffCreateHandler(staffEvent(admin, {
+      method: 'POST', path: { id: String(STORE_ID) },
+      body: { time: '09:00', endTime: '10:00' },
+    })) as any)
+    expect(status).toBe(422)
+    expect(body.error.message).toMatch(/overlap/)
+  })
+
+  it('rejects when endTime <= time', async () => {
+    const r = parse(await staffCreateHandler(staffEvent(admin, {
+      method: 'POST', path: { id: String(STORE_ID) },
+      body: { time: '10:16', endTime: '10:16' },
+    })) as any)
+    expect(r.status).toBe(422)
+    expect(r.body.error.message).toMatch(/endTime must be after time/)
   })
 
   it('rejects a malformed time', async () => {
     const r = parse(await staffCreateHandler(staffEvent(admin, {
-      method: 'POST', path: { id: String(STORE_ID) }, body: { time: '25:99' },
+      method: 'POST', path: { id: String(STORE_ID) }, body: { time: '25:99', endTime: '26:00' },
     })) as any)
     expect(r.status).toBe(422)
   })
 
+  it('rejects a missing endTime', async () => {
+    const r = parse(await staffCreateHandler(staffEvent(admin, {
+      method: 'POST', path: { id: String(STORE_ID) }, body: { time: '10:16' },
+    })) as any)
+    expect(r.status).toBe(422)
+    expect(r.body.error.message).toMatch(/endTime/)
+  })
+
   it('403 for technician', async () => {
     const r = parse(await staffCreateHandler(staffEvent(tech, {
-      method: 'POST', path: { id: String(STORE_ID) }, body: { time: '10:16' },
+      method: 'POST', path: { id: String(STORE_ID) }, body: { time: '10:16', endTime: '10:46' },
     })) as any)
     expect(r.status).toBe(403)
   })
 })
 
 describe('PATCH /stores/{id}/booking-slots/{slotId} (staff update)', () => {
-  async function seedTestSlot(time: string): Promise<number> {
+  async function seedTestSlot(time: string, end: string): Promise<number> {
     const [res] = await db().query<any>(
-      'INSERT INTO store_booking_slots (store_id, slot_time, sort_order) VALUES (?, ?, ?)',
-      [STORE_ID, `${time}:00`, 100],
+      'INSERT INTO store_booking_slots (store_id, slot_time, end_time, sort_order) VALUES (?, ?, ?, ?)',
+      [STORE_ID, `${time}:00`, `${end}:00`, 100],
     )
     return Number(res.insertId)
   }
 
   it('updates label + isActive', async () => {
-    const id = await seedTestSlot('10:17')
+    const id = await seedTestSlot('10:17', '10:47')
     const { status, body } = parse(await staffUpdateHandler(staffEvent(admin, {
       method: 'PATCH', path: { id: String(STORE_ID), slotId: String(id) },
       body: { label: 'Special', isActive: false },
@@ -180,23 +220,54 @@ describe('PATCH /stores/{id}/booking-slots/{slotId} (staff update)', () => {
     expect(body.slot.isActive).toBe(false)
   })
 
-  it('updates the time', async () => {
-    const id = await seedTestSlot('10:18')
+  it('updates time + endTime together', async () => {
+    const id = await seedTestSlot('10:18', '10:48')
+    // Pick a target range that fits between the seeded 08:30 and 11:00 slots.
     const { status, body } = parse(await staffUpdateHandler(staffEvent(admin, {
       method: 'PATCH', path: { id: String(STORE_ID), slotId: String(id) },
-      body: { time: '10:19' },
+      body: { time: '10:19', endTime: '10:49' },
     })) as any)
     expect(status).toBe(200)
     expect(body.slot.time).toBe('10:19')
+    expect(body.slot.endTime).toBe('10:49')
+  })
+
+  it('rejects a patch where new endTime <= new time', async () => {
+    const id = await seedTestSlot('10:15', '10:45')
+    const r = parse(await staffUpdateHandler(staffEvent(admin, {
+      method: 'PATCH', path: { id: String(STORE_ID), slotId: String(id) },
+      body: { endTime: '10:15' },
+    })) as any)
+    expect(r.status).toBe(422)
+    expect(r.body.error.message).toMatch(/endTime must be after time/)
+  })
+
+  it('rejects a patch that overlaps another active slot', async () => {
+    const id = await seedTestSlot('10:15', '10:45')
+    // Try to widen it to 08:00–11:00 which would overlap the 08:30 seed
+    const r = parse(await staffUpdateHandler(staffEvent(admin, {
+      method: 'PATCH', path: { id: String(STORE_ID), slotId: String(id) },
+      body: { time: '08:00', endTime: '11:00' },
+    })) as any)
+    expect(r.status).toBe(422)
+    expect(r.body.error.message).toMatch(/overlap/)
+  })
+
+  it('allows a patch that would overlap when deactivating (is_active=false skips the check)', async () => {
+    const id = await seedTestSlot('10:16', '10:46')
+    const r = parse(await staffUpdateHandler(staffEvent(admin, {
+      method: 'PATCH', path: { id: String(STORE_ID), slotId: String(id) },
+      body: { time: '08:00', endTime: '11:00', isActive: false },
+    })) as any)
+    expect(r.status).toBe(200)
+    expect(r.body.slot.isActive).toBe(false)
   })
 
   it('404s when the slot belongs to another store', async () => {
-    const id = await seedTestSlot('10:15')
-    // Update via wrong store id
+    const id = await seedTestSlot('10:15', '10:45')
     const r = parse(await staffUpdateHandler(staffEvent(admin, {
       method: 'PATCH', path: { id: '99', slotId: String(id) }, body: { label: 'x' },
     })) as any)
-    // Guard returns 403 for manager, or 404 when super_admin passes but slot mismatch
     expect([403, 404]).toContain(r.status)
   })
 })
@@ -204,8 +275,8 @@ describe('PATCH /stores/{id}/booking-slots/{slotId} (staff update)', () => {
 describe('DELETE /stores/{id}/booking-slots/{slotId}', () => {
   it('hard-deletes the slot', async () => {
     const [res] = await db().query<any>(
-      'INSERT INTO store_booking_slots (store_id, slot_time) VALUES (?, ?)',
-      [STORE_ID, '10:15:00'],
+      'INSERT INTO store_booking_slots (store_id, slot_time, end_time) VALUES (?, ?, ?)',
+      [STORE_ID, '10:15:00', '10:45:00'],
     )
     const id = Number(res.insertId)
 

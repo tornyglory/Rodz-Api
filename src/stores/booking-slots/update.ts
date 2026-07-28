@@ -3,7 +3,7 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { getAuthContext } from '../../shared/auth'
 import { ok, notFound, validationError, serverError } from '../../shared/errors'
-import { guardStaffStoreAccess, shapeSlotResponse } from './_helpers'
+import { guardStaffStoreAccess, shapeSlotResponse, parseTime } from './_helpers'
 
 const ready = bootstrap()
 
@@ -22,7 +22,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const [[existing]] = await db.query<any[]>(
-      'SELECT id FROM store_booking_slots WHERE id = ? AND store_id = ? LIMIT 1',
+      'SELECT id, slot_time, end_time, is_active FROM store_booking_slots WHERE id = ? AND store_id = ? LIMIT 1',
       [slotId, storeId],
     )
     if (!existing) return notFound('Slot')
@@ -31,11 +31,31 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const sets: string[] = []
     const params: any[]  = []
 
+    // Track the effective start/end after this update so we can overlap-check.
+    let effTime    = existing.slot_time instanceof Date
+      ? existing.slot_time.toISOString().slice(11, 19)
+      : String(existing.slot_time).slice(0, 8)
+    let effEnd     = existing.end_time instanceof Date
+      ? existing.end_time.toISOString().slice(11, 19)
+      : String(existing.end_time).slice(0, 8)
+    let effActive  = Number(existing.is_active) === 1
+
     if (body.time !== undefined) {
-      const time = String(body.time).trim()
-      if (!/^\d{2}:\d{2}$/.test(time)) return validationError('time must be in HH:MM format.')
+      const t = parseTime(body.time)
+      if (!t) return validationError('time must be in HH:MM format.')
+      effTime = t
       sets.push('slot_time = ?')
-      params.push(`${time}:00`)
+      params.push(t)
+    }
+    if (body.endTime !== undefined) {
+      const t = parseTime(body.endTime)
+      if (!t) return validationError('endTime must be in HH:MM format.')
+      effEnd = t
+      sets.push('end_time = ?')
+      params.push(t)
+    }
+    if (effEnd <= effTime) {
+      return validationError('endTime must be after time.')
     }
     if (body.label !== undefined) {
       sets.push('label = ?')
@@ -47,11 +67,26 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       params.push(Number(body.sortOrder))
     }
     if (body.isActive !== undefined) {
+      effActive = body.isActive !== false
       sets.push('is_active = ?')
-      params.push(body.isActive === false ? 0 : 1)
+      params.push(effActive ? 1 : 0)
     }
 
     if (sets.length === 0) return validationError('No editable fields provided.')
+
+    // Overlap check against OTHER active slots (skip if this row is going inactive).
+    if (effActive) {
+      const [overlaps] = await db.query<any[]>(
+        `SELECT id FROM store_booking_slots
+         WHERE store_id = ? AND is_active = 1 AND id <> ?
+           AND slot_time < ? AND end_time > ?
+         LIMIT 1`,
+        [storeId, slotId, effEnd, effTime],
+      )
+      if (overlaps.length > 0) {
+        return validationError('This slot would overlap another active slot at this store.')
+      }
+    }
 
     params.push(slotId)
     try {
@@ -64,7 +99,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     const [[row]] = await db.query<any[]>(
-      `SELECT id, store_id, slot_time, label, sort_order, is_active, created_at, updated_at
+      `SELECT id, store_id, slot_time, end_time, label, sort_order, is_active, created_at, updated_at
        FROM store_booking_slots WHERE id = ?`,
       [slotId],
     )

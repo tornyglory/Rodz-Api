@@ -58,6 +58,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     const bookingTime  = `${String(time)}:00`
+    const bookingEnd   = slot.endTime         // 'HH:MM:SS' from the slot row
+    const durationMins = (() => {
+      const [sh, sm] = bookingTime.slice(0, 5).split(':').map(Number)
+      const [eh, em] = bookingEnd.slice(0, 5).split(':').map(Number)
+      return Math.max(15, (eh * 60 + em) - (sh * 60 + sm))   // floor at 15 min just in case
+    })()
     const legacySlot   = deriveSlotEnum(String(time))
 
     const [[vehicle]] = await db.query<any[]>(
@@ -78,10 +84,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const [result] = await db.query<any>(
       `INSERT INTO bookings
-         (store_id, booking_ref, customer_id, vehicle_id, booking_date, booking_time,
-          slot, drop_off_type, customer_notes, status, booking_source)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'rodz_app')`,
-      [storeRow.id, generateBookingRef(), ctx.customerId, Number(vehicleId), date, bookingTime, legacySlot, type, notes ?? null],
+         (store_id, booking_ref, customer_id, vehicle_id, booking_date, booking_time, end_time,
+          estimated_duration_mins, slot, drop_off_type, customer_notes, status, booking_source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'rodz_app')`,
+      [storeRow.id, generateBookingRef(), ctx.customerId, Number(vehicleId), date,
+       bookingTime, bookingEnd, durationMins, legacySlot, type, notes ?? null],
     )
     const bookingId = result.insertId
 
