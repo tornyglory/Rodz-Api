@@ -208,20 +208,26 @@ export class RodzApiStack3 extends Stack {
     })
 
     // Staff booking-slots CRUD — one Lambda, two ANY routes sharing one integration.
+    //
+    // ANY intercepts OPTIONS preflight, and a route-level authorizer would
+    // 401 that preflight before the Lambda runs. So these routes are
+    // registered WITHOUT an authorizer; the Lambda verifies the JWT and
+    // handles the OPTIONS preflight itself (see src/shared/staffAuth.ts).
     const staffSlotsFn = new LambdaFn(this, 'StaffSlots', {
       entry: src('stores/booking-slots/router.ts'), vpc, sharedEnv,
     }).fn
     const staffSlotsInt = new HttpLambdaIntegration('StaffSlotsInt', staffSlotsFn)
     new HttpRoute(this, 'StaffSlotsCollectionRoute', {
-      httpApi, integration: staffSlotsInt, authorizer,
+      httpApi, integration: staffSlotsInt,
       routeKey: HttpRouteKey.with('/stores/{id}/booking-slots', HttpMethod.ANY),
     })
     new HttpRoute(this, 'StaffSlotsItemRoute', {
-      httpApi, integration: staffSlotsInt, authorizer,
+      httpApi, integration: staffSlotsInt,
       routeKey: HttpRouteKey.with('/stores/{id}/booking-slots/{slotId}', HttpMethod.ANY),
     })
 
     // Business hours — GET all 7 days + PATCH one day (dayOfWeek in body).
+    // Same OPTIONS-preflight-handled-in-Lambda pattern as above.
     const staffHoursFn = new LambdaFn(this, 'StaffBusinessHours', {
       entry: src('stores/business-hours.ts'), vpc, sharedEnv,
     }).fn
@@ -229,7 +235,6 @@ export class RodzApiStack3 extends Stack {
       httpApi,
       integration: new HttpLambdaIntegration('StaffBusinessHoursInt', staffHoursFn),
       routeKey: HttpRouteKey.with('/stores/{id}/business-hours', HttpMethod.ANY),
-      authorizer,
     })
 
     // Schedule exceptions — one Lambda, two ANY routes sharing one integration.
@@ -238,11 +243,11 @@ export class RodzApiStack3 extends Stack {
     }).fn
     const staffExceptionsInt = new HttpLambdaIntegration('StaffScheduleExceptionsInt', staffExceptionsFn)
     new HttpRoute(this, 'StaffScheduleExceptionsCollectionRoute', {
-      httpApi, integration: staffExceptionsInt, authorizer,
+      httpApi, integration: staffExceptionsInt,
       routeKey: HttpRouteKey.with('/stores/{id}/schedule-exceptions', HttpMethod.ANY),
     })
     new HttpRoute(this, 'StaffScheduleExceptionsItemRoute', {
-      httpApi, integration: staffExceptionsInt, authorizer,
+      httpApi, integration: staffExceptionsInt,
       routeKey: HttpRouteKey.with('/stores/{id}/schedule-exceptions/{excId}', HttpMethod.ANY),
     })
 

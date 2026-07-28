@@ -3,6 +3,7 @@ import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { ok, forbidden, notFound, validationError, serverError } from '../shared/errors'
+import { corsPreflightResponse, ensureStaffAuth } from '../shared/staffAuth'
 
 const ready = bootstrap()
 
@@ -38,10 +39,16 @@ function shapeRow(row: any) {
 
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   await ready
+  const method  = event.requestContext.http.method
+
+  if (method === 'OPTIONS') return corsPreflightResponse(event)
+
+  const authErr = ensureStaffAuth(event)
+  if (authErr) return authErr
+
   const db      = getPool()
   const ctx     = getAuthContext(event)
   const storeId = Number(event.pathParameters?.id)
-  const method  = event.requestContext.http.method
 
   if (!storeId) return validationError('store id is required.')
 
