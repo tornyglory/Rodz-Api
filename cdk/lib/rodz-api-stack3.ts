@@ -189,6 +189,63 @@ export class RodzApiStack3 extends Stack {
       authorizer,   // staff JWT
     })
 
+    // ── Booking slots + business hours + schedule exceptions ──────────────
+    //
+    // Consolidated to conserve API Gateway v2 integrations (hard cap 300).
+    // Each Lambda uses ANY routes and dispatches internally on method +
+    // path — reused `HttpLambdaIntegration` instances share one API
+    // Gateway integration across multiple routes.
+
+    // Customer availability check (per store + date):
+    const customerBookingSlotsFn = new LambdaFn(this, 'CustomerBookingSlots', {
+      entry: src('customer/stores/booking-slots.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'CustomerBookingSlotsRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('CustomerBookingSlotsInt', customerBookingSlotsFn),
+      routeKey: HttpRouteKey.with('/c/stores/{id}/booking-slots', HttpMethod.GET),
+      authorizer: customerAuthorizer,
+    })
+
+    // Staff booking-slots CRUD — one Lambda, two ANY routes sharing one integration.
+    const staffSlotsFn = new LambdaFn(this, 'StaffSlots', {
+      entry: src('stores/booking-slots/router.ts'), vpc, sharedEnv,
+    }).fn
+    const staffSlotsInt = new HttpLambdaIntegration('StaffSlotsInt', staffSlotsFn)
+    new HttpRoute(this, 'StaffSlotsCollectionRoute', {
+      httpApi, integration: staffSlotsInt, authorizer,
+      routeKey: HttpRouteKey.with('/stores/{id}/booking-slots', HttpMethod.ANY),
+    })
+    new HttpRoute(this, 'StaffSlotsItemRoute', {
+      httpApi, integration: staffSlotsInt, authorizer,
+      routeKey: HttpRouteKey.with('/stores/{id}/booking-slots/{slotId}', HttpMethod.ANY),
+    })
+
+    // Business hours — GET all 7 days + PATCH one day (dayOfWeek in body).
+    const staffHoursFn = new LambdaFn(this, 'StaffBusinessHours', {
+      entry: src('stores/business-hours.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'StaffBusinessHoursRoute', {
+      httpApi,
+      integration: new HttpLambdaIntegration('StaffBusinessHoursInt', staffHoursFn),
+      routeKey: HttpRouteKey.with('/stores/{id}/business-hours', HttpMethod.ANY),
+      authorizer,
+    })
+
+    // Schedule exceptions — one Lambda, two ANY routes sharing one integration.
+    const staffExceptionsFn = new LambdaFn(this, 'StaffScheduleExceptions', {
+      entry: src('stores/schedule-exceptions.ts'), vpc, sharedEnv,
+    }).fn
+    const staffExceptionsInt = new HttpLambdaIntegration('StaffScheduleExceptionsInt', staffExceptionsFn)
+    new HttpRoute(this, 'StaffScheduleExceptionsCollectionRoute', {
+      httpApi, integration: staffExceptionsInt, authorizer,
+      routeKey: HttpRouteKey.with('/stores/{id}/schedule-exceptions', HttpMethod.ANY),
+    })
+    new HttpRoute(this, 'StaffScheduleExceptionsItemRoute', {
+      httpApi, integration: staffExceptionsInt, authorizer,
+      routeKey: HttpRouteKey.with('/stores/{id}/schedule-exceptions/{excId}', HttpMethod.ANY),
+    })
+
     // Cover photo — mirror of the existing avatar update. Uses the same
     // shared /c/me/avatar/upload-url endpoint for the CF direct-upload
     // URL; only the save-side handler is dedicated per field.

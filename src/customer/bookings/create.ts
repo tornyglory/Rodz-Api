@@ -3,10 +3,10 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { created, validationError, notFound, serverError } from '../../shared/errors'
 import { getCustomerContext } from '../_helpers'
+import { findActiveSlotByTime, deriveSlotEnum, computeSlotAvailability } from '../../shared/bookingSlots'
 
 const ready = bootstrap()
 
-const VALID_SLOTS = ['morning', 'afternoon']
 const VALID_TYPES = ['drop_off', 'wait', 'pickup']
 
 function generateBookingRef(): string {
@@ -26,12 +26,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const body = JSON.parse(event.body ?? '{}') as Record<string, any>
-    const { vehicleId, storeId, date, slot, type, serviceTypeIds, notes } = body
+    const { vehicleId, storeId, date, time, type, serviceTypeIds, notes } = body
 
     if (!vehicleId)                                              return validationError('vehicleId is required.')
     if (!storeId)                                                return validationError('storeId is required.')
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date))            return validationError('date must be YYYY-MM-DD format.')
-    if (!slot || !VALID_SLOTS.includes(slot))                    return validationError('slot must be "morning" or "afternoon".')
+    if (!time || !/^\d{2}:\d{2}$/.test(String(time)))          return validationError('time must be in HH:MM format.')
     if (!type || !VALID_TYPES.includes(type))                    return validationError('type must be "drop_off", "wait", or "pickup".')
     if (!Array.isArray(serviceTypeIds) || !serviceTypeIds.length) return validationError('serviceTypeIds must be a non-empty array.')
     if (notes != null && String(notes).length > 1000)            return validationError('notes must be 1000 characters or fewer.')
@@ -44,6 +44,21 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [Number(storeId)],
     )
     if (!storeRow) return notFound('Store')
+
+    // Verify the requested time matches an active slot at this store — no
+    // free-form time entry, only what staff have configured.
+    const slot = await findActiveSlotByTime(db, Number(storeId), String(time))
+    if (!slot) return validationError(`time ${time} is not a bookable slot at this store.`)
+
+    // Availability check — is the slot open on this date + still has hoist capacity?
+    const availability = await computeSlotAvailability(db, Number(storeId), date)
+    const targetSlot = availability.slots.find(s => s.id === slot.id)
+    if (!availability.storeOpen || !targetSlot?.available) {
+      return validationError(`slot at ${time} on ${date} is not available (${targetSlot?.reason ?? availability.reason ?? 'unavailable'}).`)
+    }
+
+    const bookingTime  = `${String(time)}:00`
+    const legacySlot   = deriveSlotEnum(String(time))
 
     const [[vehicle]] = await db.query<any[]>(
       `SELECT v.id FROM vehicles v JOIN vehicle_owners vo ON vo.vehicle_id = v.id
@@ -65,8 +80,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       `INSERT INTO bookings
          (store_id, booking_ref, customer_id, vehicle_id, booking_date, booking_time,
           slot, drop_off_type, customer_notes, status, booking_source)
-       VALUES (?, ?, ?, ?, ?, '00:00:00', ?, ?, ?, 'pending', 'rodz_app')`,
-      [storeRow.id, generateBookingRef(), ctx.customerId, Number(vehicleId), date, slot, type, notes ?? null],
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'rodz_app')`,
+      [storeRow.id, generateBookingRef(), ctx.customerId, Number(vehicleId), date, bookingTime, legacySlot, type, notes ?? null],
     )
     const bookingId = result.insertId
 
@@ -75,23 +90,28 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     await db.query(`INSERT INTO booking_services (booking_id, service_type_id) VALUES ${vals}`, args)
 
     const [[booking]] = await db.query<any[]>(
-      `SELECT b.id, b.booking_ref, b.booking_date, b.slot, b.drop_off_type, b.status,
+      `SELECT b.id, b.booking_ref, b.booking_date, b.booking_time, b.slot, b.drop_off_type, b.status,
               s.name AS store_name, s.suburb AS store_suburb,
               GROUP_CONCAT(st.name ORDER BY st.name SEPARATOR ', ') AS services
        FROM bookings b
        JOIN stores s ON s.id = b.store_id
        LEFT JOIN booking_services bs ON bs.booking_id = b.id
        LEFT JOIN service_types st ON st.id = bs.service_type_id
-       WHERE b.id = ? GROUP BY b.id, b.booking_ref, b.booking_date, b.slot, b.drop_off_type, b.status, s.name, s.suburb`,
+       WHERE b.id = ? GROUP BY b.id, b.booking_ref, b.booking_date, b.booking_time, b.slot, b.drop_off_type, b.status, s.name, s.suburb`,
       [bookingId],
     )
+
+    const bookingTimeOut = booking.booking_time instanceof Date
+      ? booking.booking_time.toISOString().slice(11, 16)
+      : String(booking.booking_time).slice(0, 5)
 
     return created({
       booking: {
         id:         booking.id,
         bookingRef: booking.booking_ref,
         date:       toDate(booking.booking_date),
-        slot:       booking.slot,
+        time:       bookingTimeOut,        // 'HH:MM'
+        slot:       booking.slot,           // legacy — kept for backward compat
         type:       booking.drop_off_type,
         status:     booking.status,
         store:      { name: booking.store_name, suburb: booking.store_suburb },

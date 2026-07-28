@@ -81,6 +81,7 @@ Rules: **detail** goes to S3, **aggregates** into summary tables, **pointers** i
 | [Voice chat](#voice-chat) | `customer_voice_usage` |
 | [Quote voice notes](#quote-voice-notes) | `quote_voice_notes` |
 | [Feature flags & rate limits](#feature-flags--rate-limits) | `feature_flags`, `public_chat_rate_limits` |
+| [Booking slots](#booking-slots) | `store_booking_slots`, `store_schedule_exceptions` |
 | [Video assets](#video-assets) | `video_assets` |
 | [Vehicle stories](#vehicle-stories) | `stories`, `story_media`, `story_comments`, `story_reactions` |
 
@@ -2441,3 +2442,50 @@ One-per-viewer emoji reaction on a story. Switching kinds replaces the existing 
 Indexes / constraints:
 - `uk_story_customer (story_id, customer_id)` — enforces one reaction per viewer per story; drives the upsert
 - `idx_story (story_id, kind)` — the reactions-summary aggregate query
+
+---
+
+## Booking slots
+
+### `store_booking_slots`
+
+Staff-configurable bookable times per store. The customer app renders one button per active slot for the requested date, filtered against `business_hours` + hoist capacity by `computeSlotAvailability()` in `src/shared/bookingSlots.ts`.
+
+Default seed on migration = four slots per active store: **08:30, 11:00, 13:30, 15:00** — spaced to leave a 60-min lunch (12:00–13:00) and a short afternoon smoko (14:30–15:00).
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `store_id` | tinyint unsigned | NO | FK → `stores.id` (ON DELETE CASCADE) |
+| `slot_time` | time | NO | 'HH:MM:00'; unique within a store |
+| `label` | varchar(40) | YES | Optional display label (e.g. 'Morning 1') |
+| `sort_order` | smallint | NO | Default `0`; drives order returned to the customer |
+| `is_active` | tinyint(1) | NO | Default `1`; `0` hides from the customer app without deleting history |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+
+Indexes:
+- `uk_store_time (store_id, slot_time)` — enforces one slot per time per store; drives duplicate detection on create
+- `idx_store_active_sort (store_id, is_active, sort_order)` — the "active slots for a store, ordered" query
+
+---
+
+### `store_schedule_exceptions`
+
+Per-date overrides for `business_hours`. Two flavours: full closure (`is_closed = 1`) or custom-hours-for-a-day (`is_closed = 0` + open/close times). Consumed by `computeSlotAvailability()` — if a row exists for the requested date, it beats the day-of-week defaults.
+
+| Column | Type | Null | Notes |
+|--------|------|------|-------|
+| `id` | bigint unsigned | NO | PRIMARY KEY, AUTO_INCREMENT |
+| `store_id` | tinyint unsigned | NO | FK → `stores.id` (ON DELETE CASCADE) |
+| `date` | date | NO | Unique within a store |
+| `is_closed` | tinyint(1) | NO | Default `1` (most exceptions are closures) |
+| `open_time` | time | YES | Only meaningful when `is_closed = 0` |
+| `close_time` | time | YES | Same |
+| `reason` | varchar(200) | YES | e.g. 'Christmas Day', 'Staff training' |
+| `created_at` | datetime | NO | `CURRENT_TIMESTAMP` |
+| `updated_at` | datetime | NO | `CURRENT_TIMESTAMP ON UPDATE` |
+
+Indexes:
+- `uk_store_date (store_id, date)` — one exception per store per date; enforces the "already exists" error
+- `idx_store_date_range (store_id, date)` — powers the list-in-range query
