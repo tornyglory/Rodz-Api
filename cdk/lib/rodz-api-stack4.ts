@@ -172,5 +172,19 @@ export class RodzApiStack4 extends Stack {
       integration: new HttpLambdaIntegration('PublicBookingsCreateInt', publicBookingsCreateFn),
       routeKey:    HttpRouteKey.with('/public/bookings', HttpMethod.POST),
     })
+
+    // ── GET /public/bookings/claim?token=... ──────────────────────────────
+    // Magic-link handler for the confirmation email. Read-only: returns
+    // the booking summary + claim state + hasAccount flag on the
+    // customer so the workshop app can decide whether to prompt for
+    // login or password creation.
+    const publicBookingsClaimFn = new LambdaFn(this, 'PublicBookingsClaim', {
+      entry: src('public/booking-flow/bookings-claim.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'PublicBookingsClaimRoute', {
+      httpApi:     this.adminApi,
+      integration: new HttpLambdaIntegration('PublicBookingsClaimInt', publicBookingsClaimFn),
+      routeKey:    HttpRouteKey.with('/public/bookings/claim', HttpMethod.GET),
+    })
   }
 }

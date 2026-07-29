@@ -6,6 +6,7 @@ import { badRequest, serverError, validationError } from '../../shared/errors'
 import { generateBookingRef } from '../../bookings/_helpers'
 import { sendBookingReceivedEmail } from '../../shared/emailTemplates'
 import { notifyStore } from '../../shared/staffNotifications'
+import { issueClaimToken, buildClaimUrl } from './_claim-token'
 
 const ready = bootstrap()
 
@@ -342,6 +343,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       )
     }
 
+    // Issue a claim token so the confirmation email can include a
+    // magic-link URL the customer can click to view / claim their
+    // booking on the workshop app.
+    const claimRawToken = await issueClaimToken(db, bookingId)
+    const claimUrl = buildClaimUrl(claimRawToken)
+
     const vehicleLabel = `${year} ${make} ${model}`
     const customerName = `${firstName} ${lastName}`
 
@@ -364,6 +371,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       store:         store.name,
       services:      validServices,
       dropOffTime:   null,
+      claimUrl,
     }).catch(err => console.error('sendBookingReceivedEmail failed:', err))
 
     return jsonResponse(201, {

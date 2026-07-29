@@ -54,6 +54,9 @@ export async function sendBookingReceivedEmail(db: mysql.Pool, booking: any): Pr
     service:      (booking.services ?? []).map((s: any) => s.name).join(', '),
     services:     (booking.services ?? []).map((s: any) => s.name).join(', '),
     dropOffTime:  booking.dropOffTime ?? '',
+    // Magic-link claim URL — optional. Templates that don't reference
+    // {{claimUrl}} silently ignore this variable.
+    claimUrl:     booking.claimUrl   ?? '',
   })
 }
 
