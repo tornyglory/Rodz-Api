@@ -33,8 +33,8 @@ CORS: both accept requests from `https://workshop.rodz.com.au` +
 | 1 | Land on `/book` (optional `?service=` deep link) | (client only — resolve slug against step 3 later) |
 | 2 | Pick year | `GET {CATALOG_BASE}/public/vehicle-catalog/years` |
 | 3 | Pick make | `GET {CATALOG_BASE}/public/vehicle-catalog/makes?year=` |
-| 4 | Pick model **(or "I don't know")** | `GET {CATALOG_BASE}/public/vehicle-catalog/models?year=&make=` |
-| 5 | Pick series (skip if empty, or if step 4 was "I don't know") | `GET {CATALOG_BASE}/public/vehicle-catalog/series?year=&make=&model=` |
+| 4 | Pick model **(or "I don't know")** — optional | `GET {CATALOG_BASE}/public/vehicle-catalog/models?year=&make=` |
+| 5 | Pick series — skip if empty or model was skipped | `GET {CATALOG_BASE}/public/vehicle-catalog/series?year=&make=&model=` |
 | 6 | Wow moment ("Nice — a 2019 Camry.") | `GET {CATALOG_BASE}/public/vehicle-catalog/overview?year=&make=&model=[&km=]` |
 | 7 | Rego + km + fuel/transmission (form) | (client-side collection — sent with POST at step 12) |
 | 8 | Pick store | `GET {API_BASE}/public/stores` |
@@ -153,18 +153,14 @@ The "we know your car" wow-moment payload.
 
 ---
 
-## Step 7 — Rego + km (client-side, all optional)
+## Step 7 — Rego + km (client-side)
 
-No endpoint call — collect these fields in the form. **None are
-required** — customer can skip anything they don't know and the
-workshop fills it in when the car arrives.
+No endpoint call — collect these fields in the form:
 
-- `rego` (string, uppercased) — **optional**. If provided, `regoState` is required.
-- `regoState` — one of: `VIC`, `NSW`, `QLD`, `SA`, `WA`, `TAS`, `NT`, `ACT`
-- `km` (integer) — used on step 6b's overview call for the personalised intro
+- `rego` (string, uppercased) — **required**
+- `regoState` — **required** — one of: `VIC`, `NSW`, `QLD`, `SA`, `WA`, `TAS`, `NT`, `ACT`
+- `km` (integer) — used on step 6b's overview call for the personalised intro. Optional.
 - `fuelType`, `transmission`, `series` — optional
-
-Customer UX suggestion: "Don't know your rego? No worries — we'll grab it when you drop off."
 
 ---
 
@@ -334,32 +330,27 @@ The submit.
 
 **Required:**
 - `customer.firstName`, `lastName`, `email` (valid format), `mobile`
-- `vehicle.year` (1900–2100), `make`
+- `vehicle.year` (1900–2100), `make`, `rego`, `regoState` (one of `VIC`/`NSW`/`QLD`/`SA`/`WA`/`TAS`/`NT`/`ACT`)
 - `booking.storeId`, `date` (YYYY-MM-DD), `slotId`, `serviceTypeIds` (non-empty array)
 - `meta.sessionId` (recommend UUID v4)
 - `turnstileToken`
 
 **Optional (customer can skip; workshop fills in on arrival):**
-- `vehicle.model` — often unknown by casual owners ("it's a Mazda")
-- `vehicle.rego` + `vehicle.regoState` — if `rego` is provided, `regoState` becomes required and must be one of `VIC`/`NSW`/`QLD`/`SA`/`WA`/`TAS`/`NT`/`ACT`
+- `vehicle.model` — often unknown by casual owners ("it's a Mazda, not sure which one")
 - `vehicle.series`, `fuelType` (`petrol`/`diesel`/`hybrid`/`electric`/`lpg`/`other`), `transmission` (`manual`/`automatic`/`cvt`/`dct`/`other`), `avgKmPerWeek` (accepted but not persisted yet)
 - `booking.customerNotes`
 - `meta.utmSource`/`utmMedium`/`utmCampaign`/`referer`
 
-**Minimum viable payload** — this is a valid submission:
+**Minimum viable payload** — this is a valid submission (model omitted):
 ```json
 {
   "customer": { "firstName": "Jo", "lastName": "Smith", "email": "jo@x.com", "mobile": "0400000000" },
-  "vehicle":  { "year": 2020, "make": "Mazda" },
+  "vehicle":  { "year": 2020, "make": "Mazda", "rego": "ABC123", "regoState": "VIC" },
   "booking":  { "storeId": 1, "date": "2026-09-01", "slotId": 4, "serviceTypeIds": [1] },
   "meta":     { "sessionId": "<uuid>" },
   "turnstileToken": ""
 }
 ```
-
-Vehicles submitted without a `rego` cannot be deduped — each such
-booking creates a new vehicle row. Staff merges when the car arrives
-and they capture the plate.
 
 ### Idempotency — critical UX detail
 
