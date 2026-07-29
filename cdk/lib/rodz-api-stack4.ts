@@ -156,5 +156,21 @@ export class RodzApiStack4 extends Stack {
       integration: new HttpLambdaIntegration('PublicBookingSlotsInt', publicBookingSlotsFn),
       routeKey:    HttpRouteKey.with('/public/stores/{id}/booking-slots', HttpMethod.GET),
     })
+
+    // ── POST /public/bookings ─────────────────────────────────────────────
+    // Guest booking creation for the 11-step flow at
+    // workshop.rodz.com.au/book. Turnstile-gated (when TURNSTILE_SECRET
+    // is set), idempotent via meta.sessionId, emails confirmation +
+    // notifies store. Bumped timeout because customer/vehicle upsert +
+    // engine invokes can push past the 3s default.
+    const publicBookingsCreateFn = new LambdaFn(this, 'PublicBookingsCreate', {
+      entry: src('public/booking-flow/bookings-create.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(30), needsSes: true,
+    }).fn
+    new HttpRoute(this, 'PublicBookingsCreateRoute', {
+      httpApi:     this.adminApi,
+      integration: new HttpLambdaIntegration('PublicBookingsCreateInt', publicBookingsCreateFn),
+      routeKey:    HttpRouteKey.with('/public/bookings', HttpMethod.POST),
+    })
   }
 }
