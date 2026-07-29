@@ -99,5 +99,29 @@ export class RodzApiStack4 extends Stack {
         authorizer:  this.adminAuthorizer,
       })
     }
+
+    // ── Public booking-flow reads — /public/stores, /public/service-types ──
+    // No authorizer — these are the anonymous funnel path for the
+    // guest booking flow at workshop.rodz.com.au/book. Land on this
+    // HttpApi rather than the shared one (which is at the 300-route
+    // cap) — same CORS config applies, no separate stack needed.
+
+    const publicStoresFn = new LambdaFn(this, 'PublicBookingStores', {
+      entry: src('public/booking-flow/stores.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'PublicBookingStoresRoute', {
+      httpApi:     this.adminApi,
+      integration: new HttpLambdaIntegration('PublicBookingStoresInt', publicStoresFn),
+      routeKey:    HttpRouteKey.with('/public/stores', HttpMethod.GET),
+    })
+
+    const publicServiceTypesFn = new LambdaFn(this, 'PublicBookingServiceTypes', {
+      entry: src('public/booking-flow/service-types.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'PublicBookingServiceTypesRoute', {
+      httpApi:     this.adminApi,
+      integration: new HttpLambdaIntegration('PublicBookingServiceTypesInt', publicServiceTypesFn),
+      routeKey:    HttpRouteKey.with('/public/service-types', HttpMethod.GET),
+    })
   }
 }
