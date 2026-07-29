@@ -2,6 +2,7 @@ import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { ok, forbidden, serverError } from '../../shared/errors'
+import { OVERDUE_TOLERANCE_KM, RECOMMENDATION_LIMIT } from '../../shared/recommendationFilter'
 import { getCustomerContext } from '../_helpers'
 
 const ready = bootstrap()
@@ -13,11 +14,22 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   const vehicleId = Number(event.pathParameters?.id)
 
   try {
-    const [[ownership]] = await db.query<any[]>(
-      'SELECT id FROM vehicle_owners WHERE vehicle_id = ? AND customer_id = ? AND is_current = 1 LIMIT 1',
+    const [[vehicle]] = await db.query<any[]>(
+      `SELECT v.odometer_current
+       FROM vehicle_owners vo
+       JOIN vehicles v ON v.id = vo.vehicle_id
+       WHERE vo.vehicle_id = ? AND vo.customer_id = ? AND vo.is_current = 1
+       LIMIT 1`,
       [vehicleId, ctx.customerId],
     )
-    if (!ownership) return forbidden()
+    if (!vehicle) return forbidden()
+
+    // Filter out recommendations the vehicle has clearly sailed past — the
+    // 1,000 km inspection on a 200,000 km car is noise. NULL odometer on
+    // the vehicle → no filter (safe fallback, matches previous behaviour).
+    const odometer = vehicle.odometer_current != null ? Number(vehicle.odometer_current) : null
+    const hasOdo   = odometer != null
+    const cutoff   = hasOdo ? Math.max(0, odometer - OVERDUE_TOLERANCE_KM) : 0
 
     const [rows] = await db.query<any[]>(
       `SELECT
@@ -29,11 +41,17 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
          completed_by_job_id, created_at
        FROM ai_recommendations
        WHERE vehicle_id = ? AND customer_id = ? AND status NOT IN ('dismissed', 'expired')
+         ${hasOdo ? 'AND (estimated_due_odometer IS NULL OR estimated_due_odometer >= ?)' : ''}
        ORDER BY
          CASE WHEN estimated_due_odometer IS NULL THEN 1 ELSE 0 END,
          estimated_due_odometer ASC,
-         id ASC`,
-      [vehicleId, ctx.customerId],
+         CASE WHEN estimated_due_date IS NULL THEN 1 ELSE 0 END,
+         estimated_due_date ASC,
+         id ASC
+       LIMIT ?`,
+      hasOdo
+        ? [vehicleId, ctx.customerId, cutoff, RECOMMENDATION_LIMIT]
+        : [vehicleId, ctx.customerId, RECOMMENDATION_LIMIT],
     )
 
     const recommendations = rows.map((r) => ({

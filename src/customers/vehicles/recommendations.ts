@@ -3,6 +3,7 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { getAuthContext } from '../../shared/auth'
 import { ok, notFound, serverError } from '../../shared/errors'
+import { OVERDUE_TOLERANCE_KM, RECOMMENDATION_LIMIT } from '../../shared/recommendationFilter'
 
 const ready = bootstrap()
 
@@ -32,6 +33,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       if (customer?.store_id !== ctx.storeId) return notFound('Vehicle')
     }
 
+    // Same odometer filter as the customer-portal endpoint — even for
+    // staff, "1,000 km inspection" on a 200,000 km car is noise.
+    const odometer = vehicle.odometer_current != null ? Number(vehicle.odometer_current) : null
+    const hasOdo   = odometer != null
+    const cutoff   = hasOdo ? Math.max(0, odometer - OVERDUE_TOLERANCE_KM) : 0
+
     const [rows] = await db.query<any[]>(
       `SELECT
          id, title, recommendation_body, urgency, status,
@@ -42,11 +49,17 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
          completed_by_job_id, created_at
        FROM ai_recommendations
        WHERE vehicle_id = ? AND customer_id = ?
+         ${hasOdo ? 'AND (estimated_due_odometer IS NULL OR estimated_due_odometer >= ?)' : ''}
        ORDER BY
          CASE WHEN estimated_due_odometer IS NULL THEN 1 ELSE 0 END,
          estimated_due_odometer ASC,
-         id ASC`,
-      [vehicleId, customerId],
+         CASE WHEN estimated_due_date IS NULL THEN 1 ELSE 0 END,
+         estimated_due_date ASC,
+         id ASC
+       LIMIT ?`,
+      hasOdo
+        ? [vehicleId, customerId, cutoff, RECOMMENDATION_LIMIT]
+        : [vehicleId, customerId, RECOMMENDATION_LIMIT],
     )
 
     const recommendations = rows.map((r) => ({
