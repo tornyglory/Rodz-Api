@@ -7,6 +7,7 @@ const BOOKING_SELECT = `
     b.customer_notes, b.staff_notes, b.courtesy_car_requested,
     b.courtesy_car_id, b.courtesy_car_due_back, b.courtesy_car_returned_at,
     b.created_at,
+    b.utm_source, b.utm_medium, b.utm_campaign, b.referer_url,
     CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
     c.email                                AS customer_email,
     s.name                                 AS store_name,
@@ -86,6 +87,14 @@ export function buildBooking(row: any, services: any[] = []) {
       category:            s.category,
       customerDescription: s.customer_description ?? null,
     })),
+    // Marketing attribution captured on guest bookings. Null-object
+    // when none of the four fields is populated (walk-in, phone, staff-created).
+    attribution: (row.utm_source || row.utm_medium || row.utm_campaign || row.referer_url) ? {
+      source:     row.utm_source   ?? null,
+      medium:     row.utm_medium   ?? null,
+      campaign:   row.utm_campaign ?? null,
+      refererUrl: row.referer_url  ?? null,
+    } : null,
   }
 }
 

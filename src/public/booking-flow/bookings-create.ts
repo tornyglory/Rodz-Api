@@ -168,12 +168,21 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     : ''
   if (!sessionId) return validationError('meta.sessionId is required (UUID recommended).')
 
-  const attribution = {
-    utmSource:   typeof meta.utmSource   === 'string' ? meta.utmSource.slice(0, 120)   : null,
-    utmMedium:   typeof meta.utmMedium   === 'string' ? meta.utmMedium.slice(0, 120)   : null,
-    utmCampaign: typeof meta.utmCampaign === 'string' ? meta.utmCampaign.slice(0, 120) : null,
-    referer:     typeof meta.referer     === 'string' ? meta.referer.slice(0, 500)     : null,
-  }
+  // Marketing attribution — normalised for reports.
+  //   - source + medium: trim + lowercase so "Facebook" and "facebook"
+  //     don't split the bucket.
+  //   - campaign: trim but preserve case (campaign names carry
+  //     meaningful capitalisation).
+  //   - referer: trim + cap at 500 chars (matches the column length).
+  const utmSourceIn   = typeof meta.utmSource   === 'string' ? meta.utmSource.trim()   : ''
+  const utmMediumIn   = typeof meta.utmMedium   === 'string' ? meta.utmMedium.trim()   : ''
+  const utmCampaignIn = typeof meta.utmCampaign === 'string' ? meta.utmCampaign.trim() : ''
+  const refererIn     = typeof meta.referer     === 'string' ? meta.referer.trim()     : ''
+
+  const utmSource   = utmSourceIn   ? utmSourceIn.toLowerCase().slice(0, 64)   : null
+  const utmMedium   = utmMediumIn   ? utmMediumIn.toLowerCase().slice(0, 64)   : null
+  const utmCampaign = utmCampaignIn ? utmCampaignIn.slice(0, 128)              : null
+  const refererUrl  = refererIn     ? refererIn.slice(0, 500)                  : null
 
   try {
     // ── Turnstile ───────────────────────────────────────────────────────────
@@ -327,13 +336,14 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       `INSERT INTO bookings
          (store_id, booking_ref, session_id, customer_id, vehicle_id,
           booking_date, booking_time, slot, hoist_id,
-          drop_off_type, booking_source, attribution,
+          drop_off_type, booking_source,
+          utm_source, utm_medium, utm_campaign, referer_url,
           customer_notes, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'drop_off', 'website', ?, ?, 'pending', NOW(), NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'drop_off', 'website', ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
       [
         store.id, bookingRef, sessionId, customer.id, vehicle.id,
         date, slot.slot_time, slotEnum, assignedHoistId,
-        JSON.stringify(attribution),
+        utmSource, utmMedium, utmCampaign, refererUrl,
         customerNotes,
       ],
     )
