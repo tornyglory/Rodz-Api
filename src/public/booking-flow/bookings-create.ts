@@ -128,18 +128,27 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     return validationError('customer.email must be a valid email address.')
   }
 
+  // Minimum viable vehicle identity for a guest booking: year + make.
+  // Model, rego, and regoState are all optional — workshop fills in
+  // the rest when the car arrives. Vehicles without a rego can't be
+  // deduped against future bookings; staff merge duplicates later.
   const year  = Number(veh.year)
   const make  = typeof veh.make  === 'string' ? veh.make.trim()  : ''
-  const model = typeof veh.model === 'string' ? veh.model.trim() : ''
-  const rego  = typeof veh.rego  === 'string' ? veh.rego.trim().toUpperCase() : ''
-  const regoState = typeof veh.regoState === 'string' ? veh.regoState.trim().toUpperCase() : ''
+  const model = typeof veh.model === 'string' && veh.model.trim() ? veh.model.trim() : null
+  const rego  = typeof veh.rego  === 'string' && veh.rego.trim()  ? veh.rego.trim().toUpperCase()  : null
+  const regoStateRaw = typeof veh.regoState === 'string' ? veh.regoState.trim().toUpperCase() : ''
   if (!Number.isInteger(year) || year < 1900 || year > 2100) {
     return validationError('vehicle.year must be a valid year.')
   }
-  if (!make || !model) return validationError('vehicle.make and vehicle.model are required.')
-  if (!rego) return validationError('vehicle.rego is required.')
-  if (!VALID_STATES.has(regoState)) {
-    return validationError(`vehicle.regoState must be one of: ${[...VALID_STATES].join(', ')}.`)
+  if (!make) return validationError('vehicle.make is required.')
+  // regoState is only validated when a rego is provided — otherwise
+  // there's nothing to constrain.
+  let regoState: string | null = null
+  if (rego) {
+    if (!VALID_STATES.has(regoStateRaw)) {
+      return validationError(`vehicle.regoState must be one of: ${[...VALID_STATES].join(', ')} when vehicle.rego is provided.`)
+    }
+    regoState = regoStateRaw
   }
   const series       = typeof veh.series       === 'string' ? veh.series.trim() : null
   const fuelType     = typeof veh.fuelType     === 'string' && VALID_FUEL.has(veh.fuelType.toLowerCase())  ? veh.fuelType.toLowerCase()  : null
@@ -285,10 +294,17 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     // ── Upsert vehicle ─────────────────────────────────────────────────────
-    let [[vehicle]] = await db.query<any[]>(
-      'SELECT id FROM vehicles WHERE rego = ? AND rego_state = ? LIMIT 1',
-      [rego, regoState],
-    )
+    // With a rego: dedupe against existing (rego, rego_state) row.
+    // Without: always INSERT — workshop fills in rego + merges when
+    // the car arrives.
+    let vehicle: { id: number } | undefined
+    if (rego && regoState) {
+      const [[existing]] = await db.query<any[]>(
+        'SELECT id FROM vehicles WHERE rego = ? AND rego_state = ? LIMIT 1',
+        [rego, regoState],
+      )
+      if (existing) vehicle = { id: Number(existing.id) }
+    }
     if (!vehicle) {
       const [ins] = await db.query<any>(
         `INSERT INTO vehicles
@@ -296,7 +312,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
         [rego, regoState, make, model, series, year, fuelType ?? 'petrol', transmission ?? 'automatic'],
       )
-      vehicle = { id: (ins as any).insertId }
+      vehicle = { id: Number((ins as any).insertId) }
     }
 
     // ── Link vehicle → customer ────────────────────────────────────────────
@@ -349,7 +365,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const claimRawToken = await issueClaimToken(db, bookingId)
     const claimUrl = buildClaimUrl(claimRawToken)
 
-    const vehicleLabel = `${year} ${make} ${model}`
+    const vehicleLabel = [year, make, model].filter(Boolean).join(' ')
     const customerName = `${firstName} ${lastName}`
 
     // ── Notify staff + send confirmation email (both non-fatal) ────────────
@@ -367,7 +383,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       date,
       slot:          slotEnum,
       vehicle:       vehicleLabel,
-      rego,
+      rego:          rego ?? '',
       store:         store.name,
       services:      validServices,
       dropOffTime:   null,
