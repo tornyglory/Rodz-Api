@@ -4,10 +4,18 @@ Staff-facing endpoints for editing the vehicle catalog (makes, models,
 series) and triggering a Gemini regenerate when a new year rolls
 around or a missing model needs to be added.
 
-**Deploy status:** code merged, but the deploy is currently blocked by
-AWS's HTTP API 300-route quota on the shared HttpApi. Once the quota
-increase support case is approved (route quota → 500), the endpoints
-will be live at the URLs below. Wire contract is final either way.
+**Deploy status:** live. Endpoints run on a **separate HttpApi**
+(Stack 4, `RodzAdminAPI`) with its own route budget — the shared
+customer-facing API was at AWS's 300-route quota, so admin surfaces
+got their own base URL.
+
+```
+Admin API base: https://lukck5txvh.execute-api.ap-southeast-2.amazonaws.com
+```
+
+Point the workshop app's `ADMIN_API_BASE` env var at this. CORS is
+locked to `https://workshop.rodz.com.au` + localhost 5173/5177/3000
+for dev.
 
 Related: [`vehicle-catalog-frontend-brief.md`](./vehicle-catalog-frontend-brief.md) (the public guest-flow endpoints).
 
@@ -19,15 +27,17 @@ All endpoints require the staff JWT via the existing `authorizer`.
 `technician` role is rejected (403). `store_manager` and `super_admin`
 both have full access — the catalog isn't store-scoped.
 
-## One route, all methods
+## One dispatcher, all methods
 
-Every endpoint below lives under one HttpApi route
-(`ANY /admin/vehicle-catalog/{proxy+}`) with an internal dispatcher —
-this is transparent to you, the wire contract is identical to
-individual routes.
+Every endpoint below is served by a single Lambda dispatcher — the
+CDK registers four routes (GET / POST / PATCH / DELETE) on
+`/admin/vehicle-catalog/{proxy+}`, all pointing at the same
+integration. Transparent to you: the wire contract is identical to
+per-endpoint routes. Four routes total, letting API Gateway handle
+OPTIONS preflight without going through the authorizer.
 
 ```
-Base: https://fzzrkscwd7.execute-api.ap-southeast-2.amazonaws.com/admin/vehicle-catalog
+Base: https://lukck5txvh.execute-api.ap-southeast-2.amazonaws.com/admin/vehicle-catalog
 ```
 
 ---

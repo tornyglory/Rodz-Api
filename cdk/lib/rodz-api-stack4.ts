@@ -1,0 +1,103 @@
+import * as path from 'path'
+import { Stack, StackProps, Duration, CfnOutput } from 'aws-cdk-lib'
+import { Construct } from 'constructs'
+import * as ec2 from 'aws-cdk-lib/aws-ec2'
+import { HttpApi, HttpRoute, HttpRouteKey, HttpMethod, CorsHttpMethod } from 'aws-cdk-lib/aws-apigatewayv2'
+import { HttpLambdaAuthorizer, HttpLambdaResponseType } from 'aws-cdk-lib/aws-apigatewayv2-authorizers'
+import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations'
+import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs'
+import { LambdaFn } from './constructs/lambda-fn'
+
+interface RodzApiStack4Props extends StackProps {
+  authorizerFn: NodejsFunction
+  vpc:          ec2.IVpc
+  sharedEnv:    Record<string, string>
+}
+
+/**
+ * Stack 4 — admin API surface on a **separate HttpApi**.
+ *
+ * The shared HttpApi (Stacks 1-3) hit AWS's 300-route quota. Rather
+ * than requesting a quota bump or consolidating existing routes, admin
+ * surfaces get their own API Gateway with its own 300-route budget
+ * and stricter CORS (locked to the workshop app origins).
+ *
+ * Reuses the staff `authorizerFn` Lambda from Stack 1 via a fresh
+ * HttpLambdaAuthorizer bound to this API (authorizers are per-API in
+ * HTTP API v2).
+ *
+ * Base URL is emitted as a CfnOutput (AdminApiUrl) — no custom domain
+ * for v1; add later via Route 53 + ACM if a prettier URL is wanted.
+ */
+export class RodzApiStack4 extends Stack {
+  public readonly adminApi: HttpApi
+  public readonly adminAuthorizer: HttpLambdaAuthorizer
+
+  constructor(scope: Construct, id: string, props: RodzApiStack4Props) {
+    super(scope, id, props)
+
+    const { authorizerFn, vpc, sharedEnv } = props
+
+    const src = (p: string) => path.join(__dirname, '../../src', p)
+
+    // Separate HttpApi for admin surfaces — locked-down CORS (no wildcard).
+    this.adminApi = new HttpApi(this, 'AdminHttpApi', {
+      apiName:     'RodzAdminAPI',
+      description: 'Rodz staff/admin API (separate HttpApi to avoid the shared 300-route cap)',
+      corsPreflight: {
+        allowOrigins: [
+          'https://workshop.rodz.com.au',
+          'http://localhost:5173',
+          'http://localhost:5177',
+          'http://localhost:3000',
+        ],
+        allowMethods: [
+          CorsHttpMethod.GET,
+          CorsHttpMethod.POST,
+          CorsHttpMethod.PUT,
+          CorsHttpMethod.PATCH,
+          CorsHttpMethod.DELETE,
+          CorsHttpMethod.OPTIONS,
+        ],
+        allowHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
+        maxAge: Duration.days(1),
+      },
+    })
+
+    // Fresh authorizer instance bound to this API, wrapping the same
+    // underlying Lambda from Stack 1.
+    this.adminAuthorizer = new HttpLambdaAuthorizer('AdminJwtAuthorizer', authorizerFn, {
+      responseTypes:   [HttpLambdaResponseType.SIMPLE],
+      identitySource:  ['$request.header.Authorization'],
+      resultsCacheTtl: Duration.seconds(0),
+    })
+
+    new CfnOutput(this, 'AdminApiUrl', {
+      value: this.adminApi.url ?? '',
+      description: 'Admin API base URL — put in the workshop app env as ADMIN_API_BASE',
+    })
+
+    // ── Admin catalog CRUD + Gemini regenerate ──────────────────────────────
+    // Single ANY route (proxy path) that dispatches internally by
+    // method + path segments to makes/models/series/regenerate handlers.
+    // Timeout 60s to accommodate the Gemini call in regenerate.
+
+    const adminCatalogDispatchFn = new LambdaFn(this, 'AdminCatalogDispatch', {
+      entry: src('admin/vehicle-catalog/dispatch.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(60),
+    }).fn
+    const adminCatalogIntegration = new HttpLambdaIntegration('AdminCatalogDispatchInt', adminCatalogDispatchFn)
+
+    // Explicit per-method routes (rather than HttpMethod.ANY) so
+    // OPTIONS preflight falls through to the API Gateway's built-in
+    // CORS handler instead of hitting the authorizer and 401-ing.
+    for (const method of [HttpMethod.GET, HttpMethod.POST, HttpMethod.PATCH, HttpMethod.DELETE]) {
+      new HttpRoute(this, `AdminCatalogDispatchRoute${method}`, {
+        httpApi:     this.adminApi,
+        integration: adminCatalogIntegration,
+        routeKey:    HttpRouteKey.with('/admin/vehicle-catalog/{proxy+}', method),
+        authorizer:  this.adminAuthorizer,
+      })
+    }
+  }
+}

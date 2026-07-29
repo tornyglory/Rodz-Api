@@ -13,6 +13,7 @@ import { ApiGateway } from './constructs/api-gateway'
 export class RodzApiStack extends Stack {
   public readonly httpApi: HttpApi
   public readonly authorizer: HttpLambdaAuthorizer
+  public readonly authorizerFn: import('aws-cdk-lib/aws-lambda-nodejs').NodejsFunction
   public readonly vpc: ec2.IVpc
   public readonly jobUpdateFn: import('aws-cdk-lib/aws-lambda-nodejs').NodejsFunction
 
@@ -60,6 +61,7 @@ export class RodzApiStack extends Stack {
     const authorizerFn = new LambdaFn(this, 'Authorizer', {
       entry: src('authorizer/handler.ts'), vpc, sharedEnv,
     }).fn
+    this.authorizerFn = authorizerFn
 
     // 512 MB so bcrypt.compare at cost factor 12 stays well under 1s
     const loginFn = new LambdaFn(this, 'AuthLogin', {

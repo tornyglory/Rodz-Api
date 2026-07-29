@@ -1064,23 +1064,9 @@ export class RodzApiStack3 extends Stack {
       routeKey: HttpRouteKey.with('/public/vehicle-catalog/{action}', HttpMethod.GET),
     })
 
-    // ── Admin catalog CRUD + Gemini regenerate — staff-only.
-    //    Single ANY route + proxy path so all method+resource combos
-    //    (GET/POST/PATCH/DELETE across makes/models/series/regenerate)
-    //    live on one integration. Route cap avoidance, same pattern as
-    //    the public catalog dispatcher above.
-    //    Timeout bumped to 60s to accommodate the Gemini call.
-
-    const adminCatalogDispatchFn = new LambdaFn(this, 'AdminCatalogDispatch', {
-      entry: src('admin/vehicle-catalog/dispatch.ts'), vpc, sharedEnv,
-      timeout: Duration.seconds(60),
-    }).fn
-    new HttpRoute(this, 'AdminCatalogDispatchRoute', {
-      httpApi,
-      integration: new HttpLambdaIntegration('AdminCatalogDispatchInt', adminCatalogDispatchFn),
-      routeKey: HttpRouteKey.with('/admin/vehicle-catalog/{proxy+}', HttpMethod.ANY),
-      authorizer,
-    })
+    // The admin catalog CRUD + Gemini regenerate route lives on the
+    // separate admin HttpApi (RodzApiStack4) — the shared HttpApi is
+    // at the 300-route cap.
 
   }
 }
