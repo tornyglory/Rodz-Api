@@ -143,5 +143,18 @@ export class RodzApiStack4 extends Stack {
       integration: new HttpLambdaIntegration('PublicBookingScheduleExceptionsInt', publicScheduleExceptionsFn),
       routeKey:    HttpRouteKey.with('/public/stores/{id}/schedule-exceptions', HttpMethod.GET),
     })
+
+    // ── /public/stores/{id}/booking-slots ─────────────────────────────────
+    // Per-day slot availability: joins business_hours, schedule
+    // exceptions, active booking-slot definitions, existing bookings,
+    // and hoist capacity to compute an available/reason per slot.
+    const publicBookingSlotsFn = new LambdaFn(this, 'PublicBookingSlots', {
+      entry: src('public/booking-flow/booking-slots.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'PublicBookingSlotsRoute', {
+      httpApi:     this.adminApi,
+      integration: new HttpLambdaIntegration('PublicBookingSlotsInt', publicBookingSlotsFn),
+      routeKey:    HttpRouteKey.with('/public/stores/{id}/booking-slots', HttpMethod.GET),
+    })
   }
 }
