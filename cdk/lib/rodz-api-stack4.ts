@@ -123,5 +123,25 @@ export class RodzApiStack4 extends Stack {
       integration: new HttpLambdaIntegration('PublicBookingServiceTypesInt', publicServiceTypesFn),
       routeKey:    HttpRouteKey.with('/public/service-types', HttpMethod.GET),
     })
+
+    // ── /public/stores/{id}/business-hours ────────────────────────────────
+    const publicBusinessHoursFn = new LambdaFn(this, 'PublicBookingBusinessHours', {
+      entry: src('public/booking-flow/business-hours.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'PublicBookingBusinessHoursRoute', {
+      httpApi:     this.adminApi,
+      integration: new HttpLambdaIntegration('PublicBookingBusinessHoursInt', publicBusinessHoursFn),
+      routeKey:    HttpRouteKey.with('/public/stores/{id}/business-hours', HttpMethod.GET),
+    })
+
+    // ── /public/stores/{id}/schedule-exceptions ───────────────────────────
+    const publicScheduleExceptionsFn = new LambdaFn(this, 'PublicBookingScheduleExceptions', {
+      entry: src('public/booking-flow/schedule-exceptions.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'PublicBookingScheduleExceptionsRoute', {
+      httpApi:     this.adminApi,
+      integration: new HttpLambdaIntegration('PublicBookingScheduleExceptionsInt', publicScheduleExceptionsFn),
+      routeKey:    HttpRouteKey.with('/public/stores/{id}/schedule-exceptions', HttpMethod.GET),
+    })
   }
 }
