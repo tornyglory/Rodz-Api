@@ -48,11 +48,27 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   await ready
   const db = getPool()
   const ctx = getAuthContext(event)
-  const { store, status, date, search, page: pageParam, limit: limitParam } = event.queryStringParameters ?? {}
+  const {
+    store, status, date, from, to,
+    search, page: pageParam, limit: limitParam,
+  } = event.queryStringParameters ?? {}
 
   const limit  = Math.min(Math.max(parseInt(limitParam ?? '0') || DEFAULT_LIMIT, 1), MAX_LIMIT)
   const page   = Math.max(parseInt(pageParam ?? '0') || 1, 1)
   const offset = (page - 1) * limit
+
+  // Basic YYYY-MM-DD format validation (server rejects garbage without
+  // running it through MySQL).
+  const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
+  if (date && !ISO_DATE.test(date)) {
+    return ok({ bookings: [], pagination: { total: 0, page, limit, pages: 0 } })
+  }
+  if (from && !ISO_DATE.test(from)) {
+    return ok({ bookings: [], pagination: { total: 0, page, limit, pages: 0 } })
+  }
+  if (to && !ISO_DATE.test(to)) {
+    return ok({ bookings: [], pagination: { total: 0, page, limit, pages: 0 } })
+  }
 
   try {
     const where: string[] = ['b.cancelled_at IS NULL']
@@ -86,14 +102,30 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       }
     }
 
-    if (status && ['pending', 'confirmed', 'rejected'].includes(status)) {
+    // Widened to all 7 statuses from the bookings.status enum. Unknown
+    // values silently drop the filter (backward-compatible with older
+    // callers that only knew about pending/confirmed/rejected).
+    const VALID_STATUS = new Set([
+      'pending', 'confirmed', 'rejected',
+      'in_progress', 'completed', 'cancelled', 'no_show',
+    ])
+    if (status && VALID_STATUS.has(status)) {
       where.push('b.status = ?')
       params.push(status)
     }
 
+    // Date filters — three shapes, all inclusive, in priority order:
+    //   ?date=YYYY-MM-DD                — exact day (existing behaviour)
+    //   ?from=&to=                      — inclusive range
+    //   ?from= alone                    — that day and later
+    //   ?to= alone                      — that day and earlier
+    // `date` and `from/to` don't combine — `date` wins when both sent.
     if (date) {
       where.push('b.booking_date = ?')
       params.push(date)
+    } else {
+      if (from) { where.push('b.booking_date >= ?'); params.push(from) }
+      if (to)   { where.push('b.booking_date <= ?'); params.push(to) }
     }
 
     if (search?.trim()) {
