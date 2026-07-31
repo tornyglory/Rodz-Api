@@ -8,6 +8,7 @@ const BOOKING_SELECT = `
     b.courtesy_car_id, b.courtesy_car_due_back, b.courtesy_car_returned_at,
     b.created_at,
     b.utm_source, b.utm_medium, b.utm_campaign, b.referer_url,
+    b.submission_context,
     CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
     c.email                                AS customer_email,
     s.name                                 AS store_name,
@@ -95,7 +96,20 @@ export function buildBooking(row: any, services: any[] = []) {
       campaign:   row.utm_campaign ?? null,
       refererUrl: row.referer_url  ?? null,
     } : null,
+    // Device / browser / geo snapshot at booking submit. Null for
+    // walk-ins, phone bookings, or staff-created rows. MySQL returns
+    // JSON columns as either an object or a string depending on
+    // driver version — normalise here so the wire shape is stable.
+    submissionContext: row.submission_context
+      ? (typeof row.submission_context === 'string'
+          ? safeParseJson(row.submission_context)
+          : row.submission_context)
+      : null,
   }
+}
+
+function safeParseJson(s: string): unknown | null {
+  try { return JSON.parse(s) } catch { return null }
 }
 
 export function bookingError(statusCode: number, code: string, message: string) {

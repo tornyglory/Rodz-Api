@@ -7,6 +7,7 @@ import { generateBookingRef } from '../../bookings/_helpers'
 import { sendBookingReceivedEmail } from '../../shared/emailTemplates'
 import { notifyStore } from '../../shared/staffNotifications'
 import { issueClaimToken, buildClaimUrl } from './_claim-token'
+import { buildSubmissionContext, type ClientContextInput } from './_submission-context'
 
 const ready = bootstrap()
 
@@ -53,6 +54,7 @@ interface BookingInput  {
 interface MetaInput {
   sessionId?: unknown
   utmSource?: unknown; utmMedium?: unknown; utmCampaign?: unknown; referer?: unknown
+  context?: ClientContextInput
 }
 
 async function verifyTurnstile(token: string, remoteip?: string): Promise<boolean> {
@@ -184,10 +186,21 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   const utmCampaign = utmCampaignIn ? utmCampaignIn.slice(0, 128)              : null
   const refererUrl  = refererIn     ? refererIn.slice(0, 500)                  : null
 
+  // ── Submission context (device / browser / geo) ────────────────────────
+  // Built early so a proxy-config problem (no resolvable IP) surfaces as
+  // an INTERNAL_ERROR before we do any DB work. Idempotent replays skip
+  // this — the first submission's context wins.
+  let submissionContext: ReturnType<typeof buildSubmissionContext>
+  try {
+    submissionContext = buildSubmissionContext(event, (meta as MetaInput).context)
+  } catch (err) {
+    console.error('[bookings-create] submission context build failed:', err)
+    return serverError(err)
+  }
+
   try {
     // ── Turnstile ───────────────────────────────────────────────────────────
-    const remoteIp = event.requestContext?.http?.sourceIp
-    const okBot = await verifyTurnstile(tsTok, remoteIp)
+    const okBot = await verifyTurnstile(tsTok, submissionContext.ip)
     if (!okBot) {
       return {
         statusCode: 422,
@@ -338,12 +351,14 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
           booking_date, booking_time, slot, hoist_id,
           drop_off_type, booking_source,
           utm_source, utm_medium, utm_campaign, referer_url,
+          submission_context,
           customer_notes, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'drop_off', 'website', ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'drop_off', 'website', ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
       [
         store.id, bookingRef, sessionId, customer.id, vehicle.id,
         date, slot.slot_time, slotEnum, assignedHoistId,
         utmSource, utmMedium, utmCampaign, refererUrl,
+        JSON.stringify(submissionContext),
         customerNotes,
       ],
     )

@@ -340,6 +340,50 @@ The submit.
 - `vehicle.series`, `fuelType` (`petrol`/`diesel`/`hybrid`/`electric`/`lpg`/`other`), `transmission` (`manual`/`automatic`/`cvt`/`dct`/`other`), `avgKmPerWeek` (accepted but not persisted yet)
 - `booking.customerNotes`
 - `meta.utmSource`/`utmMedium`/`utmCampaign`/`referer`
+- `meta.context` — device / browser / viewport signals (see below)
+
+### `meta.context` — client-collected device signals
+
+Optional nested object. Frontend collects at submit time; server
+merges with request-time headers (Cloudflare `CF-*` when present,
+API Gateway source IP always) and parses `userAgent` into structured
+`browser`/`os`/`device` before persisting.
+
+```json
+"context": {
+  "userAgent":        "Mozilla/5.0 …",             // navigator.userAgent
+  "language":         "en-AU",                     // navigator.language
+  "timezone":         "Australia/Melbourne",       // Intl.DateTimeFormat().resolvedOptions().timeZone
+  "screenWidth":      390,                         // window.screen.width
+  "screenHeight":     844,                         // window.screen.height
+  "viewportWidth":    390,                         // window.innerWidth
+  "viewportHeight":   760,                         // window.innerHeight
+  "devicePixelRatio": 3,                           // window.devicePixelRatio
+  "referrer":         "https://www.google.com/",   // document.referrer
+  "pageUrl":          "https://workshop.rodz.com.au/book?…",  // window.location.href
+  "submittedAt":      "2026-07-31T09:12:34.000Z"   // new Date().toISOString()
+}
+```
+
+All fields optional individually — send whatever's easy to collect,
+server tolerates any subset.
+
+**Privacy disclosure requirement:** the form must display a
+disclosure line near the submit button (AU Privacy Act / NZ Privacy
+Act 2020). Suggested wording:
+
+> *We collect standard technical information about your device and
+> connection (including your IP address and browser type) when you
+> make a booking. See our [Privacy Policy] for details.*
+
+Also update the privacy policy page to list `IP address`,
+`device/browser info`, and `coarse location (country/city)` under
+"what we collect".
+
+**Don't invoke `navigator.geolocation.getCurrentPosition()`** — the
+permission prompt kills conversion. Cloudflare's coarse country/city
+signal (arrives via edge headers, not the browser) is enough for
+attribution + fraud checks.
 
 **Minimum viable payload** — this is a valid submission (model omitted):
 ```json
