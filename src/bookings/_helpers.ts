@@ -109,6 +109,8 @@ export function buildBooking(row: any, services: any[] = []) {
 }
 
 function safeParseJson(s: string): unknown | null {
+  // Handles the case where mysql2 returns a JSON column as a raw
+  // string rather than a parsed object (driver-version dependent).
   try { return JSON.parse(s) } catch { return null }
 }
 
