@@ -186,5 +186,20 @@ export class RodzApiStack4 extends Stack {
       integration: new HttpLambdaIntegration('PublicBookingsClaimInt', publicBookingsClaimFn),
       routeKey:    HttpRouteKey.with('/public/bookings/claim', HttpMethod.GET),
     })
+
+    // ── GET /reports/attribution — marketing / operations report ──────────
+    // Staff-authed. Aggregates bookings by utm_source / medium / campaign
+    // OR by geo / device dimensions extracted from submission_context.
+    // Lands here (not on the shared HttpApi with the other /reports/*)
+    // because that API is at the 300-route cap.
+    const reportsAttributionFn = new LambdaFn(this, 'ReportsAttribution', {
+      entry: src('reports/attribution.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'ReportsAttributionRoute', {
+      httpApi:     this.adminApi,
+      integration: new HttpLambdaIntegration('ReportsAttributionInt', reportsAttributionFn),
+      routeKey:    HttpRouteKey.with('/reports/attribution', HttpMethod.GET),
+      authorizer:  this.adminAuthorizer,
+    })
   }
 }
