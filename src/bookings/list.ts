@@ -17,6 +17,8 @@ const BASE_SELECT = `
     b.customer_notes, b.staff_notes, b.courtesy_car_requested,
     b.courtesy_car_id, b.courtesy_car_due_back, b.courtesy_car_returned_at,
     b.created_at,
+    b.utm_source, b.utm_medium, b.utm_campaign, b.referer_url,
+    b.submission_context,
     CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
     c.email                                AS customer_email,
     s.name                                 AS store_name,
