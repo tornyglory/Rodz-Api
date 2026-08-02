@@ -88,14 +88,16 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       return validationError('One or more service types are invalid or inactive.')
     }
 
+    // `bookings.end_time` is a STORED GENERATED column
+    // (booking_time + estimated_duration_mins) — do not INSERT into it.
     const [result] = await db.query<any>(
       `INSERT INTO bookings
-         (store_id, booking_ref, customer_id, vehicle_id, booking_date, booking_time, end_time,
+         (store_id, booking_ref, customer_id, vehicle_id, booking_date, booking_time,
           estimated_duration_mins, slot, hoist_id, assigned_staff_id, drop_off_type, customer_notes,
           status, booking_source)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'rodz_app')`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'rodz_app')`,
       [storeRow.id, generateBookingRef(), ctx.customerId, Number(vehicleId), date,
-       bookingTime, bookingEnd, durationMins, legacySlot,
+       bookingTime, durationMins, legacySlot,
        chosenTech.hoistId, chosenTech.staffId ?? null,
        type, notes ?? null],
     )

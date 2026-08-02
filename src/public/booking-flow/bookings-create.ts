@@ -354,27 +354,29 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     // ── Create booking ─────────────────────────────────────────────────────
+    // `bookings.end_time` is a STORED GENERATED column
+    // (booking_time + estimated_duration_mins) — MySQL computes it, we
+    // must not INSERT into it directly.
     const bookingRef = generateBookingRef()
-    const bookingEnd = slot.endTime         // 'HH:MM:SS'
     const durationMins = (() => {
       const [sh, sm] = slotTimeSql.slice(0, 5).split(':').map(Number)
-      const [eh, em] = bookingEnd.slice(0, 5).split(':').map(Number)
+      const [eh, em] = slot.endTime.slice(0, 5).split(':').map(Number)
       return Math.max(15, (eh * 60 + em) - (sh * 60 + sm))
     })()
 
     const [bookingIns] = await db.query<any>(
       `INSERT INTO bookings
          (store_id, booking_ref, session_id, customer_id, vehicle_id,
-          booking_date, booking_time, end_time, estimated_duration_mins,
+          booking_date, booking_time, estimated_duration_mins,
           slot, hoist_id, assigned_staff_id,
           drop_off_type, booking_source,
           utm_source, utm_medium, utm_campaign, referer_url,
           submission_context,
           customer_notes, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'drop_off', 'website', ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'drop_off', 'website', ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
       [
         store.id, bookingRef, sessionId, customer.id, vehicle.id,
-        date, slotTimeSql, bookingEnd, durationMins,
+        date, slotTimeSql, durationMins,
         slotEnum, assignedHoistId, assignedStaffId,
         utmSource, utmMedium, utmCampaign, refererUrl,
         JSON.stringify(submissionContext),

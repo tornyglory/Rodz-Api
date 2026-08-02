@@ -212,13 +212,15 @@ async function createBooking(
   const courtesyCar  = type === 'loan_car_needed' ? 1 : 0
   const ccAssignedAt = resolvedCcId ? new Date() : null
 
+  // `bookings.end_time` is a STORED GENERATED column
+  // (booking_time + estimated_duration_mins) — do not INSERT into it.
   const [result] = await db.query<any>(
     `INSERT INTO bookings (store_id, booking_ref, customer_id, vehicle_id, booking_date, booking_time,
-       end_time, estimated_duration_mins, slot, hoist_id, assigned_staff_id, drop_off_type,
+       estimated_duration_mins, slot, hoist_id, assigned_staff_id, drop_off_type,
        courtesy_car_requested, courtesy_car_id, courtesy_car_assigned_at, customer_notes,
        status, booking_source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'rodz_app')`,
-    [storeId, generateBookingRef(), customerId, vehicleId, date, bookingTime, bookingEnd,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'rodz_app')`,
+    [storeId, generateBookingRef(), customerId, vehicleId, date, bookingTime,
      durationMins, legacySlot, chosenTech.hoistId, chosenTech.staffId ?? null,
      type, courtesyCar, resolvedCcId, ccAssignedAt, notes ?? null],
   )
