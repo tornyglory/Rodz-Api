@@ -4,174 +4,108 @@ import { runAgentLoop } from './runner'
 import { notifyStore } from '../../shared/staffNotifications'
 import { assistantPersonaPreamble } from '../../shared/assistantPersona'
 import { loadActivePrompt, renderLearnedGuidance } from '../../shared/prompts'
-
-const BOOKING_TIMES = [
-  { time: '08:00:00', label: '8:00 AM',  slot: 'morning'   as const },
-  { time: '10:00:00', label: '10:00 AM', slot: 'morning'   as const },
-  { time: '13:00:00', label: '1:00 PM',  slot: 'afternoon' as const },
-  { time: '15:00:00', label: '3:00 PM',  slot: 'afternoon' as const },
-]
+import {
+  computeSlotAvailability, findActiveSlotByTime, deriveSlotEnum, toHHMM,
+} from '../../shared/bookingSlots'
 
 function generateBookingRef(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   return Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
 }
 
-async function checkAvailability(db: any, storeId: number, month: string): Promise<object> {
+function pad2(n: number): string { return n.toString().padStart(2, '0') }
+
+// YYYY-MM-DD strings for each day in a month, respecting local calendar.
+function monthDates(year: number, mon: number): string[] {
+  const days = new Date(year, mon, 0).getDate()
+  return Array.from({ length: days }, (_, i) => `${year}-${pad2(mon)}-${pad2(i + 1)}`)
+}
+
+// Month rollup — for the AI's "browse a month" view. Returns per-date
+// `{ open, slotCount }`. Detail-per-day (times + techs) is fetched via
+// checkTimeSlots once the customer picks a specific date. Keeps this
+// response small enough that the LLM can reason over it without eating
+// half the context window.
+async function checkAvailability(
+  db: any,
+  storeId: number,
+  month: string,
+  serviceTypeIds?: number[],
+): Promise<object> {
   const [[store]] = await db.query<any[]>(
-    'SELECT id, name, closure_dates FROM stores WHERE id = ? AND is_active = 1 LIMIT 1',
+    'SELECT id, name FROM stores WHERE id = ? AND is_active = 1 LIMIT 1',
     [storeId],
   )
   if (!store) return { error: 'Store not found' }
 
   const [year, mon] = month.split('-').map(Number)
-  const firstDay    = `${month}-01`
-  const lastDay     = new Date(year, mon, 0).toISOString().slice(0, 10)
+  if (!year || !mon) return { error: 'Month must be YYYY-MM.' }
 
-  const [hoistResult, hoursResult, bookingsResult, techsResult, techBookingsResult] = await Promise.all([
-    db.query<any[]>('SELECT COUNT(*) AS hoist_count FROM hoists WHERE store_id = ? AND is_active = 1', [storeId]),
-    db.query<any[]>('SELECT day_of_week, is_closed FROM business_hours WHERE store_id = ? ORDER BY day_of_week', [storeId]),
-    db.query<any[]>(
-      `SELECT booking_date, booking_time, COUNT(*) AS booked FROM bookings
-       WHERE store_id = ? AND booking_date BETWEEN ? AND ?
-         AND cancelled_at IS NULL AND status NOT IN ('rejected','cancelled')
-       GROUP BY booking_date, booking_time`,
-      [storeId, firstDay, lastDay],
-    ),
-    db.query<any[]>(
-      `SELECT id, first_name, last_name FROM staff
-       WHERE store_id = ? AND role IN ('technician','senior_mechanic','qualified_mechanic','service_tech','tyre_tech','apprentice') AND is_active = 1 ORDER BY id`,
-      [storeId],
-    ),
-    db.query<any[]>(
-      `SELECT booking_date, assigned_staff_id, COUNT(*) AS cnt FROM bookings
-       WHERE store_id = ? AND booking_date BETWEEN ? AND ?
-         AND assigned_staff_id IS NOT NULL
-         AND cancelled_at IS NULL AND status NOT IN ('rejected','cancelled')
-       GROUP BY booking_date, assigned_staff_id`,
-      [storeId, firstDay, lastDay],
-    ),
-  ])
+  const dates = monthDates(year, mon)
+  const days: Record<string, { open: boolean; slotCount?: number; reason?: string; exceptionReason?: string | null }> = {}
 
-  const hoistCount   = Number(hoistResult[0][0]?.hoist_count ?? 0)
-  const hasHours     = hoursResult[0].length > 0
-  const closedDays   = new Set<number>(hoursResult[0].filter((r: any) => r.is_closed).map((r: any) => Number(r.day_of_week)))
-  const closureDates = new Set<string>(store.closure_dates ? (typeof store.closure_dates === 'string' ? JSON.parse(store.closure_dates) : store.closure_dates) : [])
-  const technicians: { id: number; name: string }[] = techsResult[0].map((r: any) => ({ id: r.id, name: `${r.first_name} ${r.last_name}` }))
-
-  const bookingCounts = new Map<string, number>()
-  for (const row of bookingsResult[0]) {
-    const d = row.booking_date instanceof Date ? row.booking_date.toISOString().slice(0, 10) : String(row.booking_date).slice(0, 10)
-    const t = row.booking_time instanceof Date ? row.booking_time.toISOString().slice(11, 19) : String(row.booking_time).slice(0, 8)
-    bookingCounts.set(`${d}|${t}`, Number(row.booked))
-  }
-
-  const techDayCounts = new Map<string, number>()
-  for (const row of techBookingsResult[0]) {
-    const d = row.booking_date instanceof Date ? row.booking_date.toISOString().slice(0, 10) : String(row.booking_date).slice(0, 10)
-    techDayCounts.set(`${d}|${row.assigned_staff_id}`, Number(row.cnt))
-  }
-
-  const today  = new Date().toISOString().slice(0, 10)
-  const days: Record<string, any> = {}
-  const cursor = new Date(`${firstDay}T00:00:00`)
-  const end    = new Date(`${lastDay}T00:00:00`)
-
-  while (cursor <= end) {
-    const dateStr  = cursor.toISOString().slice(0, 10)
-    const jsDow    = cursor.getDay()
-    const isoDow   = jsDow === 0 ? 6 : jsDow - 1
-    const isPast   = dateStr <= today
-    const isClosed = closureDates.has(dateStr) || (hasHours && closedDays.has(isoDow))
-
-    if (isPast || isClosed) {
-      days[dateStr] = { open: false }
-    } else {
-      const dayCounts = new Map(technicians.map(t => [t.id, techDayCounts.get(`${dateStr}|${t.id}`) ?? 0]))
-      const slots = BOOKING_TIMES
-        .filter(({ time }) => (bookingCounts.get(`${dateStr}|${time}`) ?? 0) < hoistCount)
-        .map(({ time, label }) => {
-          let assignedTech: string | null = null
-          if (technicians.length) {
-            const pick = technicians.reduce((a, b) => (dayCounts.get(a.id) ?? 0) <= (dayCounts.get(b.id) ?? 0) ? a : b)
-            assignedTech = pick.name
-            dayCounts.set(pick.id, (dayCounts.get(pick.id) ?? 0) + 1)
-          }
-          return { time: time.slice(0, 5), label, technician: assignedTech }
-        })
-      days[dateStr] = { open: slots.length > 0, slots }
+  // Sequential to keep DB load predictable (one month = ~30 lightweight calls).
+  for (const date of dates) {
+    const result = await computeSlotAvailability(db, storeId, date, serviceTypeIds)
+    const openSlots = result.slots.filter(s => s.available)
+    days[date] = {
+      open:            result.storeOpen && openSlots.length > 0,
+      slotCount:       openSlots.length,
+      ...(result.reason ? { reason: result.reason } : {}),
+      ...(result.exceptionReason ? { exceptionReason: result.exceptionReason } : {}),
     }
-    cursor.setDate(cursor.getDate() + 1)
   }
 
   return { storeName: store.name, storeId, month, days }
 }
 
-async function checkTimeSlots(db: any, storeId: number, date: string): Promise<object> {
-  const today = new Date().toISOString().slice(0, 10)
-  if (date <= today) return { available: false, slots: [], reason: 'Date must be in the future.' }
-
+// Per-date detail — the AI calls this once the customer has a date in
+// mind. Each slot carries a `techs` array of bookable (hoist, tech)
+// options; the AI should present these as concrete choices ("08:30 with
+// Howard Rodda" / "08:30 with Nev Rodda") and remember the hoistId.
+async function checkTimeSlots(
+  db: any,
+  storeId: number,
+  date: string,
+  serviceTypeIds?: number[],
+): Promise<object> {
   const [[storeRow]] = await db.query<any[]>(
-    'SELECT name, closure_dates FROM stores WHERE id = ? AND is_active = 1 LIMIT 1',
+    'SELECT name FROM stores WHERE id = ? AND is_active = 1 LIMIT 1',
     [storeId],
   )
   if (!storeRow) return { error: 'Store not found' }
 
-  const closureDates: string[] = storeRow.closure_dates
-    ? (typeof storeRow.closure_dates === 'string' ? JSON.parse(storeRow.closure_dates) : storeRow.closure_dates)
-    : []
-  if (closureDates.includes(date)) return { available: false, slots: [], reason: 'Store is closed on this date.' }
+  const result = await computeSlotAvailability(db, storeId, date, serviceTypeIds)
 
-  const [hoistResult, bookingRows, techRows, techBookingRows] = await Promise.all([
-    db.query<any[]>('SELECT COUNT(*) AS hoist_count FROM hoists WHERE store_id = ? AND is_active = 1', [storeId]),
-    db.query<any[]>(
-      `SELECT booking_time, COUNT(*) AS booked FROM bookings
-       WHERE store_id = ? AND booking_date = ?
-         AND cancelled_at IS NULL AND status NOT IN ('rejected','cancelled')
-       GROUP BY booking_time`,
-      [storeId, date],
-    ),
-    db.query<any[]>(
-      `SELECT id, first_name, last_name FROM staff
-       WHERE store_id = ? AND role IN ('technician','senior_mechanic','qualified_mechanic','service_tech','tyre_tech','apprentice') AND is_active = 1 ORDER BY id`,
-      [storeId],
-    ),
-    db.query<any[]>(
-      `SELECT assigned_staff_id, COUNT(*) AS cnt FROM bookings
-       WHERE store_id = ? AND booking_date = ?
-         AND assigned_staff_id IS NOT NULL
-         AND cancelled_at IS NULL AND status NOT IN ('rejected','cancelled')
-       GROUP BY assigned_staff_id`,
-      [storeId, date],
-    ),
-  ])
-
-  const hoistCount = Number(hoistResult[0][0]?.hoist_count ?? 0)
-  if (!hoistCount) return { available: false, slots: [], reason: 'No hoists configured at this store.' }
-
-  const bookedByTime = new Map<string, number>()
-  for (const row of bookingRows[0]) {
-    const t = row.booking_time instanceof Date ? row.booking_time.toISOString().slice(11, 19) : String(row.booking_time).slice(0, 8)
-    bookedByTime.set(t, Number(row.booked))
+  if (!result.storeOpen) {
+    return {
+      date, storeName: storeRow.name,
+      available:       false,
+      reason:          result.reason,
+      exceptionReason: result.exceptionReason ?? null,
+      slots:           [],
+    }
   }
 
-  const technicians: { id: number; name: string }[] = techRows[0].map((r: any) => ({ id: r.id, name: `${r.first_name} ${r.last_name}` }))
-  const dayCounts = new Map(technicians.map(t => [t.id, 0]))
-  for (const row of techBookingRows[0]) dayCounts.set(Number(row.assigned_staff_id), Number(row.cnt))
+  const slots = result.slots.map(s => ({
+    time:      toHHMM(s.time),
+    endTime:   toHHMM(s.endTime),
+    label:     s.label,
+    available: s.available,
+    reason:    (s as any).reason ?? null,
+    techs: (s.techs ?? []).map(t => ({
+      hoistId:   t.hoistId,
+      hoistName: t.hoistName,
+      techId:    t.staffId,
+      techName:  t.name,          // null = hoist has no assigned tech ("any available")
+    })),
+  }))
 
-  const slots = BOOKING_TIMES
-    .filter(({ time }) => (bookedByTime.get(time) ?? 0) < hoistCount)
-    .map(({ time, label }) => {
-      let technician: string | null = null
-      if (technicians.length) {
-        const pick = technicians.reduce((a, b) => (dayCounts.get(a.id) ?? 0) <= (dayCounts.get(b.id) ?? 0) ? a : b)
-        technician = pick.name
-        dayCounts.set(pick.id, (dayCounts.get(pick.id) ?? 0) + 1)
-      }
-      return { time: time.slice(0, 5), label, technician }
-    })
-
-  return { date, storeName: storeRow.name, available: slots.length > 0, slots }
+  return {
+    date, storeName: storeRow.name,
+    available: slots.some(s => s.available),
+    slots,
+  }
 }
 
 async function checkCourtesyCars(db: any, storeId: number, date: string): Promise<object> {
@@ -203,6 +137,7 @@ async function createBooking(
   storeId: number,
   date: string,
   time: string,
+  hoistId: number,
   type: 'drop_off' | 'wait' | 'pickup_required' | 'loan_car_needed',
   serviceTypeIds: number[],
   notes?: string,
@@ -219,13 +154,13 @@ async function createBooking(
   if (!vehicle) return { error: 'Vehicle not found' }
 
   const today = new Date().toISOString().slice(0, 10)
-  if (date < today) return { error: 'Date must be in the future' }
+  if (date <= today) return { error: 'Date must be in the future' }
 
-  const bookingSlot = BOOKING_TIMES.find(t => t.time.startsWith(time))
-  if (!bookingSlot) return { error: `Invalid time. Must be one of: ${BOOKING_TIMES.map(t => t.time.slice(0, 5)).join(', ')}` }
-  const slot        = bookingSlot.slot
-  const bookingTime = bookingSlot.time
+  // 1. Verify the requested HH:MM matches an active slot at this store.
+  const slotRow = await findActiveSlotByTime(db, storeId, time)
+  if (!slotRow) return { error: `Time ${time} is not a bookable slot at this store.` }
 
+  // 2. Confirm the service types exist + active.
   if (serviceTypeIds.length) {
     const [stRows] = await db.query<any[]>(
       `SELECT id FROM service_types WHERE id IN (${serviceTypeIds.map(() => '?').join(',')}) AND is_active = 1`,
@@ -234,32 +169,31 @@ async function createBooking(
     if (stRows.length !== serviceTypeIds.length) return { error: 'One or more service types are invalid' }
   }
 
-  const [[freeHoist]] = await db.query<any[]>(
-    `SELECT id FROM hoists WHERE store_id = ? AND is_active = 1
-       AND id NOT IN (
-         SELECT hoist_id FROM bookings
-         WHERE store_id = ? AND booking_date = ? AND booking_time = ?
-           AND cancelled_at IS NULL AND status NOT IN ('rejected','cancelled')
-           AND hoist_id IS NOT NULL
-       )
-     ORDER BY id LIMIT 1`,
-    [storeId, storeId, date, bookingTime],
-  )
-  const hoistId = freeHoist?.id ?? null
+  // 3. Run the same availability check the /c/bookings endpoint uses. This
+  //    respects business_hours, schedule_exceptions, service_roles matching,
+  //    and per-hoist capacity for the specific requested time.
+  const availability = await computeSlotAvailability(db, storeId, date, serviceTypeIds)
+  const targetSlot   = availability.slots.find(s => s.id === slotRow.id)
+  if (!availability.storeOpen || !targetSlot?.available) {
+    return {
+      error: `Slot at ${time} on ${date} is not available (${(targetSlot as any)?.reason ?? availability.reason ?? 'unavailable'}).`,
+    }
+  }
+  const chosenTech = targetSlot.techs.find(t => t.hoistId === Number(hoistId))
+  if (!chosenTech) {
+    return { error: `Hoist ${hoistId} is not available at ${time} for the requested services. Ask the customer to pick another option.` }
+  }
 
-  const [[tech]] = await db.query<any[]>(
-    `SELECT s.id, s.first_name, s.last_name,
-       (SELECT COUNT(*) FROM bookings b WHERE b.assigned_staff_id = s.id
-        AND b.booking_date = ? AND b.cancelled_at IS NULL
-        AND b.status NOT IN ('rejected','cancelled')) AS booking_count
-     FROM staff s
-     WHERE s.store_id = ? AND s.role IN ('technician','senior_mechanic','qualified_mechanic','service_tech','tyre_tech','apprentice') AND s.is_active = 1
-     ORDER BY booking_count ASC, s.id ASC LIMIT 1`,
-    [date, storeId],
-  )
-  const techId   = tech?.id ?? null
-  const techName = tech ? `${tech.first_name} ${tech.last_name}` : null
+  const bookingTime = `${time}:00`
+  const bookingEnd  = slotRow.endTime
+  const durationMins = (() => {
+    const [sh, sm] = bookingTime.slice(0, 5).split(':').map(Number)
+    const [eh, em] = bookingEnd.slice(0, 5).split(':').map(Number)
+    return Math.max(15, (eh * 60 + em) - (sh * 60 + sm))
+  })()
+  const legacySlot = deriveSlotEnum(time)
 
+  // 4. Loan-car fallback pick, same as before.
   let resolvedCcId = courtesyCarId ?? null
   if (type === 'loan_car_needed' && !resolvedCcId) {
     const [[availableCar]] = await db.query<any[]>(
@@ -280,10 +214,12 @@ async function createBooking(
 
   const [result] = await db.query<any>(
     `INSERT INTO bookings (store_id, booking_ref, customer_id, vehicle_id, booking_date, booking_time,
-       slot, hoist_id, assigned_staff_id, drop_off_type, courtesy_car_requested, courtesy_car_id,
-       courtesy_car_assigned_at, customer_notes, status, booking_source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'rodz_app')`,
-    [storeId, generateBookingRef(), customerId, vehicleId, date, bookingTime, slot, hoistId, techId,
+       end_time, estimated_duration_mins, slot, hoist_id, assigned_staff_id, drop_off_type,
+       courtesy_car_requested, courtesy_car_id, courtesy_car_assigned_at, customer_notes,
+       status, booking_source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'rodz_app')`,
+    [storeId, generateBookingRef(), customerId, vehicleId, date, bookingTime, bookingEnd,
+     durationMins, legacySlot, chosenTech.hoistId, chosenTech.staffId ?? null,
      type, courtesyCar, resolvedCcId, ccAssignedAt, notes ?? null],
   )
   const bookingId = result.insertId
@@ -295,7 +231,7 @@ async function createBooking(
   }
 
   const [[booking]] = await db.query<any[]>(
-    `SELECT b.booking_ref, b.booking_date, b.slot, b.status, s.name AS store_name
+    `SELECT b.booking_ref, b.booking_date, b.status, s.name AS store_name
      FROM bookings b JOIN stores s ON s.id = b.store_id WHERE b.id = ? LIMIT 1`,
     [bookingId],
   )
@@ -307,38 +243,49 @@ async function createBooking(
   const [[veh]]      = await db.query<any[]>('SELECT year, make, model FROM vehicles WHERE id = ? LIMIT 1', [vehicleId])
   const customerName = customer ? `${customer.first_name} ${customer.last_name}` : 'Customer'
   const vehicleLabel = veh ? `${veh.year} ${veh.make} ${veh.model}` : 'Vehicle'
-  const slotLabel    = slot === 'morning' ? 'Morning' : 'Afternoon'
   await notifyStore(db, storeId, {
     type: 'booking_received', title: 'New Booking',
-    body: `${customerName} — ${vehicleLabel} — ${dateStr} (${slotLabel})`,
+    body: `${customerName} — ${vehicleLabel} — ${dateStr} ${time}${chosenTech.name ? ` with ${chosenTech.name}` : ''}`,
     bookingId,
   }).catch(() => {})
 
-  return { bookingId, bookingRef: booking.booking_ref, date: dateStr, time: bookingSlot.label, slot: booking.slot, store: booking.store_name, technician: techName, confirmed: true }
+  return {
+    bookingId,
+    bookingRef:  booking.booking_ref,
+    date:        dateStr,
+    time,
+    endTime:     toHHMM(bookingEnd),
+    store:       booking.store_name,
+    hoist:       { id: chosenTech.hoistId, name: chosenTech.hoistName },
+    technician:  chosenTech.staffId ? { id: chosenTech.staffId, name: chosenTech.name } : null,
+    confirmed:   true,
+  }
 }
 
 const TOOLS: Tool[] = [{
   functionDeclarations: [
     {
       name: 'checkAvailability',
-      description: 'Check available booking slots at a Rodz Smart Auto workshop for a given month.',
+      description: 'Return per-date open/closed status for a store across a month. Small summary per day — for a specific date use checkTimeSlots.',
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
-          storeId: { type: SchemaType.NUMBER, description: 'The store ID (1 = Rodz Smart Auto Somerville)' },
-          month:   { type: SchemaType.STRING, description: 'Month in YYYY-MM format' },
+          storeId:        { type: SchemaType.NUMBER, description: 'The store ID (1 = Rodz Smart Auto Somerville)' },
+          month:          { type: SchemaType.STRING, description: 'Month in YYYY-MM format' },
+          serviceTypeIds: { type: SchemaType.ARRAY,  items: { type: SchemaType.NUMBER }, description: 'Optional service_type IDs; when set, only slots covered by an eligible hoist are counted as open' },
         },
         required: ['storeId', 'month'],
       },
     },
     {
       name: 'checkTimeSlots',
-      description: 'Get available time slots for a specific date. Use when the customer already has a date in mind.',
+      description: 'Get available time slots for a specific date. Each slot lists techs — each entry is one bookable (hoist, technician) option the customer can choose.',
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
-          storeId: { type: SchemaType.NUMBER, description: 'The store ID' },
-          date:    { type: SchemaType.STRING, description: 'Date in YYYY-MM-DD format' },
+          storeId:        { type: SchemaType.NUMBER, description: 'The store ID' },
+          date:           { type: SchemaType.STRING, description: 'Date in YYYY-MM-DD format' },
+          serviceTypeIds: { type: SchemaType.ARRAY,  items: { type: SchemaType.NUMBER }, description: 'Optional service_type IDs — filters techs to hoists that can perform every requested service' },
         },
         required: ['storeId', 'date'],
       },
@@ -362,19 +309,20 @@ const TOOLS: Tool[] = [{
     },
     {
       name: 'bookAppointment',
-      description: 'Book a service appointment. Only call after confirming all details with the customer.',
+      description: 'Book a service appointment. Only call after the customer has picked a specific tech card (hoistId) from checkTimeSlots and confirmed everything.',
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
           storeId:        { type: SchemaType.NUMBER, description: 'Store ID' },
           date:           { type: SchemaType.STRING, description: 'Date in YYYY-MM-DD format' },
-          time:           { type: SchemaType.STRING, enum: ['08:00', '10:00', '13:00', '15:00'], description: 'Booking time' },
+          time:           { type: SchemaType.STRING, description: 'Start time HH:MM — must match an active slot' },
+          hoistId:        { type: SchemaType.NUMBER, description: 'Hoist ID from the tech card the customer picked. Locks in the specific mechanic.' },
           type:           { type: SchemaType.STRING, enum: ['drop_off', 'wait', 'pickup_required', 'loan_car_needed'], description: 'How the customer will manage their car' },
-          serviceTypeIds: { type: SchemaType.ARRAY, items: { type: SchemaType.NUMBER }, description: 'Service type IDs' },
+          serviceTypeIds: { type: SchemaType.ARRAY,  items: { type: SchemaType.NUMBER }, description: 'Service type IDs' },
           notes:          { type: SchemaType.STRING, description: 'Customer notes or described symptoms' },
           courtesyCarId:  { type: SchemaType.NUMBER, description: 'Courtesy car ID if loan_car_needed' },
         },
-        required: ['storeId', 'date', 'time', 'type', 'serviceTypeIds'],
+        required: ['storeId', 'date', 'time', 'hoistId', 'type', 'serviceTypeIds'],
       },
     },
   ],
@@ -394,14 +342,16 @@ Available Rodz Smart Auto locations:
 - Rodz Smart Auto Somerville (storeId: 1) — Somerville VIC
 
 Booking steps — follow in order:
-1. Call getServiceTypes to fetch available services — present the real names, never guess IDs
-2. If the customer names a date, call checkTimeSlots for that date. Otherwise call checkAvailability for the month
-3. Once the customer picks a time, do NOT call availability again — proceed with that selection
-4. Ask how they'll manage the car: drop off, wait, or need a loan car
-5. If loan car needed, call checkCourtesyCars and tell the customer what's available
-6. Include any symptoms or issues they described in the notes field
-7. Show a full summary (service, date, time, drop-off type) and ask for confirmation
-8. Call bookAppointment only after confirmation — then give the booking ref and technician name
+1. Call getServiceTypes and let the customer pick — never guess IDs.
+2. Pass the chosen serviceTypeIds to every subsequent availability call so we only surface hoists that can actually do the work.
+3. If the customer names a date, call checkTimeSlots with that date. Otherwise call checkAvailability for the month to see which days are open.
+4. Each slot from checkTimeSlots has a techs[] array. Each entry is ONE bookable option — hoistId + techName. Present these as concrete choices ("Wednesday 08:30 with Howard Rodda" or "Wednesday 08:30 with Nev Rodda"). If techName is null (unassigned hoist like a tyre bay) say "any available technician".
+5. Remember the hoistId the customer picks — you'll need it for bookAppointment.
+6. Ask how they'll manage the car: drop off, wait, or need a loan car.
+7. If loan car needed, call checkCourtesyCars and tell the customer what's available.
+8. Include any symptoms or issues they described in the notes field.
+9. Show a full summary (service, date, time, technician, drop-off type) and ask for confirmation.
+10. Call bookAppointment with the confirmed { storeId, date, time, hoistId, ... } — then give the booking ref, time, and technician name back to the customer.
 ${guidance}`
 
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
@@ -415,8 +365,10 @@ ${guidance}`
   const contents: Content[] = [...ctx.history, { role: 'user', parts: [{ text: message }] }]
 
   return runAgentLoop(model, contents, async (name, args) => {
-    if (name === 'checkAvailability')  return checkAvailability(ctx.db, Number(args.storeId), String(args.month))
-    if (name === 'checkTimeSlots')     return checkTimeSlots(ctx.db, Number(args.storeId), String(args.date))
+    const svcIds = Array.isArray(args.serviceTypeIds) ? (args.serviceTypeIds as number[]) : undefined
+
+    if (name === 'checkAvailability')  return checkAvailability(ctx.db, Number(args.storeId), String(args.month), svcIds)
+    if (name === 'checkTimeSlots')     return checkTimeSlots(ctx.db, Number(args.storeId), String(args.date), svcIds)
     if (name === 'checkCourtesyCars')  return checkCourtesyCars(ctx.db, Number(args.storeId), String(args.date))
     if (name === 'getServiceTypes') {
       const [rows] = await ctx.db.query<any[]>(
@@ -428,8 +380,9 @@ ${guidance}`
       return createBooking(
         ctx.db, ctx.customerId, ctx.vehicleId,
         Number(args.storeId), String(args.date), String(args.time),
+        Number(args.hoistId),
         (args.type ?? 'drop_off') as any,
-        (args.serviceTypeIds as number[]) ?? [],
+        svcIds ?? [],
         args.notes ? String(args.notes) : undefined,
         args.courtesyCarId ? Number(args.courtesyCarId) : undefined,
       )
