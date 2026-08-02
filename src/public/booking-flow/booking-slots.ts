@@ -2,6 +2,7 @@ import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { badRequest, notFound, serverError } from '../../shared/errors'
+import { loadEligibleHoists, HoistTech } from '../../shared/bookingSlots'
 
 const ready = bootstrap()
 
@@ -64,6 +65,13 @@ interface SlotRow {
   sort_order: number
 }
 
+interface SlotTech {
+  hoistId:   number
+  hoistName: string
+  staffId:   number | null
+  name:      string | null
+}
+
 interface Slot {
   id:        number
   time:      string
@@ -72,6 +80,7 @@ interface Slot {
   sortOrder: number
   available: boolean
   reason:    string | null
+  techs:     SlotTech[]
 }
 
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
@@ -83,6 +92,13 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   const date = event.queryStringParameters?.date
   if (!date || !ISO_DATE.test(date)) return badRequest('date query param is required as YYYY-MM-DD.')
+
+  // Optional service filter. When provided, only hoists whose
+  // service_roles cover every requested service appear in `techs`.
+  const rawSvc = event.queryStringParameters?.serviceTypeIds ?? ''
+  const serviceTypeIds = rawSvc
+    ? String(rawSvc).split(',').map(s => Number(s.trim())).filter(n => Number.isFinite(n) && n > 0)
+    : undefined
 
   try {
     const [[store]] = await db.query<any[]>(
@@ -172,28 +188,28 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const isToday      = date === now.isoDate
     const nowMin       = toMinutes(now.hhmm)
 
-    // Occupancy per slot for that date. `cancelled_at` is the primary
-    // "this doesn't count" signal; status enum catches admin rejections
-    // + no-shows too.
+    // Per-slot occupancy tracked by (time → set of booked hoist_ids) so we
+    // can compute which specific hoists are free at each slot, not just a
+    // raw count. `cancelled_at` is the primary "this doesn't count" signal;
+    // status enum catches admin rejections + no-shows too.
     const [bookingRows] = await db.query<any[]>(
-      `SELECT TIME_FORMAT(booking_time, '%H:%i') AS slot_time, COUNT(*) AS n
+      `SELECT TIME_FORMAT(booking_time, '%H:%i') AS slot_time, hoist_id
        FROM bookings
        WHERE store_id = ?
          AND booking_date = ?
          AND cancelled_at IS NULL
-         AND status NOT IN ('cancelled', 'rejected', 'no_show')
-       GROUP BY booking_time`,
+         AND status NOT IN ('cancelled', 'rejected', 'no_show')`,
       [storeId, date],
     )
-    const occupancy = new Map<string, number>()
-    for (const r of bookingRows) occupancy.set(r.slot_time, Number(r.n))
+    const bookedHoistsByTime = new Map<string, Set<number>>()
+    for (const r of bookingRows) {
+      if (!bookedHoistsByTime.has(r.slot_time)) bookedHoistsByTime.set(r.slot_time, new Set())
+      if (r.hoist_id != null) bookedHoistsByTime.get(r.slot_time)!.add(Number(r.hoist_id))
+    }
 
-    // Slot capacity = number of active hoists at the store.
-    const [[hoistCount]] = await db.query<any[]>(
-      'SELECT COUNT(*) AS n FROM hoists WHERE store_id = ? AND is_active = 1',
-      [storeId],
-    )
-    const capacity = Number(hoistCount?.n ?? 0)
+    // Eligible hoists (filtered by requested service_roles when provided),
+    // joined to their assigned technician for the response's `techs` array.
+    const eligibleHoists = await loadEligibleHoists(db, storeId, serviceTypeIds)
 
     const shapedSlots: Slot[] = slots.map(s => {
       const slotMin = toMinutes(s.slot_time)
@@ -203,8 +219,10 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       if (slotMin > cutoffMin)                    return shapeUnavailable(s, 'past_cutoff')
       if (isToday && slotMin <= nowMin)           return shapeUnavailable(s, 'past_cutoff')
 
-      const booked = occupancy.get(s.slot_time) ?? 0
-      if (capacity > 0 && booked >= capacity)     return shapeUnavailable(s, 'full')
+      const bookedHoistIds = bookedHoistsByTime.get(s.slot_time) ?? new Set<number>()
+      const freeTechs      = eligibleHoists.filter(h => !bookedHoistIds.has(h.hoistId))
+
+      if (freeTechs.length === 0) return shapeUnavailable(s, 'full')
 
       return {
         id:        s.id,
@@ -214,6 +232,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         sortOrder: s.sort_order,
         available: true,
         reason:    null,
+        techs:     freeTechs.map(shapeTech),
       }
     })
 
@@ -238,6 +257,16 @@ function shapeUnavailable(s: SlotRow, reason: string): Slot {
     sortOrder: s.sort_order,
     available: false,
     reason,
+    techs:     [],
+  }
+}
+
+function shapeTech(h: HoistTech): SlotTech {
+  return {
+    hoistId:   h.hoistId,
+    hoistName: h.hoistName,
+    staffId:   h.staffId,
+    name:      h.name,           // null when the hoist has no assigned tech
   }
 }
 
