@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { handler as availabilityHandler } from '../../src/customer/stores/booking-slots'
 import { handler as staffListHandler }    from '../../src/stores/booking-slots/list'
 import { handler as staffCreateHandler }  from '../../src/stores/booking-slots/create'
@@ -20,24 +20,31 @@ const CUSTOMER_ID = 3
 // A unique time far outside the default four so we never collide.
 const TEST_TIMES = ['10:15', '10:16', '10:17', '10:18', '10:19']
 
-async function purgeTestSlots() {
-  // Wipe every slot at store 1 that ISN'T one of the three seed rows.
-  // We identify seeds by (slot_time, label) so we don't accidentally
-  // delete a real slot staff may have added via the API.
-  await db().query(
-    `DELETE FROM store_booking_slots
-     WHERE store_id = ?
-       AND NOT (
-         (slot_time = '08:30:00' AND label = 'Morning 1') OR
-         (slot_time = '11:00:00' AND label = 'Morning 2') OR
-         (slot_time = '14:00:00' AND label = 'Afternoon')
-       )`,
-    [STORE_ID],
-  )
+// Canonical seed the file assumes exists. Each test starts from exactly
+// this state (nothing extra, seed rows reset to their default times).
+const SEED_SLOTS = [
+  { time: '08:30:00', end: '09:30:00', label: 'Morning 1', sort: 0 },
+  { time: '11:00:00', end: '12:00:00', label: 'Morning 2', sort: 1 },
+  { time: '14:00:00', end: '15:00:00', label: 'Afternoon', sort: 2 },
+]
+
+async function resetSlotsToSeed() {
+  // Full reset — wipe every slot at store 1 and re-seed the three canonical
+  // rows. Robust against any ambient DB drift (staff editing via the API,
+  // half-cleaned tests from a prior run, etc.).
+  await db().query('DELETE FROM store_booking_slots WHERE store_id = ?', [STORE_ID])
+  for (const s of SEED_SLOTS) {
+    await db().query(
+      `INSERT INTO store_booking_slots (store_id, slot_time, end_time, label, sort_order, is_active)
+       VALUES (?, ?, ?, ?, ?, 1)`,
+      [STORE_ID, s.time, s.end, s.label, s.sort],
+    )
+  }
 }
 
-beforeEach(async () => { await purgeTestSlots() })
-afterAll(async () => { await purgeTestSlots() })
+beforeAll(resetSlotsToSeed)
+beforeEach(resetSlotsToSeed)
+afterAll(resetSlotsToSeed)
 
 // Pick a future Wednesday (day_of_week = 3) — always open.
 function nextWednesday(): string {

@@ -18,9 +18,13 @@ Staff can add, edit, deactivate, or delete slots freely — nothing in the code 
 
 ## Customer app
 
-### `GET /c/stores/{id}/booking-slots?date=YYYY-MM-DD`
+### `GET /c/stores/{id}/booking-slots?date=YYYY-MM-DD&serviceTypeIds=1,2`
 
 Returns the available slots for a store on a given date. **Auth: customer JWT.**
+
+**Query params:**
+- `date` — required, `YYYY-MM-DD`.
+- `serviceTypeIds` — optional, comma-separated ints. When present, `techs[]` on each slot is filtered to hoists whose `service_roles` can perform every requested service. Omit and every eligible hoist is returned.
 
 **Response:**
 ```jsonc
@@ -30,12 +34,30 @@ Returns the available slots for a store on a given date. **Auth: customer JWT.**
   "storeOpen": true,
   "reason":    null,
   "slots": [
-    { "id": 1, "time": "08:30", "endTime": "09:30", "label": "Morning 1", "sortOrder": 0, "available": true,  "reason": null },
-    { "id": 2, "time": "11:00", "endTime": "12:00", "label": "Morning 2", "sortOrder": 1, "available": true,  "reason": null },
-    { "id": 3, "time": "14:00", "endTime": "15:00", "label": "Afternoon", "sortOrder": 2, "available": false, "reason": "full" }
+    {
+      "id": 1, "time": "08:30", "endTime": "09:30", "label": "Morning 1", "sortOrder": 0,
+      "available": true, "reason": null,
+      "techs": [
+        { "hoistId": 1, "hoistName": "Hoist 1", "staffId": 3, "name": "Howard Rodda", "avatarUrl": "https://…" },
+        { "hoistId": 2, "hoistName": "Hoist 2", "staffId": 8, "name": "Nev Rodda",    "avatarUrl": null }
+      ]
+    },
+    {
+      "id": 2, "time": "11:00", "endTime": "12:00", "label": "Morning 2", "sortOrder": 1,
+      "available": false, "reason": "full", "techs": []
+    },
+    {
+      "id": 3, "time": "14:00", "endTime": "15:00", "label": "Afternoon", "sortOrder": 2,
+      "available": true, "reason": null,
+      "techs": [
+        { "hoistId": 4, "hoistName": "Tyre Bay", "staffId": null, "name": null, "avatarUrl": null }
+      ]
+    }
   ]
 }
 ```
+
+**Rendering the buttons:** each `slot.techs[]` entry is one bookable option. If a slot has 2 techs available, render 2 cards ("08:30 with Howard Rodda", "08:30 with Nev Rodda"). If `techs[i].name` is null (hoist has no assigned technician yet — e.g. the Tyre Bay), render as "Any available technician" or similar. The `hoistId` is what you send back on the create call.
 
 - `storeOpen` — false if the store is closed that day of week (Sunday) or the date is in the past.
 - `reason` on the top level — `"closed_dow"` or `"past_date"` when the store isn't taking bookings at all.
@@ -44,35 +66,55 @@ Returns the available slots for a store on a given date. **Auth: customer JWT.**
 
 ### `POST /c/bookings` — updated
 
-Two-buckets `slot` is gone. Send `time: "HH:MM"` instead. Everything else unchanged.
-
 **Body:**
 ```jsonc
 {
   "vehicleId":      4,
   "storeId":        1,
   "date":           "2026-08-05",
-  "time":           "11:00",             // NEW — must match an active slot
+  "time":           "11:00",             // must match an active slot
+  "hoistId":        2,                   // NEW — the specific hoist (and thus tech) the customer picked
   "type":           "drop_off",           // "drop_off" | "wait" | "pickup"
   "serviceTypeIds": [3, 7],
   "notes":          "clunking front-left"
 }
 ```
 
-**422 errors that can fire on `time`:**
-- `time must be in HH:MM format.` — client didn't send `HH:MM`.
-- `time HH:MM is not a bookable slot at this store.` — user picked a slot the store doesn't have (or was just deactivated).
-- `slot at HH:MM on YYYY-MM-DD is not available (full).` — hoist capacity reached at that time.
-- `slot at HH:MM on YYYY-MM-DD is not available (closed_dow).` — store closed that day.
+The booking is fully locked at creation — `bookings.hoist_id` and `bookings.assigned_staff_id` are both populated from the picked hoist. No workshop hand-off required.
 
-Response still includes `slot: 'morning' | 'afternoon'` for backward compat, plus a new `time: "HH:MM"` field for the exact time. Prefer `time`.
+**422 errors:**
+- `time must be in HH:MM format.` / `hoistId is required.` — bad request shape.
+- `time HH:MM is not a bookable slot at this store.` — user picked a slot the store doesn't have.
+- `slot at HH:MM on YYYY-MM-DD is not available (full).` — no hoist free at that time.
+- `slot at HH:MM on YYYY-MM-DD is not available (closed_dow / closed_exception).` — store closed.
+- `hoist {id} is not available for this slot + service.` — the specific hoist the customer picked is either busy or doesn't cover the requested services. Refresh availability and re-pick.
+
+**Response:**
+```jsonc
+{
+  "booking": {
+    "id":         42,
+    "bookingRef": "ABCD2345",
+    "date":       "2026-08-05",
+    "time":       "11:00",
+    "slot":       "morning",              // legacy enum — keep, but prefer `time`
+    "type":       "drop_off",
+    "status":     "pending",
+    "store":      { "name": "Somerville", "suburb": "Somerville" },
+    "hoist":      { "id": 2, "name": "Hoist 2" },
+    "tech":       { "id": 8, "name": "Nev Rodda" },   // null if hoist has no assigned tech
+    "services":   "Brake Pad Replace Front, General Oil Service"
+  }
+}
+```
 
 ### Booking UI flow
 
-1. User picks a date on the date picker.
-2. Frontend calls `GET /c/stores/{id}/booking-slots?date=…` — one round trip, always four slots back (or fewer if staff added/removed).
-3. Render four buttons (or however many `slots.length` is) in `sortOrder`. Disable the ones with `available: false` and show `reason` inline.
-4. User picks a time → `POST /c/bookings` with that `time`.
+1. User picks their vehicle + service types.
+2. User picks a date on the date picker.
+3. Frontend calls `GET /c/stores/{id}/booking-slots?date=…&serviceTypeIds=1,2` — one round trip returns each slot with its `techs[]`.
+4. For each `slot`, render one card per entry in `slot.techs[]` (e.g. "08:30 with Howard Rodda"). Disable slots with `available: false` and show `reason` inline. If a tech card has `name: null`, label it "Any available technician."
+5. User taps a specific (slot, tech) card → `POST /c/bookings` with `{ time, hoistId, ... }`. Booking is fully locked (store + date + time + hoist + tech) in one request — no staff assignment step required.
 
 ---
 
