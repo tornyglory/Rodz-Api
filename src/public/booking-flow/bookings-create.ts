@@ -6,6 +6,9 @@ import { badRequest, serverError, validationError } from '../../shared/errors'
 import { generateBookingRef } from '../../bookings/_helpers'
 import { sendBookingReceivedEmail } from '../../shared/emailTemplates'
 import { notifyStore } from '../../shared/staffNotifications'
+import {
+  findActiveSlotByTime, computeSlotAvailability, deriveSlotEnum,
+} from '../../shared/bookingSlots'
 import { issueClaimToken, buildClaimUrl } from './_claim-token'
 import { buildSubmissionContext, type ClientContextInput } from './_submission-context'
 
@@ -17,16 +20,17 @@ const lambdaClient = new LambdaClient({ region: process.env.REGION ?? 'ap-southe
 //
 // Guest booking creation for the 11-step flow at
 // workshop.rodz.com.au/book. Distinct from POST /book (the older
-// one-page website form) — this endpoint takes structured vehicle
-// data (already picked from the catalog by the frontend), uses
-// slot_id from the /booking-slots endpoint, verifies a Cloudflare
-// Turnstile token, and dedupes repeat submits via meta.sessionId.
+// one-page website form) — takes structured vehicle data (already
+// picked from the catalog by the frontend), a specific (time, hoistId)
+// pair the customer chose off the availability endpoint's techs[],
+// verifies a Cloudflare Turnstile token, and dedupes repeat submits
+// via meta.sessionId.
 //
 // Payload shape (all nested):
 //   customer:      { firstName, lastName, email, mobile }
 //   vehicle:       { year, make, model, series?, rego, regoState,
 //                    fuelType?, transmission?, avgKmPerWeek? }
-//   booking:       { storeId, date, slotId, serviceTypeIds[], customerNotes? }
+//   booking:       { storeId, date, time, hoistId, serviceTypeIds[], customerNotes? }
 //   meta:          { sessionId, utmSource?, utmMedium?, utmCampaign?, referer? }
 //   turnstileToken: string
 //
@@ -48,7 +52,8 @@ interface VehicleInput  {
   avgKmPerWeek?: unknown
 }
 interface BookingInput  {
-  storeId?: unknown; date?: unknown; slotId?: unknown
+  storeId?: unknown; date?: unknown
+  time?: unknown; hoistId?: unknown
   serviceTypeIds?: unknown; customerNotes?: unknown
 }
 interface MetaInput {
@@ -152,10 +157,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   const storeId = Number(bkg.storeId)
   const date    = typeof bkg.date === 'string' ? bkg.date : ''
-  const slotId  = Number(bkg.slotId)
+  const time    = typeof bkg.time === 'string' ? bkg.time.trim() : ''
+  const hoistId = Number(bkg.hoistId)
   if (!Number.isInteger(storeId) || storeId <= 0) return validationError('booking.storeId is required.')
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date))         return validationError('booking.date must be YYYY-MM-DD.')
-  if (!Number.isInteger(slotId) || slotId <= 0)  return validationError('booking.slotId is required.')
+  if (!/^\d{2}:\d{2}$/.test(time))               return validationError('time must be in HH:MM format.')
+  if (!Number.isInteger(hoistId) || hoistId <= 0) return validationError('hoistId is required.')
 
   const rawServiceIds = Array.isArray(bkg.serviceTypeIds) ? bkg.serviceTypeIds : []
   const serviceTypeIds = rawServiceIds.map(Number).filter(n => Number.isInteger(n) && n > 0)
@@ -213,9 +220,14 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const [[existing]] = await db.query<any[]>(
       `SELECT b.id, b.booking_ref, b.status,
               b.booking_date, TIME_FORMAT(b.booking_time, '%H:%i') AS booking_time,
-              b.customer_id, b.vehicle_id, s.name AS store_name
+              b.customer_id, b.vehicle_id, b.hoist_id, b.assigned_staff_id,
+              s.name AS store_name, s.suburb AS store_suburb,
+              h.name AS hoist_name,
+              st.first_name AS tech_first, st.last_name AS tech_last
        FROM bookings b
        JOIN stores s ON s.id = b.store_id
+       LEFT JOIN hoists h ON h.id = b.hoist_id
+       LEFT JOIN staff st ON st.id = b.assigned_staff_id
        WHERE b.session_id = ? LIMIT 1`,
       [sessionId],
     )
@@ -223,32 +235,33 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       const [[c]] = await db.query<any[]>('SELECT first_name, last_name FROM customers WHERE id = ?', [existing.customer_id])
       const [[v]] = await db.query<any[]>('SELECT year, make, model FROM vehicles WHERE id = ?', [existing.vehicle_id])
       return jsonResponse(200, {
-        bookingReference: existing.booking_ref,
-        bookingId:        Number(existing.id),
-        status:           existing.status,
-        customerName:     `${c.first_name} ${c.last_name}`,
-        vehicle:          `${v.year} ${v.make} ${v.model}`,
-        store:            existing.store_name,
-        date:             existing.booking_date instanceof Date ? existing.booking_date.toISOString().slice(0, 10) : String(existing.booking_date).slice(0, 10),
-        time:             existing.booking_time,
-        message:          'This booking was already submitted — returning the existing record.',
-        idempotent:       true,
+        booking: {
+          bookingReference: existing.booking_ref,
+          bookingId:        Number(existing.id),
+          status:           existing.status,
+          customerName:     `${c.first_name} ${c.last_name}`,
+          vehicle:          `${v.year} ${v.make} ${v.model}`,
+          store:            { name: existing.store_name, suburb: existing.store_suburb ?? null },
+          date:             existing.booking_date instanceof Date ? existing.booking_date.toISOString().slice(0, 10) : String(existing.booking_date).slice(0, 10),
+          time:             existing.booking_time,
+          hoist:            existing.hoist_id ? { id: Number(existing.hoist_id), name: String(existing.hoist_name) } : null,
+          tech:             existing.assigned_staff_id
+            ? { id: Number(existing.assigned_staff_id), name: `${existing.tech_first} ${existing.tech_last}` }
+            : null,
+          message:          'This booking was already submitted — returning the existing record.',
+          idempotent:       true,
+        },
       })
     }
 
-    // ── Load store + slot ──────────────────────────────────────────────────
-    const [[store]] = await db.query<any[]>('SELECT id, name FROM stores WHERE id = ? AND is_active = 1 LIMIT 1', [storeId])
+    // ── Load store + slot (by time, not by id) ─────────────────────────────
+    const [[store]] = await db.query<any[]>('SELECT id, name, suburb FROM stores WHERE id = ? AND is_active = 1 LIMIT 1', [storeId])
     if (!store) return validationError('booking.storeId is not a valid store.')
 
-    const [[slot]] = await db.query<any[]>(
-      `SELECT id, TIME_FORMAT(slot_time, '%H:%i:00') AS slot_time,
-              TIME_FORMAT(slot_time, '%H') AS slot_hour, label
-       FROM store_booking_slots
-       WHERE id = ? AND store_id = ? AND is_active = 1 LIMIT 1`,
-      [slotId, store.id],
-    )
-    if (!slot) return validationError('booking.slotId is not a valid slot for this store.')
-    const slotEnum: 'morning' | 'afternoon' = Number(slot.slot_hour) < 12 ? 'morning' : 'afternoon'
+    const slot = await findActiveSlotByTime(db, store.id, time)
+    if (!slot) return validationError(`time ${time} is not a bookable slot at this store.`)
+    const slotEnum = deriveSlotEnum(time)
+    const slotTimeSql = `${time}:00`
 
     // ── Validate service_type ids ──────────────────────────────────────────
     const [validServices] = await db.query<any[]>(
@@ -261,39 +274,36 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       return validationError('One or more selected serviceTypeIds are not available for booking.')
     }
 
-    // ── Slot capacity check ────────────────────────────────────────────────
-    const [[{ booked }]] = await db.query<any[]>(
-      `SELECT COUNT(*) AS booked FROM bookings
-       WHERE store_id = ? AND booking_date = ? AND booking_time = ?
-         AND cancelled_at IS NULL AND status NOT IN ('cancelled', 'rejected', 'no_show')`,
-      [store.id, date, slot.slot_time],
-    )
-    const [[{ hoist_count }]] = await db.query<any[]>(
-      'SELECT COUNT(*) AS hoist_count FROM hoists WHERE store_id = ? AND is_active = 1',
-      [store.id],
-    )
-    if (Number(booked) >= Number(hoist_count)) {
+    // ── Availability + hoist verification (same rules as /c/bookings) ──────
+    const availability = await computeSlotAvailability(db, store.id, date, serviceTypeIds)
+    const targetSlot   = availability.slots.find(s => s.id === slot.id)
+    if (!availability.storeOpen || !targetSlot?.available) {
       return {
         statusCode: 422,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: { code: 'SLOT_UNAVAILABLE', message: 'This slot is no longer available. Please choose another.' } }),
+        body: JSON.stringify({
+          error: {
+            code:    'SLOT_UNAVAILABLE',
+            message: `slot at ${time} on ${date} is not available (${(targetSlot as any)?.reason ?? availability.reason ?? 'unavailable'}).`,
+          },
+        }),
       }
     }
-
-    // ── Assign first free hoist ────────────────────────────────────────────
-    const [[freeHoist]] = await db.query<any[]>(
-      `SELECT id FROM hoists
-       WHERE store_id = ? AND is_active = 1
-         AND id NOT IN (
-           SELECT hoist_id FROM bookings
-           WHERE store_id = ? AND booking_date = ? AND booking_time = ?
-             AND cancelled_at IS NULL AND status NOT IN ('cancelled', 'rejected', 'no_show')
-             AND hoist_id IS NOT NULL
-         )
-       ORDER BY id LIMIT 1`,
-      [store.id, store.id, date, slot.slot_time],
-    )
-    const assignedHoistId: number | null = freeHoist?.id ?? null
+    const chosenTech = targetSlot.techs.find(t => t.hoistId === hoistId)
+    if (!chosenTech) {
+      return {
+        statusCode: 422,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          error: {
+            code:    'SLOT_UNAVAILABLE',
+            message: `hoist ${hoistId} is not available for this slot + service.`,
+          },
+        }),
+      }
+    }
+    const assignedHoistId    = chosenTech.hoistId
+    const assignedStaffId    = chosenTech.staffId ?? null
 
     // ── Upsert customer ────────────────────────────────────────────────────
     let [[customer]] = await db.query<any[]>(
@@ -345,18 +355,27 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     // ── Create booking ─────────────────────────────────────────────────────
     const bookingRef = generateBookingRef()
+    const bookingEnd = slot.endTime         // 'HH:MM:SS'
+    const durationMins = (() => {
+      const [sh, sm] = slotTimeSql.slice(0, 5).split(':').map(Number)
+      const [eh, em] = bookingEnd.slice(0, 5).split(':').map(Number)
+      return Math.max(15, (eh * 60 + em) - (sh * 60 + sm))
+    })()
+
     const [bookingIns] = await db.query<any>(
       `INSERT INTO bookings
          (store_id, booking_ref, session_id, customer_id, vehicle_id,
-          booking_date, booking_time, slot, hoist_id,
+          booking_date, booking_time, end_time, estimated_duration_mins,
+          slot, hoist_id, assigned_staff_id,
           drop_off_type, booking_source,
           utm_source, utm_medium, utm_campaign, referer_url,
           submission_context,
           customer_notes, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'drop_off', 'website', ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'drop_off', 'website', ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
       [
         store.id, bookingRef, sessionId, customer.id, vehicle.id,
-        date, slot.slot_time, slotEnum, assignedHoistId,
+        date, slotTimeSql, bookingEnd, durationMins,
+        slotEnum, assignedHoistId, assignedStaffId,
         utmSource, utmMedium, utmCampaign, refererUrl,
         JSON.stringify(submissionContext),
         customerNotes,
@@ -384,7 +403,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     await notifyStore(db, store.id, {
       type:      'booking_received',
       title:     'New Booking',
-      body:      `${customerName} — ${vehicleLabel} — ${date} (${slot.label ?? slotEnum})`,
+      body:      `${customerName} — ${vehicleLabel} — ${date} ${time}${chosenTech.name ? ` with ${chosenTech.name}` : ''}`,
       bookingId,
     }).catch(err => console.error('notifyStore failed:', err))
 
@@ -403,16 +422,23 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     }).catch(err => console.error('sendBookingReceivedEmail failed:', err))
 
     return jsonResponse(201, {
-      bookingReference: bookingRef,
-      bookingId,
-      status:           'pending',
-      customerName,
-      vehicle:          vehicleLabel,
-      store:            store.name,
-      date,
-      time:             (slot.slot_time as string).slice(0, 5),
-      slotLabel:        slot.label ?? null,
-      message:          `Thanks ${firstName} — we'll be in touch to confirm your booking.`,
+      booking: {
+        bookingReference: bookingRef,
+        bookingId,
+        status:           'pending',
+        customerName,
+        vehicle:          vehicleLabel,
+        store:            { name: store.name, suburb: store.suburb ?? null },
+        date,
+        time,
+        slotLabel:        slot.label ?? null,
+        hoist:            { id: chosenTech.hoistId, name: chosenTech.hoistName },
+        tech:             chosenTech.staffId
+          ? { id: chosenTech.staffId, name: chosenTech.name }
+          : null,
+        services:         validServices.map((s: any) => s.name).join(', '),
+        message:          `Thanks ${firstName} — we'll be in touch to confirm your booking.`,
+      },
     })
   } catch (err) {
     return serverError(err)
