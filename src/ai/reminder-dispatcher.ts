@@ -1,6 +1,7 @@
 import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
 import { sendMaintenanceReminderEmail } from '../shared/emailTemplates'
+import { pushToCustomer } from '../shared/push'
 
 const ready = bootstrap()
 
@@ -38,13 +39,17 @@ export const handler = async (): Promise<void> => {
        WHERE r.status = 'active'
          AND r.estimated_due_odometer IS NOT NULL
          AND v.odometer_current IS NOT NULL
-         AND (r.estimated_due_odometer - (
+         -- Cast to SIGNED so the (due - predicted) subtraction can go
+         -- negative without blowing up on BIGINT UNSIGNED underflow when
+         -- a service is already past due. The BETWEEN filter drops
+         -- negatives anyway (they were already sent or missed).
+         AND (CAST(r.estimated_due_odometer AS SIGNED) - CAST((
            CASE
              WHEN v.odometer_recorded_at IS NOT NULL
              THEN v.odometer_current + (DATEDIFF(CURDATE(), v.odometer_recorded_at) * ${KM_PER_DAY})
              ELSE v.odometer_current
            END
-         )) BETWEEN 0 AND ?`,
+         ) AS SIGNED)) BETWEEN 0 AND ?`,
       [KM_THRESHOLD],
     )
 
@@ -65,6 +70,29 @@ export const handler = async (): Promise<void> => {
           costMin:       row.estimated_cost_min ? Number(row.estimated_cost_min) : null,
           costMax:       row.estimated_cost_max ? Number(row.estimated_cost_max) : null,
         })
+
+        // Push notification alongside the email. pushToCustomer handles
+        // the whole gating chain internally: service_due pref column,
+        // quiet hours, per-day rate limits, 30-day dedupe (keyed on
+        // eventId = `maintenance_due:{rec_id}`), and a fallback audit
+        // row when the customer has no registered device tokens. So the
+        // customer still sees the reminder in the portal notification
+        // centre even if they haven't installed the mobile app.
+        try {
+          const dueInKm = Math.max(0, Number(row.estimated_due_odometer) - Number(row.predicted_km ?? row.odometer_current))
+          await pushToCustomer(db, Number(row.customer_id), {
+            type:      'maintenance_due',
+            title:     `${row.year} ${row.make} ${row.model} — service coming up`,
+            body:      dueInKm > 0
+              ? `${row.title} — due in about ${dueInKm.toLocaleString()} km.`
+              : `${row.title} — due now.`,
+            deeplink:  `/account/vehicles/${row.vehicle_id}/maintenance`,
+            eventId:   `maintenance_due:${row.rec_id}`,
+            vehicleId: Number(row.vehicle_id),
+          })
+        } catch (pushErr) {
+          console.error(`Failed to send push for rec_id ${row.rec_id}:`, pushErr)
+        }
 
         await db.query(
           `UPDATE ai_recommendations
