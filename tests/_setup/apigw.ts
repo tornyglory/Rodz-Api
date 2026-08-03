@@ -42,6 +42,12 @@ function base(opts: EventOpts): APIGatewayProxyEventV2 {
   } as APIGatewayProxyEventV2
 }
 
+// For public / unauthenticated endpoints (Turnstile-guarded guest flow,
+// public logbook, etc.). No authorizer context, just the base event.
+export function publicEvent(opts: EventOpts = {}): APIGatewayProxyEventV2 {
+  return base(opts)
+}
+
 export function customerEvent(customerId: number, opts: EventOpts = {}): APIGatewayProxyEventV2 {
   const ev = base(opts)
   ;(ev.requestContext as any).authorizer = { lambda: { customerId: String(customerId) } }
