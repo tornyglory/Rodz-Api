@@ -30,7 +30,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         'SELECT store_id FROM customers WHERE id = ? LIMIT 1',
         [customerId],
       )
-      if (customer?.store_id !== ctx.storeId) return notFound('Vehicle')
+      // getAuthContext returns storeId as a string; MySQL returns store_id
+      // as a number. Coerce both sides so store_manager access actually works.
+      if (Number(customer?.store_id) !== Number(ctx.storeId)) return notFound('Vehicle')
     }
 
     // Same odometer filter as the customer-portal endpoint — even for

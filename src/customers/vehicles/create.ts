@@ -1,9 +1,11 @@
+import crypto from 'crypto'
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { getAuthContext } from '../../shared/auth'
 import { created, forbidden, notFound, validationError, serverError } from '../../shared/errors'
 import { invokeRecommendationEngineIfMissing, invokeVehicleProfileEngine } from '../../shared/aiEngines'
+import { loadVehicleForResponse } from './_helpers'
 
 const ready = bootstrap()
 
@@ -61,12 +63,18 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     )
     if (existing) return conflict('DUPLICATE_REGO', `Rego ${regoNorm} already exists.`)
 
+    // Generate the logbook token at create time so the setup wizard can
+    // immediately hit /logbook/{token}/profile for the AI profile step.
+    // Previously created lazily on first read via loadVehicleForResponse
+    // — but the wizard needs it back inside the same round-trip.
+    const logbookToken = crypto.randomBytes(32).toString('hex')
+
     const [vResult] = await db.query<any>(
       `INSERT INTO vehicles
          (rego, make, model, year, fuel_type, transmission,
-          odometer_current, odometer_recorded_at, avg_km_per_week)
-       VALUES (?, ?, ?, ?, 'petrol', 'automatic', ?, ${odometerCurrentVal != null ? 'NOW()' : 'NULL'}, ?)`,
-      [regoNorm, make.trim(), model.trim(), Number(year), odometerCurrentVal, avgKmPerWeekVal],
+          odometer_current, odometer_recorded_at, avg_km_per_week, logbook_token)
+       VALUES (?, ?, ?, ?, 'petrol', 'automatic', ?, ${odometerCurrentVal != null ? 'NOW()' : 'NULL'}, ?, ?)`,
+      [regoNorm, make.trim(), model.trim(), Number(year), odometerCurrentVal, avgKmPerWeekVal, logbookToken],
     )
 
     await db.query(
@@ -78,9 +86,15 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     await invokeVehicleProfileEngine(vResult.insertId)
     await invokeRecommendationEngineIfMissing(db, vResult.insertId, Number(customerId))
 
-    return created({
-      vehicle: { id: vResult.insertId, rego: regoNorm, year: Number(year), make: make.trim(), model: model.trim() },
-    })
+    // Return the full shape used by every other endpoint (staff GET,
+    // customer GET, etc.) so the wizard doesn't need a follow-up fetch
+    // to see fields like `logbookToken`, `avatarUrl`, `publicProfileSettings`.
+    const loaded = await loadVehicleForResponse(db, customerId!, vResult.insertId)
+    if (loaded.state !== 'ok') {
+      // Should be unreachable — we just inserted the row + owner link.
+      return serverError(new Error(`Vehicle ${vResult.insertId} not readable after create.`))
+    }
+    return created({ vehicle: loaded.payload })
   } catch (err) {
     return serverError(err)
   }
