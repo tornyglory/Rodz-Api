@@ -228,6 +228,7 @@ Rules: **detail** goes to S3, **aggregates** into summary tables, **pointers** i
 | `odometer_unit` | enum | NO | `km` |
 | `odometer_current` | int unsigned | YES | — |
 | `odometer_recorded_at` | datetime | YES | — |
+| `avg_km_per_week` | int unsigned | YES | Customer-declared average weekly usage. Weekly-odometer-bump job falls back to 240 km/week when NULL. |
 | `odometer_at_purchase` | int unsigned | YES | — |
 | `service_interval_km` | int unsigned | YES | `10000` |
 | `service_interval_months` | tinyint | YES | `6` |
