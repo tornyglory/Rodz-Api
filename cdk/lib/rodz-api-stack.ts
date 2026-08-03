@@ -177,12 +177,12 @@ export class RodzApiStack extends Stack {
       entry: src('bookings/create.ts'), vpc, sharedEnv, needsSes: true,
     }).fn
 
-    const bookingUpdateFn = new LambdaFn(this, 'BookingUpdate', {
-      entry: src('bookings/update.ts'), vpc, sharedEnv, needsSes: true,
-    }).fn
-
-    const bookingDeleteFn = new LambdaFn(this, 'BookingDelete', {
-      entry: src('bookings/delete.ts'), vpc, sharedEnv,
+    // Single Lambda serving GET / PATCH / DELETE on /bookings/{id} via a
+    // router (see src/bookings/router.ts). Consolidated to conserve the
+    // shared HttpApi's 300-route cap. `needsSes: true` because the
+    // PATCH handler sends confirmation emails on status changes.
+    const bookingByIdFn = new LambdaFn(this, 'BookingById', {
+      entry: src('bookings/router.ts'), vpc, sharedEnv, needsSes: true,
     }).fn
 
     // ── Hoists (operational) ────────────────────────────────────────────────
@@ -605,18 +605,15 @@ export class RodzApiStack extends Stack {
       authorizer,
     })
 
+    // ANY /bookings/{id} — GET / PATCH / DELETE all served by bookingByIdFn.
+    // No route-level authorizer: the router handles CORS preflight and
+    // JWT verification itself (see src/shared/staffAuth.ts). GET was
+    // missing entirely before this consolidation (returned 404 for every
+    // request); wiring the router in fixes it and drops us -1 net route.
     httpApi.addRoutes({
       path: '/bookings/{id}',
-      methods: [HttpMethod.PATCH],
-      integration: new HttpLambdaIntegration('BookingUpdateInt', bookingUpdateFn),
-      authorizer,
-    })
-
-    httpApi.addRoutes({
-      path: '/bookings/{id}',
-      methods: [HttpMethod.DELETE],
-      integration: new HttpLambdaIntegration('BookingDeleteInt', bookingDeleteFn),
-      authorizer,
+      methods: [HttpMethod.ANY],
+      integration: new HttpLambdaIntegration('BookingByIdInt', bookingByIdFn),
     })
 
     httpApi.addRoutes({
