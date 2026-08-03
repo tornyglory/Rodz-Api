@@ -3,6 +3,7 @@ import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { badRequest, notFound, serverError } from '../../shared/errors'
 import { loadEligibleHoists, HoistTech } from '../../shared/bookingSlots'
+import { imageUrls } from '../../shared/cloudflare'
 
 const ready = bootstrap()
 
@@ -70,6 +71,7 @@ interface SlotTech {
   hoistName: string
   staffId:   number | null
   name:      string | null
+  avatarUrl: string | null
 }
 
 interface Slot {
@@ -267,6 +269,7 @@ function shapeTech(h: HoistTech): SlotTech {
     hoistName: h.hoistName,
     staffId:   h.staffId,
     name:      h.name,           // null when the hoist has no assigned tech
+    avatarUrl: h.avatarImageId ? imageUrls(h.avatarImageId).thumbnail : null,
   }
 }
 
