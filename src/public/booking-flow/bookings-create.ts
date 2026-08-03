@@ -364,11 +364,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       return Math.max(15, (eh * 60 + em) - (sh * 60 + sm))
     })()
 
-    // Status = 'confirmed' at creation. The customer has already picked a
-    // specific (time, hoistId) from the availability endpoint's techs[],
-    // and we've re-verified that hoist is free for the slot — there's no
-    // staff review step. The whole point of the (time, hoistId) contract
-    // is "fully locked at creation, no workshop hand-off."
+    // Status = 'pending' at creation. Hoist + tech are still locked from
+    // the availability response — the slot's genuinely taken as soon as
+    // the row lands because the availability query only excludes
+    // cancelled/rejected/no_show. Confirmation happens in the workshop
+    // app via PATCH /bookings/{id} { status: 'confirmed' }, which fires
+    // the confirmation email + push and spawns the service_jobs row.
     const [bookingIns] = await db.query<any>(
       `INSERT INTO bookings
          (store_id, booking_ref, session_id, customer_id, vehicle_id,
@@ -378,7 +379,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
           utm_source, utm_medium, utm_campaign, referer_url,
           submission_context,
           customer_notes, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'drop_off', 'website', ?, ?, ?, ?, ?, ?, 'confirmed', NOW(), NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'drop_off', 'website', ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
       [
         store.id, bookingRef, sessionId, customer.id, vehicle.id,
         date, slotTimeSql, durationMins,
@@ -432,7 +433,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       booking: {
         bookingReference: bookingRef,
         bookingId,
-        status:           'confirmed',
+        status:           'pending',
         customerName,
         vehicle:          vehicleLabel,
         store:            { name: store.name, suburb: store.suburb ?? null },
