@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI, Tool, SchemaType, Content } from '@google/generative-ai'
+import type mysql from 'mysql2/promise'
 import type { AgentContext, AgentResult } from './types'
 import { runAgentLoop } from './runner'
 import { assistantPersonaPreamble } from '../../shared/assistantPersona'
@@ -11,7 +12,7 @@ import { loadActivePrompt, renderLearnedGuidance } from '../../shared/prompts'
 // recommended, refers to attached photos on the frontend.
 
 async function getMyRecentQuotes(
-  db: any,
+  db: mysql.Pool,
   customerId: number,
   vehicleId: number,
   limit: number,
@@ -49,7 +50,7 @@ async function getMyRecentQuotes(
 }
 
 async function getQuoteDetail(
-  db: any,
+  db: mysql.Pool,
   customerId: number,
   vehicleId: number,
   quoteId: number,

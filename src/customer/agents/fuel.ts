@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI, Tool, SchemaType, Content } from '@google/generative-ai'
+import type mysql from 'mysql2/promise'
 import type { AgentContext, AgentResult } from './types'
 import { runAgentLoop } from './runner'
 import { assistantPersonaPreamble } from '../../shared/assistantPersona'
@@ -6,7 +7,7 @@ import { loadActivePrompt, renderLearnedGuidance } from '../../shared/prompts'
 
 const VALID_FUEL_TYPES = ['unleaded_91', 'unleaded_95', 'unleaded_98', 'diesel', 'lpg', 'e10', 'ev_kwh']
 
-async function getNearbyFuelPrices(db: any, suburb: string, state: string | null, fuelType: string): Promise<object> {
+async function getNearbyFuelPrices(db: mysql.Pool, suburb: string, state: string | null, fuelType: string): Promise<object> {
   if (!VALID_FUEL_TYPES.includes(fuelType)) return { error: `Invalid fuel type. Must be one of: ${VALID_FUEL_TYPES.join(', ')}` }
 
   const whereClause = state
@@ -52,7 +53,7 @@ async function getNearbyFuelPrices(db: any, suburb: string, state: string | null
   }
 }
 
-async function getFuelTrends(db: any, stationName: string, suburb: string, fuelType: string, days: number): Promise<object> {
+async function getFuelTrends(db: mysql.Pool, stationName: string, suburb: string, fuelType: string, days: number): Promise<object> {
   if (!VALID_FUEL_TYPES.includes(fuelType)) return { error: `Invalid fuel type` }
 
   const [rows] = await db.query<any[]>(

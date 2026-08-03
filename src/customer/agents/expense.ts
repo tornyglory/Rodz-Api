@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI, Tool, SchemaType, Content } from '@google/generative-ai'
+import type mysql from 'mysql2/promise'
 import type { AgentContext, AgentResult } from './types'
 import { runAgentLoop } from './runner'
 import { readFromDataLake } from '../../shared/dataLake'
@@ -10,7 +11,7 @@ import { loadActivePrompt, renderLearnedGuidance } from '../../shared/prompts'
 // returned empty because that table is never populated by the customer
 // expense flow. See src/customer/vehicles/expenses/create.ts:17.
 
-async function getExpenseSummary(db: any, vehicleId: number, customerId: number, year: number): Promise<object> {
+async function getExpenseSummary(db: mysql.Pool, vehicleId: number, customerId: number, year: number): Promise<object> {
   const fromDate = `${year}-01-01`
   const toDate   = `${year}-12-31`
 
@@ -85,7 +86,7 @@ async function getExpenseSummary(db: any, vehicleId: number, customerId: number,
   }
 }
 
-async function getRecentExpenses(db: any, vehicleId: number, customerId: number, limit = 10): Promise<object> {
+async function getRecentExpenses(db: mysql.Pool, vehicleId: number, customerId: number, limit = 10): Promise<object> {
   const [pointers] = await db.query<any[]>(
     `SELECT id, s3_key, event_date FROM s3_event_index
      WHERE vehicle_id = ? AND customer_id = ?

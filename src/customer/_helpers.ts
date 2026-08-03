@@ -1,4 +1,5 @@
 import { APIGatewayProxyEventV2 } from 'aws-lambda'
+import type mysql from 'mysql2/promise'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { imageUrls } from '../shared/cloudflare'
 import { safeGet, safeSetEx, safeDel } from '../shared/redis'
@@ -19,7 +20,7 @@ export function getCustomerContext(event: APIGatewayProxyEventV2): CustomerConte
 export type Tier = 'free' | 'silver' | 'gold'
 const TIER_TTL_SEC = 900
 
-export async function getCustomerTier(db: any, customerId: number): Promise<Tier> {
+export async function getCustomerTier(db: mysql.Pool, customerId: number): Promise<Tier> {
   const cached = await safeGet<{ tier: Tier }>(`subscription:${customerId}`)
   if (cached?.tier) return cached.tier
   const [[row]] = await db.query<any[]>(
@@ -35,7 +36,7 @@ export async function invalidateCustomerTier(customerId: number): Promise<void> 
   await safeDel(`subscription:${customerId}`)
 }
 
-export async function isPremium(db: any, customerId: number): Promise<boolean> {
+export async function isPremium(db: mysql.Pool, customerId: number): Promise<boolean> {
   const tier = await getCustomerTier(db, customerId)
   return tier !== 'free'
 }

@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI, Tool, SchemaType, Content } from '@google/generative-ai'
+import type mysql from 'mysql2/promise'
 import type { AgentContext, AgentResult } from './types'
 import { runAgentLoop } from './runner'
 import { notifyStore } from '../../shared/staffNotifications'
@@ -27,7 +28,7 @@ function monthDates(year: number, mon: number): string[] {
 // response small enough that the LLM can reason over it without eating
 // half the context window.
 async function checkAvailability(
-  db: any,
+  db: mysql.Pool,
   storeId: number,
   month: string,
   serviceTypeIds?: number[],
@@ -64,7 +65,7 @@ async function checkAvailability(
 // options; the AI should present these as concrete choices ("08:30 with
 // Howard Rodda" / "08:30 with Nev Rodda") and remember the hoistId.
 async function checkTimeSlots(
-  db: any,
+  db: mysql.Pool,
   storeId: number,
   date: string,
   serviceTypeIds?: number[],
@@ -108,7 +109,7 @@ async function checkTimeSlots(
   }
 }
 
-async function checkCourtesyCars(db: any, storeId: number, date: string): Promise<object> {
+async function checkCourtesyCars(db: mysql.Pool, storeId: number, date: string): Promise<object> {
   const [cars] = await db.query<any[]>(
     `SELECT cc.id, cc.make, cc.model, cc.year, cc.color
      FROM courtesy_cars cc
@@ -131,7 +132,7 @@ async function checkCourtesyCars(db: any, storeId: number, date: string): Promis
 }
 
 async function createBooking(
-  db: any,
+  db: mysql.Pool,
   customerId: number,
   vehicleId: number,
   storeId: number,
@@ -319,7 +320,7 @@ const TOOLS: Tool[] = [{
           date:           { type: SchemaType.STRING, description: 'Date in YYYY-MM-DD format' },
           time:           { type: SchemaType.STRING, description: 'Start time HH:MM — must match an active slot' },
           hoistId:        { type: SchemaType.NUMBER, description: 'Hoist ID from the tech card the customer picked. Locks in the specific mechanic.' },
-          type:           { type: SchemaType.STRING, enum: ['drop_off', 'wait', 'pickup_required', 'loan_car_needed'], description: 'How the customer will manage their car' },
+          type:           { type: SchemaType.STRING, format: 'enum', enum: ['drop_off', 'wait', 'pickup_required', 'loan_car_needed'], description: 'How the customer will manage their car' },
           serviceTypeIds: { type: SchemaType.ARRAY,  items: { type: SchemaType.NUMBER }, description: 'Service type IDs' },
           notes:          { type: SchemaType.STRING, description: 'Customer notes or described symptoms' },
           courtesyCarId:  { type: SchemaType.NUMBER, description: 'Courtesy car ID if loan_car_needed' },

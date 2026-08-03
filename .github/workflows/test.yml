@@ -1,0 +1,41 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `npm run build` = `tsc --noEmit`. Catches type regressions before
+      # they hit a manual deploy. The AI booking agent has 12 pre-existing
+      # untyped-DB warnings (TS2347) we're not counting as fatal today —
+      # they're existing debt and would take a broader typing pass to fix.
+      - name: Typecheck
+        run: npm run build
+
+      # Unit tests only in CI. Integration tests need real MySQL access
+      # (dev DB creds in .env) so they're kept as a local-only step —
+      # devs run `npm run test:integration` before deploying anything
+      # that touches the DB layer.
+      - name: Unit tests
+        run: npm test

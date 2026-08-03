@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI, Tool, SchemaType, Content } from '@google/generative-ai'
+import type mysql from 'mysql2/promise'
 import type { AgentContext, AgentResult } from './types'
 import { runAgentLoop } from './runner'
 import {
@@ -13,7 +14,7 @@ import {
 } from '../../shared/assistantPersona'
 import { loadActivePrompt, renderLearnedGuidance } from '../../shared/prompts'
 
-async function getVehicleValue(db: any, vehicleId: number): Promise<object> {
+async function getVehicleValue(db: mysql.Pool, vehicleId: number): Promise<object> {
   const [[v]] = await db.query<any[]>(
     `SELECT make, model, year, series, fuel_type, transmission, body_type, colour,
             odometer_current, rego_state

@@ -50,9 +50,12 @@ export async function resolveStoreScope(
   db: mysql.Pool,
   role: string,
   staffId: string,
-  storeId: number,
+  // Accept either — getAuthContext returns string, some callers pass Number
+  // directly. Coerce inside.
+  storeId: number | string,
   storeParam: string | undefined,
 ): Promise<StoreScope> {
+  storeId = typeof storeId === 'string' ? Number(storeId) : storeId
   if (role !== 'super_admin') {
     const allowedIds = await getAllowedStoreIds(db, staffId)
     // Fall back to JWT storeId if staff_store_access is empty

@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI, Tool, SchemaType, Content } from '@google/generative-ai'
+import type mysql from 'mysql2/promise'
 import type { AgentContext, AgentResult } from './types'
 import { runAgentLoop } from './runner'
 import { assistantPersonaPreamble } from '../../shared/assistantPersona'
@@ -10,7 +11,7 @@ function toDate(v: any): string {
   return d.toISOString().slice(0, 10)
 }
 
-async function getLogbookTimeline(db: any, vehicleId: number, customerId: number, vehicleRego: string): Promise<object> {
+async function getLogbookTimeline(db: mysql.Pool, vehicleId: number, customerId: number, vehicleRego: string): Promise<object> {
   const [rodzRows] = await db.query<any[]>(
     `SELECT vsl.service_date, COALESCE(i.odometer_in, vsl.odometer) AS odometer,
             vsl.store, vsl.tech, vsl.total, vsl.ai_summary, vsl.invoice_number
