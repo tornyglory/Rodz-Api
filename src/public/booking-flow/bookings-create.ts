@@ -32,7 +32,8 @@ const lambdaClient = new LambdaClient({ region: process.env.REGION ?? 'ap-southe
 // Payload shape (all nested):
 //   customer:      { firstName, lastName, email, mobile }
 //   vehicle:       { year, make, model, series?, rego, regoState,
-//                    fuelType?, transmission?, avgKmPerWeek? }
+//                    fuelType?, transmission?,
+//                    odometerCurrent?, avgKmPerWeek? }
 //   booking:       { storeId, date, time, hoistId, serviceTypeIds[], customerNotes? }
 //   meta:          { sessionId, utmSource?, utmMedium?, utmCampaign?, referer? }
 //   turnstileToken: string
@@ -40,8 +41,10 @@ const lambdaClient = new LambdaClient({ region: process.env.REGION ?? 'ap-southe
 // Turnstile is verified when TURNSTILE_SECRET env var is set; if not,
 // verification is skipped with a console.warn (dev / staging mode).
 //
-// avgKmPerWeek is accepted in the payload but NOT persisted yet — the
-// vehicles.avg_km_per_week column is a deferred migration.
+// odometerCurrent + avgKmPerWeek anchor the maintenance-manager
+// pipeline: the AI schedule generator uses odometer as its projection
+// start, and the weekly-odometer-bump job increments by
+// avg_km_per_week (falling back to 240 km/week when null).
 
 const VALID_STATES = new Set(['VIC', 'NSW', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'])
 const VALID_FUEL   = new Set(['petrol', 'diesel', 'hybrid', 'electric', 'lpg', 'other'])
@@ -52,6 +55,7 @@ interface VehicleInput  {
   year?: unknown; make?: unknown; model?: unknown; series?: unknown
   rego?: unknown; regoState?: unknown
   fuelType?: unknown; transmission?: unknown
+  odometerCurrent?: unknown
   avgKmPerWeek?: unknown
 }
 interface BookingInput  {
@@ -157,6 +161,26 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   const series       = typeof veh.series       === 'string' ? veh.series.trim() : null
   const fuelType     = typeof veh.fuelType     === 'string' && VALID_FUEL.has(veh.fuelType.toLowerCase())  ? veh.fuelType.toLowerCase()  : null
   const transmission = typeof veh.transmission === 'string' && VALID_TRANS.has(veh.transmission.toLowerCase()) ? veh.transmission.toLowerCase() : null
+
+  // Optional maintenance-manager anchors. Skipped for existing vehicles
+  // (looked up by rego + rego_state below) so we don't stomp on data
+  // the workshop / customer already has.
+  let odometerCurrentVal: number | null = null
+  if (veh.odometerCurrent != null && veh.odometerCurrent !== '') {
+    const n = Number(veh.odometerCurrent)
+    if (!Number.isFinite(n) || n < 0 || n > 2_000_000) {
+      return validationError('vehicle.odometerCurrent must be a number between 0 and 2,000,000.')
+    }
+    odometerCurrentVal = Math.floor(n)
+  }
+  let avgKmPerWeekVal: number | null = null
+  if (veh.avgKmPerWeek != null && veh.avgKmPerWeek !== '') {
+    const n = Number(veh.avgKmPerWeek)
+    if (!Number.isFinite(n) || n < 0 || n > 5000) {
+      return validationError('vehicle.avgKmPerWeek must be a number between 0 and 5,000.')
+    }
+    avgKmPerWeekVal = Math.floor(n)
+  }
 
   const storeId = Number(bkg.storeId)
   const date    = typeof bkg.date === 'string' ? bkg.date : ''
@@ -328,11 +352,20 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       [rego, regoState],
     )
     if (!vehicle) {
+      // odometer_recorded_at is only stamped when we actually received an
+      // odometer reading — the weekly-bump job uses NULL as the "no anchor
+      // yet, skip me" signal.
       const [ins] = await db.query<any>(
         `INSERT INTO vehicles
-           (rego, rego_state, make, model, series, year, fuel_type, transmission, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-        [rego, regoState, make, model, series, year, fuelType ?? 'petrol', transmission ?? 'automatic'],
+           (rego, rego_state, make, model, series, year, fuel_type, transmission,
+            odometer_current, odometer_recorded_at, avg_km_per_week,
+            created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${odometerCurrentVal != null ? 'NOW()' : 'NULL'}, ?, NOW(), NOW())`,
+        [
+          rego, regoState, make, model, series, year,
+          fuelType ?? 'petrol', transmission ?? 'automatic',
+          odometerCurrentVal, avgKmPerWeekVal,
+        ],
       )
       vehicle = { id: (ins as any).insertId }
     }

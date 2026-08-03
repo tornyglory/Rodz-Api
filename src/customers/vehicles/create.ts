@@ -28,11 +28,31 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     )
     if (!customer) return notFound('Customer')
 
-    const { rego, year, make, model } = JSON.parse(event.body ?? '{}')
+    const { rego, year, make, model, odometerCurrent, avgKmPerWeek } = JSON.parse(event.body ?? '{}')
     if (!rego?.trim())  return validationError('rego is required.')
     if (!year)          return validationError('year is required.')
     if (!make?.trim())  return validationError('make is required.')
     if (!model?.trim()) return validationError('model is required.')
+
+    // Optional at create — staff can fill later. Anchors the maintenance
+    // pipeline: odometer is the AI schedule's starting point + weekly-bump
+    // anchor; avg_km_per_week overrides the 240 km/week default.
+    let odometerCurrentVal: number | null = null
+    if (odometerCurrent != null && odometerCurrent !== '') {
+      const n = Number(odometerCurrent)
+      if (!Number.isFinite(n) || n < 0 || n > 2_000_000) {
+        return validationError('odometerCurrent must be a number between 0 and 2,000,000.')
+      }
+      odometerCurrentVal = Math.floor(n)
+    }
+    let avgKmPerWeekVal: number | null = null
+    if (avgKmPerWeek != null && avgKmPerWeek !== '') {
+      const n = Number(avgKmPerWeek)
+      if (!Number.isFinite(n) || n < 0 || n > 5000) {
+        return validationError('avgKmPerWeek must be a number between 0 and 5,000.')
+      }
+      avgKmPerWeekVal = Math.floor(n)
+    }
 
     const regoNorm = rego.trim().toUpperCase()
     const [[existing]] = await db.query<any[]>(
@@ -42,9 +62,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (existing) return conflict('DUPLICATE_REGO', `Rego ${regoNorm} already exists.`)
 
     const [vResult] = await db.query<any>(
-      `INSERT INTO vehicles (rego, make, model, year, fuel_type, transmission)
-       VALUES (?, ?, ?, ?, 'petrol', 'automatic')`,
-      [regoNorm, make.trim(), model.trim(), Number(year)],
+      `INSERT INTO vehicles
+         (rego, make, model, year, fuel_type, transmission,
+          odometer_current, odometer_recorded_at, avg_km_per_week)
+       VALUES (?, ?, ?, ?, 'petrol', 'automatic', ?, ${odometerCurrentVal != null ? 'NOW()' : 'NULL'}, ?)`,
+      [regoNorm, make.trim(), model.trim(), Number(year), odometerCurrentVal, avgKmPerWeekVal],
     )
 
     await db.query(

@@ -47,7 +47,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
-    const { rego, regoState, vehicle, regoExpiry } = body
+    const { rego, regoState, vehicle, regoExpiry, odometerCurrent, avgKmPerWeek } = body
 
     if (!rego || !regoState || !vehicle) {
       return validationError('rego, regoState and vehicle description are required.')
@@ -64,6 +64,27 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       return validationError('regoExpiry must be in YYYY-MM-DD format.')
     }
     const regoExpiryVal = regoExpiry ? String(regoExpiry) : null
+
+    // Optional at create — customer can fill later via PATCH /c/vehicles/:id.
+    // Both anchor the maintenance-manager pipeline: odometer is the starting
+    // point for the AI schedule + the weekly auto-bump job; avg_km_per_week
+    // overrides the 240 km/week fallback used in the bump.
+    let odometerCurrentVal: number | null = null
+    if (odometerCurrent != null && odometerCurrent !== '') {
+      const n = Number(odometerCurrent)
+      if (!Number.isFinite(n) || n < 0 || n > 2_000_000) {
+        return validationError('odometerCurrent must be a number between 0 and 2,000,000.')
+      }
+      odometerCurrentVal = Math.floor(n)
+    }
+    let avgKmPerWeekVal: number | null = null
+    if (avgKmPerWeek != null && avgKmPerWeek !== '') {
+      const n = Number(avgKmPerWeek)
+      if (!Number.isFinite(n) || n < 0 || n > 5000) {
+        return validationError('avgKmPerWeek must be a number between 0 and 5,000.')
+      }
+      avgKmPerWeekVal = Math.floor(n)
+    }
 
     const parsed = await parseVehicle(String(vehicle))
     if ('error' in parsed) return validationError(parsed.error)
@@ -89,19 +110,24 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       }
     } else {
       const logbookToken = crypto.randomBytes(32).toString('hex')
+      // odometer_recorded_at is only set when we actually receive an
+      // odometer reading — the weekly-bump job needs a real anchor point
+      // to project from, and NULL is the "no reading yet, skip me" signal.
       const [ins] = await db.query<any>(
         `INSERT INTO vehicles
            (rego, rego_state, rego_expiry, make, model, series, year, fuel_type, transmission,
             body_type, engine_code, engine_size_cc, cylinders, drive_type,
             colour, tyre_size_front, tyre_size_rear, spare_tyre_size,
+            odometer_current, odometer_recorded_at, avg_km_per_week,
             service_interval_km, service_interval_months, logbook_token, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${odometerCurrentVal != null ? 'NOW()' : 'NULL'}, ?, ?, ?, ?, NOW(), NOW())`,
         [
           regoStr, stateStr, regoExpiryVal, parsed.make, parsed.model, parsed.series, parsed.year,
           parsed.fuelType ?? 'petrol', parsed.transmission ?? 'automatic', parsed.bodyType ?? null,
           parsed.engineCode ?? null, parsed.engineSizeCC ?? null, parsed.cylinders ?? null,
           parsed.driveType ?? null, parsed.colour ?? null, parsed.tyreSizeFront ?? null,
           parsed.tyreSizeRear ?? null, parsed.spareTyreSize ?? null,
+          odometerCurrentVal, avgKmPerWeekVal,
           parsed.serviceIntervalKm ?? null, parsed.serviceIntervalMonths ?? null,
           logbookToken,
         ],
