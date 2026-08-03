@@ -2,28 +2,39 @@
 
 ## Overview
 
-When a vehicle is created or its odometer moves significantly, the system automatically generates a personalised lifetime maintenance schedule using Google Gemini. As the vehicle's odometer approaches each milestone, the customer receives an email reminding them what's due and offering a direct booking link. The customer can also view the full schedule directly in the customer portal.
+When a vehicle is created, the system captures its current odometer + rough weekly km usage, then generates a personalised lifetime maintenance schedule using Google Gemini. Every week a batch job auto-increments the odometer so predictions stay fresh between real-world readings. Every day a dispatcher checks which recommendations are approaching due and notifies the customer via both email AND push, so the customer can prepare — book a service, budget for a bigger job, or just be aware.
 
 ---
 
 ## How it works end to end
 
 ```
-Vehicle created OR odometer moves ≥10,000 km
+Vehicle created (workshop app / customer app / guest booking)
+    → odometer_current + avg_km_per_week captured on the form
               ↓
 AIRecommendationEngine Lambda fires async (fire-and-forget)
               ↓
-Gemini generates a lifetime schedule (0–250,000 km) tailored to make/model/year/engine
+Gemini generates a lifetime schedule tailored to make/model/year/engine,
+projected forward from the current odometer (not zero)
               ↓
 Active recommendations replaced in ai_recommendations table (history preserved)
               ↓
-Customer sees the schedule via GET /c/vehicles/:id/recommendations
+─────────────────────────────────────────────────────────────────
+Sundays 15:00 UTC — WeeklyOdometerBump Lambda runs
               ↓
-Daily at 3 PM AEST — ReminderDispatcher Lambda runs
+For every eligible vehicle, add COALESCE(avg_km_per_week, 240) to
+odometer_current, stamp odometer_recorded_at = NOW()
+              ↓
+maybeRegenerateSchedule fires per vehicle — cheap no-op most weeks;
+regens the AI schedule only when the vehicle's drifted ≥10,000 km
+since the last generation
+─────────────────────────────────────────────────────────────────
+              ↓
+Daily 05:00 UTC — ReminderDispatcher Lambda runs
               ↓
 Predicted odometer compared against estimated_due_odometer per recommendation
               ↓
-Email sent to customer when within 2,000 km of due milestone
+Email + push notification sent when the vehicle is within 2,000 km of due
 ```
 
 ---
@@ -83,10 +94,32 @@ Non-active rows (`sent`, `acknowledged`, `dismissed`, `completed`, `expired`) ar
 **What it does:**
 1. Queries all `ai_recommendations` where `status = 'active'` and `estimated_due_odometer` is set
 2. Calculates a **predicted current odometer** for each vehicle
-3. Sends an email when the vehicle is predicted to be within 2,000 km of a due milestone
+3. Sends **both** an email AND a push notification when the vehicle is predicted to be within 2,000 km of a due milestone
 4. Updates the recommendation status to `sent` and logs a row in `notifications`
 
+The subtraction `estimated_due_odometer - predicted_km` is cast to `SIGNED` before comparison — the columns are `BIGINT UNSIGNED` and a past-due recommendation would otherwise underflow (`ER_DATA_OUT_OF_RANGE`). Casting lets `BETWEEN 0 AND 2000` cleanly filter negatives (already sent or missed).
+
 **Source:** `src/ai/reminder-dispatcher.ts`
+
+---
+
+### WeeklyOdometerBump Lambda
+
+**Trigger:** EventBridge cron — every Sunday at 15:00 UTC (Monday 01:00 AEST).
+
+**What it does:**
+1. Applies the four skip rules to filter down to actively-tracked vehicles:
+   - `is_active = 0` — soft-deleted
+   - `odometer_current IS NULL` or `odometer_recorded_at IS NULL` — no anchor point
+   - `odometer_recorded_at` older than 12 months — likely sold / forgotten / stored
+   - No active `vehicle_owners` row — orphan
+2. For each eligible vehicle, adds `COALESCE(avg_km_per_week, 240)` to `odometer_current` (240 = ABS 2024 AU average, ~12,500 km/year)
+3. Stamps `odometer_recorded_at = NOW()` so the prediction anchor stays fresh
+4. Fires `maybeRegenerateSchedule` per vehicle — internal 10 km delta check makes this a cheap no-op most weeks; regens the AI schedule only when the accumulated drift crosses the threshold
+
+Supports a `{ dryRun: true }` invocation for a "who would be bumped?" preview without touching any rows. Returns `{ eligible, bumped, skipped: {inactive, no_reading, stale, no_owner}, dryRun }`.
+
+**Source:** `src/ai/weekly-odometer-bump.ts`
 
 ---
 
@@ -103,6 +136,47 @@ Contains:
 - "Book this service" button linking to the website booking page
 
 The `fromAddress` and `replyTo` are pulled from the `email_settings` table, the same source used by all other Rodz emails.
+
+---
+
+### Push notification
+
+Sent via `pushToCustomer({ type: 'maintenance_due', ... })` alongside the email. Uses the shared push infrastructure — APNs/FCM via SNS — with the standard gating chain:
+
+- **Preference check:** `customer_notification_prefs.service_due` must be `1` (default). Customers can mute this from the notification-prefs UI without affecting email.
+- **Dedupe:** `event_id = 'maintenance_due:{rec_id}'`. The same recommendation can't push twice within 30 days.
+- **Quiet hours, per-day rate limits:** applied automatically by `pushToCustomer`.
+- **No-tokens fallback:** if the customer hasn't installed the mobile app, `pushToCustomer` still writes a `notification_events` audit row. The customer portal's notification centre reads from that table, so they still see the reminder in the bell dropdown.
+
+Payload:
+
+```jsonc
+{
+  "type":     "maintenance_due",
+  "title":    "2019 Mazda 3 — service coming up",
+  "body":     "Scheduled Service (Minor) — due in about 1,500 km.",
+  "deeplink": "/account/vehicles/55/maintenance",
+  "eventId":  "maintenance_due:1950",
+  "vehicleId": 55
+}
+```
+
+Body copy switches to "due now" when the predicted delta is 0.
+
+---
+
+## Vehicle-side maintenance-manager fields
+
+Captured on vehicle create across all three write paths (customer portal, workshop staff, guest booking):
+
+| Field | Column | Notes |
+|-------|--------|-------|
+| Current odometer | `vehicles.odometer_current` | Optional at create. Sets `odometer_recorded_at = NOW()` when provided. Anchors the AI schedule + the weekly-bump job — vehicles without an anchor are skipped by the bump. |
+| Weekly km average | `vehicles.avg_km_per_week` | Optional at create. Sensible range 0–5,000. NULL → falls back to the 240 km/week default in the weekly bump. |
+
+Both are `INT UNSIGNED NULL`. Both go through the same 0–2M / 0–5000 bounds validation in every handler.
+
+Frontends should collect these at vehicle-create time to unlock the pipeline. Without odometer, the AI schedule starts from km 0 (wrong for anything but a brand-new car) and the weekly bump skips the vehicle entirely.
 
 ---
 
@@ -154,8 +228,9 @@ One row per vehicle per maintenance item.
 
 | Column | Description |
 |--------|-------------|
-| `odometer_current` | Last recorded km reading |
-| `odometer_recorded_at` | Date the reading was taken — used for prediction |
+| `odometer_current` | Last recorded km reading. Bumped weekly by the auto-increment job. |
+| `odometer_recorded_at` | Date the reading was taken — used for prediction. Also bumped weekly. |
+| `avg_km_per_week` | Customer-declared weekly usage. Default fallback 240 km/week when NULL. |
 
 ### `notifications`
 
@@ -199,9 +274,12 @@ Still not implemented (future):
 |----------|---------|
 | `AIRecommendationEngine` | Lambda in `RodzApiStack2`, **300s timeout, 512MB memory**, VPC. 1986-era classics can take up to ~90s at Gemini due to long known-issue lists. |
 | `ReminderDispatcher` | Lambda in `RodzApiStack2`, 300s timeout, VPC, SES permissions |
-| `DailyReminderRule` | EventBridge cron `0 5 * * ? *` (05:00 UTC daily) |
+| `DailyReminderRule` | EventBridge cron `cron(0 5 * * ? *)` — 05:00 UTC daily |
+| `WeeklyOdometerBump` | Lambda in `RodzApiStack3`, 300s timeout, VPC |
+| `WeeklyOdometerBumpRule` | EventBridge cron `cron(0 15 ? * SUN *)` — Sundays 15:00 UTC = Mondays 01:00 AEST |
 | Gemini model | `gemini-2.5-flash` via `GEMINI_API_KEY` env var |
 | Email from address | Pulled from `email_settings` table at send time |
+| Push channel | `pushToCustomer({ type: 'maintenance_due' })` via SNS → APNs/FCM. Gated by `customer_notification_prefs.service_due`. |
 
 Each writer Lambda needs:
 - Env var `AI_RECOMMENDATION_FN_ARN` pointing at the engine
