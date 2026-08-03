@@ -6,6 +6,8 @@ import { HttpApi, HttpRoute, HttpRouteKey, HttpMethod, HttpAuthorizer } from 'aw
 import { HttpLambdaAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers'
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations'
 import * as lambda from 'aws-cdk-lib/aws-lambda'
+import * as events from 'aws-cdk-lib/aws-events'
+import * as targets from 'aws-cdk-lib/aws-events-targets'
 import { LambdaFn } from './constructs/lambda-fn'
 
 interface RodzApiStack3Props extends StackProps {
@@ -1068,5 +1070,31 @@ export class RodzApiStack3 extends Stack {
     // separate admin HttpApi (RodzApiStack4) — the shared HttpApi is
     // at the 300-route cap.
 
+    // ── Weekly odometer bump (EventBridge cron) ─────────────────────────────
+    //
+    // Every Sunday 15:00 UTC (Monday 01:00 AEST) — walks the vehicles
+    // table, bumps odometer_current by avg_km_per_week (fallback 240),
+    // fires maybeRegenerateSchedule per vehicle. 5-minute timeout gives
+    // headroom for the full fleet + per-vehicle Lambda invokes.
+
+    const weeklyOdometerBumpFn = new LambdaFn(this, 'WeeklyOdometerBump', {
+      entry:   src('ai/weekly-odometer-bump.ts'),
+      vpc,
+      sharedEnv,
+      timeout: Duration.seconds(300),
+    }).fn
+
+    new events.Rule(this, 'WeeklyOdometerBumpRule', {
+      // AWS EventBridge cron: minute hour day-of-month month day-of-week year
+      // Sunday = ?  minute=0  hour=15  every month  Sunday  every year
+      schedule: events.Schedule.cron({
+        minute:     '0',
+        hour:       '15',
+        weekDay:    'SUN',
+        month:      '*',
+        year:       '*',
+      }),
+      targets: [new targets.LambdaFunction(weeklyOdometerBumpFn)],
+    })
   }
 }
