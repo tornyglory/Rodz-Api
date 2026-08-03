@@ -9,6 +9,7 @@
     "diff": "cdk diff",
     "synth": "cdk synth",
     "hotswap": "cdk deploy --hotswap",
+    "migrate": "node scripts/migrate.mjs",
     "test": "vitest run tests/unit",
     "test:watch": "vitest tests/unit",
     "test:integration": "vitest run tests/integration",
