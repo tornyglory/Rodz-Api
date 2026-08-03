@@ -3,9 +3,12 @@ import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 import { bootstrap } from '../../shared/bootstrap'
 import { getPool } from '../../shared/db'
 import { badRequest, serverError, validationError } from '../../shared/errors'
-import { generateBookingRef } from '../../bookings/_helpers'
+import {
+  generateBookingRef, BOOKING_SELECT_BY_ID, buildBooking, getBookingServices,
+} from '../../bookings/_helpers'
 import { sendBookingReceivedEmail } from '../../shared/emailTemplates'
 import { notifyStore } from '../../shared/staffNotifications'
+import { pushToStore } from '../../shared/wsPush'
 import {
   findActiveSlotByTime, computeSlotAvailability, deriveSlotEnum,
 } from '../../shared/bookingSlots'
@@ -414,6 +417,18 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       body:      `${customerName} — ${vehicleLabel} — ${date} ${time}${chosenTech.name ? ` with ${chosenTech.name}` : ''}`,
       bookingId,
     }).catch(err => console.error('notifyStore failed:', err))
+
+    // Real-time push to the workshop app's bookings page so the new
+    // Pending card renders without a refresh. Mirrors the pattern used
+    // by PATCH /bookings/{id} for job_updated / hoist_updated pushes.
+    try {
+      const [[fullRow]] = await db.query<any[]>(BOOKING_SELECT_BY_ID, [bookingId])
+      const svcMap      = await getBookingServices(db, [bookingId])
+      const bookingFull = buildBooking(fullRow, svcMap.get(bookingId) ?? [])
+      await pushToStore(db, store.id, { type: 'booking_created', booking: bookingFull })
+    } catch (err) {
+      console.error('[bookings-create] booking_created WS push failed:', err)
+    }
 
     await sendBookingReceivedEmail(db, {
       customerEmail: email,
