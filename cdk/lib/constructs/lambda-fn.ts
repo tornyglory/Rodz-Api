@@ -77,6 +77,17 @@ function getOrCreateSharedRole(stack: Stack): iam.Role {
           resources: ['*'],
         })],
       }),
+      // WebSocket push — required by src/shared/wsPush.ts (used by
+      // pushToStore / pushNotification / notifyStore). Without this,
+      // every WS broadcast from a business-logic Lambda silently 403s.
+      // Scoped to the workshop WS API (id 9x6wj1gzf6) — same as the
+      // dedicated WsLambdaRole used by the WS connect/disconnect handlers.
+      WsPush: new iam.PolicyDocument({
+        statements: [new iam.PolicyStatement({
+          actions:   ['execute-api:ManageConnections'],
+          resources: [`arn:aws:execute-api:${stack.region}:${stack.account}:9x6wj1gzf6/*`],
+        })],
+      }),
     },
   })
 }
