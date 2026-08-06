@@ -235,9 +235,22 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     let odometerChanged = false
     if (body.odometerCurrent != null) {
-      const bump = await bumpOdometer(db, Number(vehicleId), Number(body.odometerCurrent), 'staff')
+      // Staff going backwards must supply a `correctionReason`. The bump
+      // helper rewrites the source to `staff-correction` when it lands, so
+      // the history tab can render it distinctly. Missing reason on a
+      // downward write → 422 (correction_reason_required).
+      const correctionReason = typeof body.correctionReason === 'string' ? body.correctionReason : null
+      const bump = await bumpOdometer(db, Number(vehicleId), Number(body.odometerCurrent), 'staff-patch', {
+        actorType:        'staff',
+        actorId:          Number(ctx.staffId) || null,
+        allowBackwards:   true,
+        correctionReason,
+      })
       if (!bump.ok && bump.reason === 'backwards') {
         return validationError(`odometerCurrent cannot decrease. Previous reading was ${bump.previous.toLocaleString()} km.`)
+      }
+      if (!bump.ok && bump.reason === 'correction_reason_required') {
+        return validationError(`odometerCurrent is going backwards (from ${bump.previous.toLocaleString()} to ${bump.attempted.toLocaleString()} km) — please include a correctionReason explaining why.`)
       }
       if (!bump.ok && bump.reason === 'not_found') return notFound('Vehicle')
       odometerChanged = bump.ok

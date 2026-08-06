@@ -88,7 +88,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     // being logged after the fact) — we don't fail the expense create.
     if (payload.odometerKm != null) {
       const source = isFuel ? 'fuel-fill' : 'expense'
-      await bumpOdometer(db, vehicleId, payload.odometerKm, source).catch(err =>
+      await bumpOdometer(db, vehicleId, payload.odometerKm, source, {
+        actorType: 'customer',
+        actorId:   Number(ctx.customerId) || null,
+        sourceRef: `expense:${expenseId}`,
+      }).catch(err =>
         console.error(`odometer ratchet from ${source} failed for vehicle ${vehicleId}:`, err),
       )
     }

@@ -201,5 +201,30 @@ export class RodzApiStack4 extends Stack {
       routeKey:    HttpRouteKey.with('/reports/attribution', HttpMethod.GET),
       authorizer:  this.adminAuthorizer,
     })
+
+    // ── Odometer audit trail + weekly-bump observability ──────────────────
+    // Feeds the workshop "Odometer" tab on the vehicle drawer + a super-admin
+    // widget answering "did the weekly-bump cron run?" Both land here (not
+    // on the shared HttpApi) because that API is at the 300-route cap.
+
+    const vehicleOdometerHistoryFn = new LambdaFn(this, 'VehicleOdometerHistory', {
+      entry: src('customers/vehicles/odometer-history.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'VehicleOdometerHistoryRoute', {
+      httpApi:     this.adminApi,
+      integration: new HttpLambdaIntegration('VehicleOdometerHistoryInt', vehicleOdometerHistoryFn),
+      routeKey:    HttpRouteKey.with('/customers/{customerId}/vehicles/{vehicleId}/odometer-history', HttpMethod.GET),
+      authorizer:  this.adminAuthorizer,
+    })
+
+    const adminOdometerBumpRunsFn = new LambdaFn(this, 'AdminOdometerBumpRuns', {
+      entry: src('admin/odometer-bump-runs.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'AdminOdometerBumpRunsRoute', {
+      httpApi:     this.adminApi,
+      integration: new HttpLambdaIntegration('AdminOdometerBumpRunsInt', adminOdometerBumpRunsFn),
+      routeKey:    HttpRouteKey.with('/admin/odometer-bump-runs', HttpMethod.GET),
+      authorizer:  this.adminAuthorizer,
+    })
   }
 }

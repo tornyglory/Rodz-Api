@@ -89,7 +89,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     // is newer than what we have.
     if (merged.odometerKm != null) {
       const source = newIsFuel ? 'fuel-fill' : 'expense'
-      await bumpOdometer(db, vehicleId, Number(merged.odometerKm), source).catch(err =>
+      await bumpOdometer(db, vehicleId, Number(merged.odometerKm), source, {
+        actorType: 'customer',
+        actorId:   Number(ctx.customerId) || null,
+        sourceRef: `expense:${expenseId}`,
+      }).catch(err =>
         console.error(`odometer ratchet from ${source} update failed for vehicle ${vehicleId}:`, err),
       )
     }

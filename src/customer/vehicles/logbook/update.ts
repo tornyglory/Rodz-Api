@@ -54,7 +54,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     // Ratchet vehicle odometer forward from this reading if newer.
     if (odometerKm !== undefined && odometerKm != null) {
-      await bumpOdometer(db, vehicleId, Number(odometerKm), 'logbook').catch(err =>
+      await bumpOdometer(db, vehicleId, Number(odometerKm), 'logbook-entry', {
+        actorType: 'customer',
+        actorId:   Number(ctx.customerId) || null,
+        sourceRef: `logbook:${entryId}`,
+      }).catch(err =>
         console.error(`odometer ratchet from logbook update failed for vehicle ${vehicleId}:`, err),
       )
     }

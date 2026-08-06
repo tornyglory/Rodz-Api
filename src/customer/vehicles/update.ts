@@ -118,7 +118,13 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (transmission != null && transmission !== '') { sets.push('transmission = ?'); params.push(String(transmission).toLowerCase()) }
 
     if (odometerKm != null) {
-      const bump = await bumpOdometer(db, vehicleId, Number(odometerKm), 'customer')
+      // Customer self-report isn't ground truth — backwards writes are
+      // refused here. If the customer thinks the record is wrong, they
+      // raise it with the workshop, which can correct via job-entry.
+      const bump = await bumpOdometer(db, vehicleId, Number(odometerKm), 'customer-patch', {
+        actorType: 'customer',
+        actorId:   Number(ctx.customerId) || null,
+      })
       if (!bump.ok && bump.reason === 'backwards') {
         return validationError(`odometerKm cannot decrease. Previous reading was ${bump.previous.toLocaleString()} km.`)
       }

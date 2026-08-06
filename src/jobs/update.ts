@@ -113,17 +113,17 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const result = buildJob(updatedRow, servicesMap.get(Number(id)) ?? [])
 
     // Mirror odometer to vehicles so the prediction engine has a fresh
-    // reference point. Backwards readings (tech typo, wrong car) silently
-    // no-op — we don't want to fail the whole job update over a stale
-    // number. The job's own `odometer_in` snapshot is still preserved.
+    // reference point. The tech physically read the dashboard, so this is
+    // ground truth — backwards writes are allowed here and get logged as
+    // corrections (fixes drift from the weekly-bump, initial-signup
+    // typos, meter replacements).
     if (odometerIn != null && updatedRow.vehicle_id) {
-      const bump = await bumpOdometer(db, Number(updatedRow.vehicle_id), Number(odometerIn), 'job')
-      if (!bump.ok && bump.reason === 'backwards') {
-        console.warn(
-          `Job ${id}: odometer_in (${bump.attempted}) below vehicle ${updatedRow.vehicle_id} current (${bump.previous}). ` +
-          `Job snapshot kept, vehicles.odometer_current unchanged.`,
-        )
-      }
+      const bump = await bumpOdometer(db, Number(updatedRow.vehicle_id), Number(odometerIn), 'job-entry', {
+        actorType:      'staff',
+        actorId:        Number(ctx.staffId) || null,
+        allowBackwards: true,
+        sourceRef:      `job:${id}`,
+      })
       if (bump.ok && bump.changed) {
         void maybeRegenerateSchedule(db, Number(updatedRow.vehicle_id), Number(odometerIn))
       }
