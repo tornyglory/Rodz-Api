@@ -89,6 +89,18 @@ async function getRecommendations(
     vehicle.transmission ? vehicle.transmission              : null,
   ].filter(Boolean).join(', ')
 
+  // Tyre spec — used by both the vehicle context and the tyre
+  // replacement guidance below. If the DB has no size on file, the LLM
+  // falls back to the factory-fitment for this make/model/year.
+  const tyreLines = [
+    vehicle.tyre_size_front ? `front tyres: ${vehicle.tyre_size_front}`  : null,
+    vehicle.tyre_size_rear  ? `rear tyres:  ${vehicle.tyre_size_rear}`    : null,
+    vehicle.spare_tyre_size ? `spare:       ${vehicle.spare_tyre_size}`   : null,
+  ].filter(Boolean).join('\n')
+  const tyreContext = tyreLines
+    ? `\n\nKnown tyre fitment for this vehicle:\n${tyreLines}`
+    : `\n\nNo tyre sizes on file for this vehicle — use the factory-fitment size for this make/model/year in the spec (e.g. "205/55R16 91V") and note "confirm on inspection" if unsure.`
+
   // Compact one-line-per-service list so the LLM can pick the best FK
   // without eating tokens. Highlight the catch-all so the LLM sees it
   // clearly and uses it for bookable-but-unmatched tasks (rather than
@@ -120,7 +132,7 @@ async function getRecommendations(
 
   const prompt = `You are an Australian automotive expert and educator building a complete lifetime maintenance schedule for a customer who wants to understand and properly look after their vehicle.
 
-Vehicle: ${parts}
+Vehicle: ${parts}${tyreContext}
 Current odometer: ${currentKm.toLocaleString()} km
 
 Generate a complete maintenance schedule from ${currentKm} km to 250,000 km. This schedule will be sent to the customer as a series of personalised emails — each one should teach them something real about their car.
@@ -131,6 +143,7 @@ CRITICAL RULES — READ CAREFULLY:
 3. Include ALL known real-world failure points specific to this make/model/year — things mechanics actually see. Include the km range they typically appear. If there are TSBs, common faults, or owner-reported issues, include them.
 4. Order by estimatedDueKm ascending. Items with no km trigger (age/condition-based) go at the end with estimatedDueKm: null.
 5. Australian conditions: heat, UV exposure, and dust affect rubber, fluids, and batteries faster than European or US estimates.
+6. TYRES: Include at least one "Tyre Replacement" recommendation at a realistic interval (typical passenger tyres 40-60,000 km; performance/high-load 25-40,000 km; heavier SUV/4WD 50-70,000 km — adjust for driving style). Put the exact tyre size in the spec (from the known fitment above, or the factory-fitment for this vehicle if unknown). Include wheel alignment too, on the same or nearby interval. Continue including tyre rotations at each service interval alongside. Tyres are a real recurring maintenance concern, not an afterthought.
 
 For the "body" field — write 2-4 sentences that educate the customer:
 - What this service involves and why it matters for THIS specific engine or model
@@ -266,6 +279,7 @@ export const handler = async (event: RecommendationEngineEvent): Promise<void> =
     const [[vehicle]] = await db.query<any[]>(
       `SELECT make, model, series, year, fuel_type, transmission,
               engine_code, engine_size_cc,
+              tyre_size_front, tyre_size_rear, spare_tyre_size,
               odometer_current, service_interval_km, service_interval_months
        FROM vehicles WHERE id = ? AND is_active = 1 LIMIT 1`,
       [vehicleId],
