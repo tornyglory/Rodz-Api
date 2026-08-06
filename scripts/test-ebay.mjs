@@ -20,7 +20,9 @@ if (!appId || !certId) {
 const args     = process.argv.slice(2)
 const limitArg = args.indexOf('--limit')
 const limit    = limitArg >= 0 ? Number(args[limitArg + 1]) : 5
-const query    = args.filter((_, i) => i !== limitArg && i !== limitArg + 1).join(' ')
+const query    = args
+  .filter((_, i) => limitArg < 0 || (i !== limitArg && i !== limitArg + 1))
+  .join(' ')
 if (!query) { console.error('Usage: node scripts/test-ebay.mjs "<query>" [--limit 5]'); process.exit(1) }
 
 const marketplace = process.env.EBAY_MARKETPLACE ?? 'EBAY_AU'
