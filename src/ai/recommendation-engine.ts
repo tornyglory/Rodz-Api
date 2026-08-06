@@ -68,10 +68,17 @@ async function getRecommendations(
   ].filter(Boolean).join(', ')
 
   // Compact one-line-per-service list so the LLM can pick the best FK
-  // without eating tokens. ~500 tokens for 37 services — trivial cost.
-  const servicesList = services
+  // without eating tokens. Highlight the catch-all so the LLM sees it
+  // clearly and uses it for bookable-but-unmatched tasks (rather than
+  // returning null, which strips the customer's "Book this" button).
+  const catchAll  = services.find(s => s.name.toLowerCase().startsWith('something else'))
+  const specifics = services.filter(s => s !== catchAll)
+  const servicesList = specifics
     .map(s => `- id ${s.id} | ${s.category} | ${s.name} | ${s.labour_hours_estimate}h${s.fixed_price != null ? ` | fixed $${s.fixed_price}` : ''}`)
     .join('\n')
+  const catchAllLine = catchAll
+    ? `\n\nCATCH-ALL (use this when the task is bookable but no specific service above fits):\n- id ${catchAll.id} | ${catchAll.category} | ${catchAll.name}`
+    : ''
   const validIds = new Set(services.map(s => s.id))
 
   const prompt = `You are an Australian automotive expert and educator building a complete lifetime maintenance schedule for a customer who wants to understand and properly look after their vehicle.
@@ -96,12 +103,13 @@ For the "body" field — write 2-4 sentences that educate the customer:
 - Max 500 characters
 
 SERVICES OFFERED BY THIS WORKSHOP:
-${servicesList}
+${servicesList}${catchAllLine}
 
 For each recommendation, include "serviceTypeId":
-- Pick the id from the list above that best matches this task.
-- Use null when there is no clean bookable match (e.g. "Monitor oil consumption" is observation-only; "Check tyre pressure monthly" is a habit not a workshop job).
-- Prefer the specific service over the generic one when both fit (e.g. "Brake Pad Replace Front" over "Brake Inspection").
+- Pick the id from the specific-service list above that best matches this task.
+- Prefer the specific service over the generic one when both fit (e.g. "Brake Fluid Flush" over a general service).
+- If the task IS a bookable workshop job but no specific service above fits (e.g. spark plug replacement, wiper blade replacement, coolant flush, drive belt inspection, hybrid battery check), use the CATCH-ALL id above. The customer's booking will land with the recommendation title copied into notes so the workshop knows exactly what to do.
+- Use null ONLY for observation-only or habitual items the customer does themselves — e.g. "Monitor oil consumption between services" (a check they do at home), "Tyre pressure check & top-up monthly" (a habit, not a workshop visit), "Look for warning lights". If a mechanic would ever perform this task, prefer the catch-all over null.
 - The customer will click "Book this" on the recommendation, so accuracy matters — a wrong id pre-fills the wrong service.
 
 Return a JSON array only, no markdown:
@@ -114,6 +122,24 @@ Return a JSON array only, no markdown:
     "estimatedCostMin": 120,
     "estimatedCostMax": 180,
     "serviceTypeId": 1
+  },
+  {
+    "title": "Spark Plug Replacement",
+    "body": "Iridium spark plugs are worn by this point — replacing them keeps combustion clean, protects the catalytic converter, and restores fuel economy.",
+    "urgency": "recommended",
+    "estimatedDueKm": 100000,
+    "estimatedCostMin": 250,
+    "estimatedCostMax": 400,
+    "serviceTypeId": ${catchAll ? catchAll.id : 'null'}
+  },
+  {
+    "title": "Monitor Engine Oil Consumption",
+    "body": "This engine can consume a small amount of oil between services. Check the dipstick monthly and top up with the same 5W-30 if it drops below the minimum mark.",
+    "urgency": "advisory",
+    "estimatedDueKm": null,
+    "estimatedCostMin": null,
+    "estimatedCostMax": null,
+    "serviceTypeId": null
   }
 ]
 

@@ -69,13 +69,22 @@ Every recommendation read now carries the new fields:
 
 ## When `service` is null
 
-Three legitimate reasons:
+Now that the engine falls back to the **"Something else"** catch-all (id 31 in the `service_types` table) for bookable-but-unmatched tasks, null now means one of three things:
 
-1. **AI decided there's no clean match** — e.g. "Monitor oil consumption between services" or "Check tyre pressure monthly" have no workshop-bookable equivalent. `serviceTypeId = null`.
-2. **The recommendation predates this feature** — recs generated before 2026-08-06 have `service_type_id = NULL` in the database and will stay that way until the next natural regen fires. **~40 existing recs across all vehicles fall into this bucket today.**
+1. **AI classified it as observation-only** — e.g. "Monitor oil consumption between services", "Check tyre pressure monthly", "Watch for warning lights". These aren't workshop jobs — they're habits/checks the owner does themselves. No "Book this" button; render as an informational card.
+2. **The recommendation predates this feature** — recs generated before 2026-08-06 have `service_type_id = NULL` and will stay that way until the next natural regen fires. Downgrade to a generic "Book a service" affordance.
 3. **The service was deactivated** — the FK is `ON DELETE SET NULL`, so if the workshop retires a service after the rec was written, the frontend gracefully downgrades.
 
-In all three cases, the frontend should render the recommendation card without a preselect, but **still with a "Book a service" affordance** — see UX below.
+Live coverage sample (2020 Toyota Corolla hybrid, vehicle 4): **48 of 51 active recs linked (94%)** — 30 to specific services, 18 to the catch-all, 3 legitimately null (all monitoring items).
+
+## The "Something else" catch-all
+
+When `service.category === 'other'` and `service.name === 'Something else'`, this is the catch-all. The engine picks it when the recommendation IS a workshop-bookable task but no specific service in the workshop's catalogue is a clean fit — e.g. "Spark Plug Replacement", "Wiper Blade Replacement", "Drive Belt Inspection", "Hybrid System Scan".
+
+**Frontend rendering for catch-all:**
+- Show the button as normal — "Book this" or "Book a service" — customer's flow is unaffected.
+- When the customer clicks, land them in the booking flow with `serviceTypeId = 31` preselected AND the recommendation title + first sentence copied into `customerNotes`. The workshop reads the notes and picks the actual service on arrival.
+- Optionally, small hint under the button: "Your workshop will confirm the exact service when you arrive."
 
 ---
 
@@ -100,17 +109,20 @@ In all three cases, the frontend should render the recommendation card without a
 
 ### Click behaviour
 
-**With `serviceTypeId` set:**
+**With a specific `serviceTypeId` (any bookable service):**
 1. Push customer into the booking flow (`/book` for guest, `/account/book` for logged-in).
 2. Pre-populate:
    - `serviceTypeIds: [rec.serviceTypeId]`
    - `notes` (optional): `"Recommended: {rec.title}"` — gives the workshop context on why the booking was made.
 3. Land the customer on the **store / date / time selection step** (skip service selection since we already have it).
 
-**Without `serviceTypeId` (null):**
-1. Push into booking flow at the **service selection step**.
-2. Pre-populate `notes` with the recommendation title + first sentence of the body: `"Recommended: {rec.title}. {rec.body[:120]}…"`.
-3. Customer picks the service they think fits (or the workshop's staff-side booking assistant infers from the notes).
+**With the catch-all (`serviceTypeId === 31`, "Something else"):**
+1. Same booking flow as above, `serviceTypeIds: [31]`.
+2. Pre-populate `notes` with the full recommendation: `"Recommended: {rec.title}. {rec.body[:200]}…"`. This is what the workshop actually reads to plan the job.
+3. Same "skip to date/time" — the customer doesn't need to pick a service, they've already told the workshop what they want in the notes.
+
+**With `serviceTypeId` null (observation/habit item):**
+Don't show a "Book this" button at all — these aren't workshop jobs. Render the card as informational only ("This is something to keep an eye on / do yourself").
 
 ### Optional — one-click booking for logged-in customers
 
