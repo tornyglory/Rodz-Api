@@ -4,7 +4,7 @@ import { getPool } from '../shared/db'
 import { ok, notFound, gone, forbidden, serverError } from '../shared/errors'
 import { parsePublicProfileSettings } from '../shared/publicProfileSettings'
 import { OVERDUE_TOLERANCE_KM, RECOMMENDATION_LIMIT } from '../shared/recommendationFilter'
-import { loadServiceLinks, shapeService, loadPartLinks, shapeParts, parsePartNameIds } from '../shared/recommendationServiceLink'
+import { loadServiceLinks, shapeService, loadPartLinks, shapeParts, parseParts } from '../shared/recommendationServiceLink'
 
 const ready = bootstrap()
 
@@ -35,7 +35,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const [rows] = await db.query<any[]>(
       `SELECT
-         id, title, recommendation_body, urgency, status, service_type_id, part_name_ids,
+         id, title, recommendation_body, urgency, status, service_type_id, parts,
          triggered_at_odometer, triggered_at_date,
          estimated_due_odometer, estimated_due_date,
          estimated_cost_min, estimated_cost_max,
@@ -55,10 +55,10 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         : [vehicle.id, RECOMMENDATION_LIMIT],
     )
 
-    const rowsWithParts = rows.map(r => ({ ...r, _partIds: parsePartNameIds(r.part_name_ids) }))
+    const rowsWithParts = rows.map(r => ({ ...r, _parts: parseParts(r.parts) }))
     const [linkMap, partMap] = await Promise.all([
       loadServiceLinks(db, rowsWithParts.map(r => r.service_type_id)),
-      loadPartLinks(db, rowsWithParts.map(r => r._partIds)),
+      loadPartLinks(db, rowsWithParts.map(r => r._parts)),
     ])
     const recommendations = rowsWithParts.map((r) => ({
       id:                   r.id,
@@ -68,7 +68,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       status:               r.status,
       serviceTypeId:        r.service_type_id != null ? Number(r.service_type_id) : null,
       service:              shapeService(r.service_type_id, linkMap),
-      parts:                shapeParts(r._partIds, partMap),
+      parts:                shapeParts(r._parts, partMap),
       triggeredAtOdometer:  r.triggered_at_odometer  ?? null,
       triggeredAtDate:      r.triggered_at_date       ? String(r.triggered_at_date).slice(0, 10) : null,
       estimatedDueOdometer: r.estimated_due_odometer  ?? null,

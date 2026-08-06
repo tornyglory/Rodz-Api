@@ -40,10 +40,10 @@ Existing recommendation rows gain three new fields (`serviceTypeId`,
     "fixedPrice":          null
   },
   "parts": [                                      // always an array, may be empty
-    { "id": 385, "name": "Engine Oil",      "category": "Fluid"  },
-    { "id": 354, "name": "Oil Filter",      "category": "Filter" },
-    { "id": 355, "name": "Air Filter",      "category": "Filter" },
-    { "id": 356, "name": "Cabin Air Filter", "category": "Filter" }
+    { "id": 385, "name": "Engine Oil",       "category": "Fluid",  "spec": "5W-30 Full Synthetic, ~4.2L" },
+    { "id": 354, "name": "Oil Filter",       "category": "Filter", "spec": "OEM Toyota 04152-YZZA1 or equivalent" },
+    { "id": 355, "name": "Air Filter",       "category": "Filter", "spec": "" },
+    { "id": 356, "name": "Cabin Air Filter", "category": "Filter", "spec": "" }
   ],
   // ↑↑↑ NEW
 
@@ -80,6 +80,7 @@ currently uses.
 | `id` | `number` | Foreign key to `part_names`. Stable across renames — use for eBay/supplier lookups later. |
 | `name` | `string` | Display label. Standardised across all vehicles (e.g. "Engine Oil", "Front Brake Pad Set"). |
 | `category` | `string` | One of: `Filter`, `Fluid`, `Brake`, `Belt`, `Tyre`, `Electrical`, `Other`. Handy for grouping / icon selection. |
+| `spec` | `string` | LLM-picked vehicle-specific hint. Grade / viscosity / OEM part number / quantity. May be empty string when the generic name is enough (e.g. Drive Belt). Max 120 chars. Free text — do not parse. |
 
 The list can be empty — for observation-only recommendations ("Monitor
 oil consumption", "Look for warning lights") the engine returns `[]`.
@@ -87,6 +88,15 @@ Same for pure-labour tasks (Tyre Rotation, Wheel Alignment).
 
 Ordering reflects the LLM's picked order — usually most-important part
 first. Preserve it, don't sort alphabetically.
+
+### Live examples (from a 2017 Suzuki Vitara regen)
+
+- `Engine Oil` → `5W-30 Full Synthetic Engine Oil, ~4.2L`
+- `Brake Fluid` → `DOT 4 Brake Fluid, ~1L`
+- `Spark Plug` → `Iridium Spark Plugs (e.g., NGK IFR6J11 or equivalent), x4`
+- `Automatic Transmission Fluid` → `Suzuki 3314/3317 (JWS 3309 equivalent) ATF, ~7-8L for flush`
+- `Coolant` → `Long Life Coolant (LLC), Silicate-free, ~6L`
+- `Drive Belt` → `` (empty — the generic name says everything)
 
 ## `service` block shape
 
@@ -131,7 +141,11 @@ When `service.category === 'other'` and `service.name === 'Something else'`, thi
 │ Your M15A engine needs clean oil to protect its VVT…              │
 │                                                                   │
 │ Rodz service:  General Filter Service                             │
-│ Typical parts: Engine Oil · Oil Filter · Air Filter · Cabin Filter │
+│ Typical parts:                                                    │
+│   • Engine Oil — 5W-30 Full Synthetic, ~4.2L                      │
+│   • Oil Filter — OEM Toyota 04152-YZZA1 or equivalent             │
+│   • Air Filter                                                    │
+│   • Cabin Air Filter                                              │
 │                                                                   │
 │ Est. cost: $95–$140         Due: 90,000 km / Nov 2026            │
 │                                                                   │
@@ -140,7 +154,7 @@ When `service.category === 'other'` and `service.name === 'Something else'`, thi
 ```
 
 - **"Rodz service" line** = `service.name` when present. Hide the whole line if `service` is null (informational recommendations).
-- **"Typical parts" line** = comma/dot-separated `parts[].name`. Hide the whole line when `parts` is empty.
+- **"Typical parts" list** = one line per `parts[]` entry: `${p.name}${p.spec ? ' — ' + p.spec : ''}`. Hide the whole block when `parts` is empty.
 - **Button label** = `Book: {service.name}` when service is present, else `Book a service` (or hide entirely for null-service observation items).
 - **Category-coloured icon** (optional) — map `service.category` OR the primary `parts[0].category` to your existing icon palette.
 - **Show `labourHoursEstimate` and `fixedPrice`** on hover / expanded view.
@@ -240,5 +254,5 @@ Same rendering logic applies here — "Book this" button on each top-recommendat
 
 - **Backfill for existing recommendations** — recs generated before 2026-08-06 stay `null` on both `service` and `parts` until the next natural regen fires (~10km odometer drift). No manual backfill planned; the loop is self-healing over time.
 - **Multi-service recommendations** — v1 links one service_type per rec. Bundle work like "Full major service" is already handled by the `parts` array — one service can carry multiple parts. Multi-service will only matter if a rec truly straddles two workshop services with no bundled service_type covering both.
-- **Vehicle-specific SKUs / OEM part numbers** — the `parts` array carries generic part names ("Oil Filter"), not SKUs ("Toyota 90915-YZZD3"). SKU resolution + supplier price lookup happens later in the JIT phase (eBay first, then TecDoc integration for OEM numbers).
+- **Vehicle-specific SKUs / OEM part numbers** — the `spec` field carries LLM-generated hints (grade, quantity, sometimes OEM reference). These are free text — good for display and for feeding eBay search queries, but not authoritative SKU data. Verified OEM catalogue integration (TecDoc) comes later in the JIT phase.
 - **Booking assistant already knows all this** — the AI booking chat/voice agent uses the same `service_types` table via `getServiceTypes` tool. No changes needed there.

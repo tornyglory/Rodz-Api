@@ -67,35 +67,42 @@ export interface PartLink {
   id:       number
   name:     string
   category: string
+  spec:     string   // LLM-picked vehicle-specific hint (grade/size/OEM ref); '' when generic
 }
 
+// ai_recommendations.parts is stored as JSON [{id, spec}, ...].
 // mysql2 returns a JSON column as either a parsed value or a string
-// depending on version/config. Normalise to number[]; anything else
-// (null, malformed) becomes [].
-export function parsePartNameIds(raw: unknown): number[] {
+// depending on version/config — normalise either into the object array.
+// Anything malformed becomes [].
+export function parseParts(raw: unknown): Array<{ id: number; spec: string }> {
   if (raw == null) return []
   let arr: unknown = raw
   if (typeof raw === 'string') {
     try { arr = JSON.parse(raw) } catch { return [] }
   }
   if (!Array.isArray(arr)) return []
-  return arr
-    .map(v => Number(v))
-    .filter(n => Number.isFinite(n) && n > 0)
+  const out: Array<{ id: number; spec: string }> = []
+  for (const item of arr) {
+    if (item && typeof item === 'object') {
+      const id = Number((item as any).id)
+      if (!Number.isFinite(id) || id <= 0) continue
+      const spec = typeof (item as any).spec === 'string' ? (item as any).spec : ''
+      out.push({ id, spec })
+    }
+  }
+  return out
 }
 
-// One IN() query for the union of ids across every recommendation on
-// the page — same batching pattern as loadServiceLinks. Deactivated
-// rows are silently dropped so the frontend renders a shorter list
-// rather than showing something the workshop no longer stocks.
+// One IN() query for the union of part_name ids across every
+// recommendation on the page. Deactivated rows are silently dropped so
+// the frontend renders a shorter list rather than showing something
+// the workshop no longer stocks.
 export async function loadPartLinks(
   db: mysql.Pool,
-  idBundles: Array<Array<number | null | undefined>>,
-): Promise<Map<number, PartLink>> {
+  partBundles: Array<Array<{ id: number; spec: string }>>,
+): Promise<Map<number, { name: string; category: string }>> {
   const ids = Array.from(new Set(
-    idBundles.flat()
-      .map(v => (v != null ? Number(v) : null))
-      .filter((v): v is number => v != null && Number.isFinite(v) && v > 0),
+    partBundles.flat().map(p => p.id).filter(n => Number.isFinite(n) && n > 0),
   ))
   if (ids.length === 0) return new Map()
 
@@ -105,10 +112,9 @@ export async function loadPartLinks(
      WHERE id IN (${ids.map(() => '?').join(',')}) AND is_active = 1`,
     ids,
   )
-  const map = new Map<number, PartLink>()
+  const map = new Map<number, { name: string; category: string }>()
   for (const r of rows) {
     map.set(Number(r.id), {
-      id:       Number(r.id),
       name:     String(r.name),
       category: String(r.category ?? 'Other'),
     })
@@ -116,17 +122,24 @@ export async function loadPartLinks(
   return map
 }
 
-// Shape helper — returns the parts array to nest as `parts` on a
-// recommendation payload. Preserves the LLM's chosen order; drops any
-// id that isn't in the live catalogue.
+// Shape helper — merges the stored {id, spec} with the joined
+// {name, category} from part_names for the response payload. Preserves
+// the LLM's chosen order and drops any id that isn't in the live
+// catalogue.
 export function shapeParts(
-  ids: number[],
-  linkMap: Map<number, PartLink>,
+  parts: Array<{ id: number; spec: string }>,
+  linkMap: Map<number, { name: string; category: string }>,
 ): PartLink[] {
   const out: PartLink[] = []
-  for (const id of ids) {
-    const link = linkMap.get(Number(id))
-    if (link) out.push(link)
+  for (const p of parts) {
+    const link = linkMap.get(Number(p.id))
+    if (!link) continue
+    out.push({
+      id:       p.id,
+      name:     link.name,
+      category: link.category,
+      spec:     p.spec,
+    })
   }
   return out
 }

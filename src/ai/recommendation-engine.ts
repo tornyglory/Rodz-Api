@@ -17,7 +17,7 @@ interface GeminiRecommendation {
   estimatedCostMin: number | null
   estimatedCostMax: number | null
   serviceTypeId:    number | null
-  partNameIds:      number[]
+  parts:            Array<{ id: number; spec: string }>
 }
 
 interface ServiceTypeChoice {
@@ -152,13 +152,24 @@ For each recommendation, include "serviceTypeId":
 STANDARDISED PART CATALOGUE (grouped by category):
 ${partsList}
 
-For each recommendation, include "partNameIds" — an array of ids from the catalogue above listing the parts a workshop would typically replace or top up for THIS specific task on THIS specific vehicle:
-- Pick only parts that the workshop physically buys/consumes for the task. Not tools, not labour, not consumables like rags.
-- Be vehicle-appropriate. A diesel needs a diesel fuel filter (id 357), a petrol doesn't. A hybrid battery inspection (id 469) doesn't apply to a non-hybrid.
-- Include commonly-paired parts. A timing belt service usually gets a Water Pump too — include both if the workshop would do both together on this vehicle. An oil service gets Engine Oil + Oil Filter.
-- Include obviously optional/conditional parts only when they are commonly done alongside — the frontend surfaces them without singling out optionality.
-- For monitoring/observation recommendations that involve no parts (e.g. "Look for warning lights", "Monitor oil consumption"), use an empty array [].
+For each recommendation, include "parts" — an array of objects listing the parts a workshop would typically replace or top up for THIS specific task on THIS specific vehicle. Each object has:
+- "id": the part_names id from the catalogue above
+- "spec": a short (~80 chars max) vehicle-specific hint about the exact spec/grade/quantity/OEM number the workshop should source — this is what appears on the customer's maintenance card and later feeds the parts sourcing search.
+
+Rules for the parts array:
+- Pick only parts that the workshop physically buys/consumes for the task. Not tools, not labour.
+- Be vehicle-appropriate. A diesel needs a diesel fuel filter (id 357), a petrol doesn't. A hybrid battery inspection doesn't apply to a non-hybrid.
+- Include commonly-paired parts. A timing belt service usually gets a Water Pump too. An oil service gets Engine Oil + Oil Filter.
 - IDs must come from the catalogue above — do not invent ids.
+- For monitoring/observation recommendations that involve no parts, use an empty array [].
+- For each spec, be concrete and useful. Good examples:
+    { "id": 385, "spec": "0W-20 full synthetic, ~4.4L" }
+    { "id": 354, "spec": "OEM Toyota 04152-YZZA1 or equivalent aftermarket" }
+    { "id": 386, "spec": "DOT 4, ~1L" }
+    { "id": 405, "spec": "Iridium NGK ILKAR7B11 or equivalent, x4" }
+    { "id": 487, "spec": "205/55R16 91V, 4× — brand at customer preference" }
+    { "id": 399, "spec": "12V 60Ah AGM, DIN44LH group" }
+  Empty string is fine when the generic name says everything ({ "id": 8, "spec": "" } for Tyre Rotation labour, though better to omit entirely). Prefer omission over empty entries.
 
 Return a JSON array only, no markdown:
 [
@@ -170,7 +181,10 @@ Return a JSON array only, no markdown:
     "estimatedCostMin": 120,
     "estimatedCostMax": 180,
     "serviceTypeId": 1,
-    "partNameIds": [385, 354]
+    "parts": [
+      { "id": 385, "spec": "5W-30 semi-synthetic, ~4.4L" },
+      { "id": 354, "spec": "OEM Toyota 04152-YZZA1 or equivalent" }
+    ]
   },
   {
     "title": "Spark Plug Replacement",
@@ -180,7 +194,9 @@ Return a JSON array only, no markdown:
     "estimatedCostMin": 250,
     "estimatedCostMax": 400,
     "serviceTypeId": ${catchAll ? catchAll.id : 'null'},
-    "partNameIds": []
+    "parts": [
+      { "id": 405, "spec": "Iridium NGK ILKAR7B11 or equivalent, x4" }
+    ]
   },
   {
     "title": "Monitor Engine Oil Consumption",
@@ -190,7 +206,7 @@ Return a JSON array only, no markdown:
     "estimatedCostMin": null,
     "estimatedCostMax": null,
     "serviceTypeId": null,
-    "partNameIds": []
+    "parts": []
   }
 ]
 
@@ -213,15 +229,20 @@ Set estimatedDueKm to null only for purely age or condition-based items with no 
       const rawId = r.serviceTypeId != null ? Number(r.serviceTypeId) : null
       const serviceTypeId = rawId != null && validIds.has(rawId) ? rawId : null
 
-      // Validate + dedupe the parts array. Hallucinated ids drop silently
-      // — they just wouldn't render on the frontend anyway.
-      const partNameIds = Array.isArray(r.partNameIds)
-        ? Array.from(new Set(
-            (r.partNameIds as unknown[])
-              .map(v => Number(v))
-              .filter(n => Number.isFinite(n) && validPartIds.has(n))
-          )).slice(0, 12)
-        : []
+      // Validate + dedupe by id, drop hallucinated ids, cap the array,
+      // trim/limit spec length so a runaway LLM response can't bloat rows.
+      const rawParts: any[] = Array.isArray(r.parts) ? r.parts : []
+      const seenIds = new Set<number>()
+      const parts: Array<{ id: number; spec: string }> = []
+      for (const p of rawParts) {
+        const id = Number(p?.id)
+        if (!Number.isFinite(id) || !validPartIds.has(id)) continue
+        if (seenIds.has(id)) continue
+        seenIds.add(id)
+        const spec = typeof p?.spec === 'string' ? p.spec.trim().slice(0, 120) : ''
+        parts.push({ id, spec })
+        if (parts.length >= 12) break
+      }
 
       return {
         title:            String(r.title).slice(0, 60),
@@ -231,7 +252,7 @@ Set estimatedDueKm to null only for purely age or condition-based items with no 
         estimatedCostMin: r.estimatedCostMin ? Number(r.estimatedCostMin) : null,
         estimatedCostMax: r.estimatedCostMax ? Number(r.estimatedCostMax) : null,
         serviceTypeId,
-        partNameIds,
+        parts,
       }
     })
 }
@@ -272,7 +293,7 @@ export const handler = async (event: RecommendationEngineEvent): Promise<void> =
     for (const rec of recommendations) {
       await db.query(
         `INSERT INTO ai_recommendations
-           (vehicle_id, customer_id, rule_id, service_type_id, part_name_ids, title, recommendation_title, recommendation_body, urgency,
+           (vehicle_id, customer_id, rule_id, service_type_id, parts, title, recommendation_title, recommendation_body, urgency,
             triggered_at_odometer, triggered_at_date, estimated_due_odometer,
             estimated_cost_min, estimated_cost_max, created_at, updated_at)
          VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, CURDATE(), ?, ?, ?, NOW(), NOW())`,
@@ -280,7 +301,7 @@ export const handler = async (event: RecommendationEngineEvent): Promise<void> =
           vehicleId,
           customerId,
           rec.serviceTypeId,
-          rec.partNameIds.length ? JSON.stringify(rec.partNameIds) : null,
+          rec.parts.length ? JSON.stringify(rec.parts) : null,
           rec.title,
           rec.title,
           rec.body,
