@@ -246,6 +246,22 @@ export class RodzApiStack4 extends Stack {
       })
     }
 
+    // ── eBay Marketplace Account Deletion webhook ─────────────────────────
+    // Public (no auth) — eBay's servers hit this from arbitrary IPs.
+    // Handles the SHA-256 challenge on subscribe + logs deletion notices.
+    // Required to unlock the Production Browse API for the sourcing engine.
+    const ebayDeletionFn = new LambdaFn(this, 'EbayMarketplaceDeletion', {
+      entry: src('ebay/marketplace-deletion.ts'), vpc, sharedEnv,
+    }).fn
+    const ebayDeletionIntegration = new HttpLambdaIntegration('EbayMarketplaceDeletionInt', ebayDeletionFn)
+    for (const method of [HttpMethod.GET, HttpMethod.POST]) {
+      new HttpRoute(this, `EbayMarketplaceDeletionRoute${method}`, {
+        httpApi:     this.adminApi,
+        integration: ebayDeletionIntegration,
+        routeKey:    HttpRouteKey.with('/ebay/marketplace-deletion', method),
+      })
+    }
+
     const serviceJobStepsFn = new LambdaFn(this, 'ServiceJobSteps', {
       entry: src('services/jobs/steps-router.ts'), vpc, sharedEnv,
     }).fn

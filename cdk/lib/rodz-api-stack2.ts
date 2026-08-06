@@ -82,6 +82,13 @@ export class RodzApiStack2 extends Stack {
       // GEMINI_VOICE_API_KEY is set per-Lambda after deploy via
       // `aws lambda update-function-configuration` — it's a secret and
       // shouldn't live in the CDK env stanza.
+      // eBay parts-sourcing engine + compliance webhook.
+      EBAY_APP_ID:              process.env.EBAY_APP_ID              ?? '',
+      EBAY_CERT_ID:             process.env.EBAY_CERT_ID             ?? '',
+      EBAY_ENV:                 process.env.EBAY_ENV                 ?? 'production',
+      EBAY_MARKETPLACE:         process.env.EBAY_MARKETPLACE         ?? 'EBAY_AU',
+      EBAY_VERIFICATION_TOKEN:  process.env.EBAY_VERIFICATION_TOKEN  ?? '',
+      EBAY_WEBHOOK_ENDPOINT:    process.env.EBAY_WEBHOOK_ENDPOINT    ?? '',
     }
 
     const src = (p: string) => path.join(__dirname, '../../src', p)

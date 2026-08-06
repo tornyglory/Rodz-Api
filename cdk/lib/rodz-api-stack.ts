@@ -52,6 +52,16 @@ export class RodzApiStack extends Stack {
       // in this stack and need these to actually deliver via SNS.
       IOS_PLATFORM_APP_ARN:     process.env.IOS_PLATFORM_APP_ARN     ?? '',
       ANDROID_PLATFORM_APP_ARN: process.env.ANDROID_PLATFORM_APP_ARN ?? '',
+      // eBay Browse API for the parts-sourcing engine + the mandatory
+      // marketplace-account-deletion webhook. VERIFICATION_TOKEN + WEBHOOK
+      // _ENDPOINT are used by the webhook challenge; APP_ID / CERT_ID by
+      // the searchItems() OAuth flow.
+      EBAY_APP_ID:              process.env.EBAY_APP_ID              ?? '',
+      EBAY_CERT_ID:             process.env.EBAY_CERT_ID             ?? '',
+      EBAY_ENV:                 process.env.EBAY_ENV                 ?? 'production',
+      EBAY_MARKETPLACE:         process.env.EBAY_MARKETPLACE         ?? 'EBAY_AU',
+      EBAY_VERIFICATION_TOKEN:  process.env.EBAY_VERIFICATION_TOKEN  ?? '',
+      EBAY_WEBHOOK_ENDPOINT:    process.env.EBAY_WEBHOOK_ENDPOINT    ?? '',
     }
 
     const src = (p: string) => path.join(__dirname, '../../src', p)
