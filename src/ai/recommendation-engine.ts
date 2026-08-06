@@ -16,6 +16,15 @@ interface GeminiRecommendation {
   estimatedDueKm:   number | null
   estimatedCostMin: number | null
   estimatedCostMax: number | null
+  serviceTypeId:    number | null
+}
+
+interface ServiceTypeChoice {
+  id:                    number
+  name:                  string
+  category:              string
+  labour_hours_estimate: number
+  fixed_price:           number | null
 }
 
 function stripFences(text: string): string {
@@ -25,7 +34,27 @@ function stripFences(text: string): string {
 
 const VALID_URGENCY = new Set(['advisory', 'recommended', 'important', 'urgent'])
 
-async function getRecommendations(vehicle: any, currentKm: number): Promise<GeminiRecommendation[]> {
+async function loadServiceTypes(db: import('mysql2/promise').Pool): Promise<ServiceTypeChoice[]> {
+  const [rows] = await db.query<any[]>(
+    `SELECT id, name, category, labour_hours_estimate, fixed_price
+     FROM service_types
+     WHERE is_active = 1 AND is_bookable = 1
+     ORDER BY category, name`,
+  )
+  return rows.map(r => ({
+    id:                    Number(r.id),
+    name:                  String(r.name),
+    category:              String(r.category),
+    labour_hours_estimate: Number(r.labour_hours_estimate),
+    fixed_price:           r.fixed_price != null ? Number(r.fixed_price) : null,
+  }))
+}
+
+async function getRecommendations(
+  vehicle: any,
+  currentKm: number,
+  services: ServiceTypeChoice[],
+): Promise<GeminiRecommendation[]> {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
   const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
 
@@ -37,6 +66,13 @@ async function getRecommendations(vehicle: any, currentKm: number): Promise<Gemi
     vehicle.fuel_type   ? vehicle.fuel_type                 : null,
     vehicle.transmission ? vehicle.transmission              : null,
   ].filter(Boolean).join(', ')
+
+  // Compact one-line-per-service list so the LLM can pick the best FK
+  // without eating tokens. ~500 tokens for 37 services — trivial cost.
+  const servicesList = services
+    .map(s => `- id ${s.id} | ${s.category} | ${s.name} | ${s.labour_hours_estimate}h${s.fixed_price != null ? ` | fixed $${s.fixed_price}` : ''}`)
+    .join('\n')
+  const validIds = new Set(services.map(s => s.id))
 
   const prompt = `You are an Australian automotive expert and educator building a complete lifetime maintenance schedule for a customer who wants to understand and properly look after their vehicle.
 
@@ -59,6 +95,15 @@ For the "body" field — write 2-4 sentences that educate the customer:
 - Keep it plain English, like a trusted mechanic talking to a customer
 - Max 500 characters
 
+SERVICES OFFERED BY THIS WORKSHOP:
+${servicesList}
+
+For each recommendation, include "serviceTypeId":
+- Pick the id from the list above that best matches this task.
+- Use null when there is no clean bookable match (e.g. "Monitor oil consumption" is observation-only; "Check tyre pressure monthly" is a habit not a workshop job).
+- Prefer the specific service over the generic one when both fit (e.g. "Brake Pad Replace Front" over "Brake Inspection").
+- The customer will click "Book this" on the recommendation, so accuracy matters — a wrong id pre-fills the wrong service.
+
 Return a JSON array only, no markdown:
 [
   {
@@ -67,7 +112,8 @@ Return a JSON array only, no markdown:
     "urgency": "recommended",
     "estimatedDueKm": 60000,
     "estimatedCostMin": 120,
-    "estimatedCostMax": 180
+    "estimatedCostMax": 180,
+    "serviceTypeId": 1
   }
 ]
 
@@ -82,14 +128,23 @@ Set estimatedDueKm to null only for purely age or condition-based items with no 
 
   return parsed
     .filter((r: any) => r.title && r.body && VALID_URGENCY.has(r.urgency))
-    .map((r: any) => ({
-      title:            String(r.title).slice(0, 60),
-      body:             String(r.body).slice(0, 500),
-      urgency:          r.urgency as GeminiRecommendation['urgency'],
-      estimatedDueKm:   r.estimatedDueKm   ? Number(r.estimatedDueKm)   : null,
-      estimatedCostMin: r.estimatedCostMin ? Number(r.estimatedCostMin) : null,
-      estimatedCostMax: r.estimatedCostMax ? Number(r.estimatedCostMax) : null,
-    }))
+    .map((r: any) => {
+      // Guard against hallucinated ids — the LLM occasionally picks a
+      // number that isn't in the active list. Fall back to null so the
+      // frontend renders the generic "Book a service" button instead of
+      // preselecting the wrong one.
+      const rawId = r.serviceTypeId != null ? Number(r.serviceTypeId) : null
+      const serviceTypeId = rawId != null && validIds.has(rawId) ? rawId : null
+      return {
+        title:            String(r.title).slice(0, 60),
+        body:             String(r.body).slice(0, 500),
+        urgency:          r.urgency as GeminiRecommendation['urgency'],
+        estimatedDueKm:   r.estimatedDueKm   ? Number(r.estimatedDueKm)   : null,
+        estimatedCostMin: r.estimatedCostMin ? Number(r.estimatedCostMin) : null,
+        estimatedCostMax: r.estimatedCostMax ? Number(r.estimatedCostMax) : null,
+        serviceTypeId,
+      }
+    })
 }
 
 export const handler = async (event: RecommendationEngineEvent): Promise<void> => {
@@ -108,8 +163,9 @@ export const handler = async (event: RecommendationEngineEvent): Promise<void> =
     if (!vehicle) return
 
     const currentKm = vehicle.odometer_current ?? 0
+    const services  = await loadServiceTypes(db)
 
-    const recommendations = await getRecommendations(vehicle, currentKm)
+    const recommendations = await getRecommendations(vehicle, currentKm, services)
     if (recommendations.length === 0) {
       console.log(`RecommendationEngine: Gemini returned no recommendations for vehicle ${vehicleId}`)
       return
@@ -124,13 +180,14 @@ export const handler = async (event: RecommendationEngineEvent): Promise<void> =
     for (const rec of recommendations) {
       await db.query(
         `INSERT INTO ai_recommendations
-           (vehicle_id, customer_id, rule_id, title, recommendation_title, recommendation_body, urgency,
+           (vehicle_id, customer_id, rule_id, service_type_id, title, recommendation_title, recommendation_body, urgency,
             triggered_at_odometer, triggered_at_date, estimated_due_odometer,
             estimated_cost_min, estimated_cost_max, created_at, updated_at)
-         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, CURDATE(), ?, ?, ?, NOW(), NOW())`,
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, CURDATE(), ?, ?, ?, NOW(), NOW())`,
         [
           vehicleId,
           customerId,
+          rec.serviceTypeId,
           rec.title,
           rec.title,
           rec.body,
