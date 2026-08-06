@@ -226,5 +226,41 @@ export class RodzApiStack4 extends Stack {
       routeKey:    HttpRouteKey.with('/admin/odometer-bump-runs', HttpMethod.GET),
       authorizer:  this.adminAuthorizer,
     })
+
+    // ── Service step catalogue + job card checklist ───────────────────────
+    // One Lambda serves GET (any staff) + PUT (super_admin) on
+    // /service-types/{id}/steps — settings screen reads + saves through
+    // the same endpoint. Second Lambda serves the job card view
+    // (steps + progress + rec-merged part specs) + PATCH tick-off.
+
+    const serviceStepsFn = new LambdaFn(this, 'ServiceSteps', {
+      entry: src('services/steps/router.ts'), vpc, sharedEnv,
+    }).fn
+    const serviceStepsIntegration = new HttpLambdaIntegration('ServiceStepsInt', serviceStepsFn)
+    for (const method of [HttpMethod.GET, HttpMethod.PUT]) {
+      new HttpRoute(this, `ServiceStepsRoute${method}`, {
+        httpApi:     this.adminApi,
+        integration: serviceStepsIntegration,
+        routeKey:    HttpRouteKey.with('/service-types/{id}/steps', method),
+        authorizer:  this.adminAuthorizer,
+      })
+    }
+
+    const serviceJobStepsFn = new LambdaFn(this, 'ServiceJobSteps', {
+      entry: src('services/jobs/steps-router.ts'), vpc, sharedEnv,
+    }).fn
+    const serviceJobStepsIntegration = new HttpLambdaIntegration('ServiceJobStepsInt', serviceJobStepsFn)
+    new HttpRoute(this, 'ServiceJobStepsListRoute', {
+      httpApi:     this.adminApi,
+      integration: serviceJobStepsIntegration,
+      routeKey:    HttpRouteKey.with('/service-jobs/{id}/steps', HttpMethod.GET),
+      authorizer:  this.adminAuthorizer,
+    })
+    new HttpRoute(this, 'ServiceJobStepTickRoute', {
+      httpApi:     this.adminApi,
+      integration: serviceJobStepsIntegration,
+      routeKey:    HttpRouteKey.with('/service-jobs/{id}/steps/{stepId}', HttpMethod.PATCH),
+      authorizer:  this.adminAuthorizer,
+    })
   }
 }
