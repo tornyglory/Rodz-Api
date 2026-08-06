@@ -150,6 +150,10 @@ export async function sendMaintenanceReminderEmail(db: mysql.Pool, opts: {
   dueKm:         number
   costMin:       number | null
   costMax:       number | null
+  // Deep-link path (starts with `/`) to the specific recommendation on
+  // the customer portal. Combined with FRONTEND_URL for the CTA link.
+  // Falls back to /book when absent (legacy callers).
+  recPath?:      string
 }): Promise<void> {
   if (!opts.customerEmail) return
 
@@ -165,7 +169,13 @@ export async function sendMaintenanceReminderEmail(db: mysql.Pool, opts: {
       ? `<p style="margin:0 0 8px;font-size:14px;color:#6b7280;">Estimated cost: <strong>$${opts.costMin}–$${opts.costMax}</strong></p>`
       : ''
 
-    const bookingUrl = process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/book` : '#'
+    // Prefer the per-recommendation deep link when provided — customer
+    // sees the exact card (context + parts + specs) and clicks Book
+    // from there. Falls back to the generic /book page for callers that
+    // haven't wired the deep link yet.
+    const ctaPath  = opts.recPath ?? '/book'
+    const bookingUrl = process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}${ctaPath}` : '#'
+    const ctaLabel = opts.recPath ? 'View this recommendation →' : 'Book this service →'
 
     const body = `
 <!DOCTYPE html>
@@ -221,7 +231,7 @@ export async function sendMaintenanceReminderEmail(db: mysql.Pool, opts: {
           <!-- CTA -->
           <table cellpadding="0" cellspacing="0" style="margin:24px 0 0;">
             <tr><td style="background:#111827;border-radius:6px;">
-              <a href="${bookingUrl}" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;">Book this service →</a>
+              <a href="${bookingUrl}" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;">${ctaLabel}</a>
             </td></tr>
           </table>
 

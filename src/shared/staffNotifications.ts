@@ -13,6 +13,34 @@ interface NotifyOpts {
   invoiceId?: number | null
 }
 
+// Frontend-facing target for a notification click. Relative paths — the
+// workshop app prepends its own base. Keeps entity ids in scalar fields
+// too so the frontend can rebuild the URL if its routes ever change.
+// Exported so the historic-list endpoint can compute the same link on
+// legacy rows without duplicating the switch.
+export function computeNotificationLink(input: {
+  type:       string
+  bookingId?: number | null
+  quoteId?:   number | null
+  jobId?:     number | null
+  invoiceId?: number | null
+}): string | null {
+  switch (input.type) {
+    case 'booking_received':
+      return input.bookingId ? `/bookings/${input.bookingId}` : null
+    case 'job_completed':
+      return input.jobId       ? `/jobs/${input.jobId}`
+           : input.bookingId   ? `/bookings/${input.bookingId}`
+           : null
+    case 'quote_approved':
+      return input.quoteId   ? `/quotes/${input.quoteId}`     : null
+    case 'invoice_paid':
+      return input.invoiceId ? `/invoices/${input.invoiceId}` : null
+    default:
+      return null
+  }
+}
+
 export async function notifyStore(db: mysql.Pool, storeId: number, opts: NotifyOpts): Promise<void> {
   try {
     const [staffRows] = await db.query<any[]>(
@@ -52,6 +80,7 @@ export async function notifyStore(db: mysql.Pool, storeId: number, opts: NotifyO
       bookingId: opts.bookingId ?? null,
       quoteId:   opts.quoteId   ?? null,
       invoiceId: opts.invoiceId ?? null,
+      link:      computeNotificationLink(opts),
     }
     // Await so Lambda doesn't freeze before the push completes; errors are still non-fatal
     await pushNotification(db, storeId, notification).catch(() => {})

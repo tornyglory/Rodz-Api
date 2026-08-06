@@ -57,6 +57,11 @@ export const handler = async (): Promise<void> => {
 
     for (const row of rows) {
       try {
+        // Deep-link both the email CTA and the push notification to the
+        // exact recommendation card so the customer lands on the item
+        // they were reminded about — not just the maintenance tab.
+        const recPath = `/account/vehicles/${row.vehicle_id}/maintenance?rec=${row.rec_id}`
+
         await sendMaintenanceReminderEmail(db, {
           customerEmail: row.email,
           firstName:     row.first_name,
@@ -69,6 +74,7 @@ export const handler = async (): Promise<void> => {
           dueKm:         Number(row.estimated_due_odometer),
           costMin:       row.estimated_cost_min ? Number(row.estimated_cost_min) : null,
           costMax:       row.estimated_cost_max ? Number(row.estimated_cost_max) : null,
+          recPath,
         })
 
         // Push notification alongside the email. pushToCustomer handles
@@ -86,7 +92,7 @@ export const handler = async (): Promise<void> => {
             body:      dueInKm > 0
               ? `${row.title} — due in about ${dueInKm.toLocaleString()} km.`
               : `${row.title} — due now.`,
-            deeplink:  `/account/vehicles/${row.vehicle_id}/maintenance`,
+            deeplink:  recPath,
             eventId:   `maintenance_due:${row.rec_id}`,
             vehicleId: Number(row.vehicle_id),
           })

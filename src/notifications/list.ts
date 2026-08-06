@@ -3,6 +3,7 @@ import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { ok, serverError } from '../shared/errors'
+import { computeNotificationLink } from '../shared/staffNotifications'
 
 const ready = bootstrap()
 
@@ -40,6 +41,13 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         quoteId:   r.quote_id ?? null,
         jobId:     r.job_id ?? null,
         invoiceId: r.invoice_id ?? null,
+        link:      computeNotificationLink({
+          type:      r.type,
+          bookingId: r.booking_id ?? null,
+          quoteId:   r.quote_id ?? null,
+          jobId:     r.job_id ?? null,
+          invoiceId: r.invoice_id ?? null,
+        }),
         readAt:    r.read_at ? new Date(r.read_at).toISOString() : null,
         createdAt: new Date(r.created_at).toISOString(),
       })),
