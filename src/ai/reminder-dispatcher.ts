@@ -60,7 +60,11 @@ export const handler = async (): Promise<void> => {
         // Deep-link both the email CTA and the push notification to the
         // exact recommendation card so the customer lands on the item
         // they were reminded about — not just the maintenance tab.
-        const recPath = `/account/vehicles/${row.vehicle_id}/maintenance?rec=${row.rec_id}`
+        // Path-segment rec id matches the frontend router shape:
+        //   /account/vehicles/{vid}/maintenance/{recId}
+        // (nested child route inside AccountVehicleView; opens the
+        // recommendation detail slide-up modal).
+        const recPath = `/account/vehicles/${row.vehicle_id}/maintenance/${row.rec_id}`
 
         await sendMaintenanceReminderEmail(db, {
           customerEmail: row.email,
