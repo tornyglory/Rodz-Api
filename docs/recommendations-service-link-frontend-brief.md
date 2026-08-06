@@ -1,9 +1,16 @@
-# Maintenance Recommendations → Bookable Service Link (Frontend Brief)
+# Maintenance Recommendations → Service + Parts (Frontend Brief)
 
-Every AI-generated recommendation now carries an optional `serviceTypeId`
-+ nested `service` block, so the frontend can wire a **"Book this"**
-button that opens the booking flow with the correct workshop service
-preselected.
+Every AI-generated recommendation now carries three things the frontend
+can render on a maintenance card:
+
+- **`serviceTypeId` + nested `service` block** — the workshop service
+  that fulfils this recommendation, so "Book this" opens the booking
+  flow with the right service preselected.
+- **`parts` array** — the standardised part names the workshop
+  typically consumes for this task on THIS vehicle (LLM-picked, vehicle-
+  and task-aware). Foundation for the JIT sourcing engine we'll bolt on
+  in a later phase.
+- Cost estimate, urgency, due odometer/date (existing).
 
 Backend deployed 2026-08-06. Applied to all four recommendation read
 paths (staff, customer, public logbook, health digest).
@@ -12,26 +19,32 @@ paths (staff, customer, public logbook, health digest).
 
 ## What changed on the response
 
-Existing recommendation rows gain two new fields. Everything else stays
-the same.
+Existing recommendation rows gain three new fields (`serviceTypeId`,
+`service`, `parts`). Everything else stays the same.
 
 ```jsonc
 {
   "id":                  412,
-  "title":               "Engine Oil & Filter Service",
+  "title":               "General Filter Service & Safety Check",
   "body":                "Your M15A engine needs clean oil…",
-  "urgency":             "important",
+  "urgency":             "recommended",
   "status":              "active",
 
   // NEW ↓↓↓
-  "serviceTypeId":       1,                       // int | null
-  "service": {                                    // object | null (null when serviceTypeId is null OR the service was deactivated)
-    "id":                  1,
-    "name":                "General Oil Service",
+  "serviceTypeId":       2,
+  "service": {                                    // null when serviceTypeId is null or the service was deactivated
+    "id":                  2,
+    "name":                "General Filter Service (engine oil + oil filter + air + cabin filter + full safety check)",
     "category":            "service",
-    "labourHoursEstimate": 1.2,
-    "fixedPrice":          null                   // some services are quoted, not fixed
+    "labourHoursEstimate": 1.5,
+    "fixedPrice":          null
   },
+  "parts": [                                      // always an array, may be empty
+    { "id": 385, "name": "Engine Oil",      "category": "Fluid"  },
+    { "id": 354, "name": "Oil Filter",      "category": "Filter" },
+    { "id": 355, "name": "Air Filter",      "category": "Filter" },
+    { "id": 356, "name": "Cabin Air Filter", "category": "Filter" }
+  ],
   // ↑↑↑ NEW
 
   "estimatedDueOdometer": 90000,
@@ -54,6 +67,26 @@ Every recommendation read now carries the new fields:
 | `GET /c/vehicles/{id}/health` (nested at `recommendations.top[]`) | `fzzrkscwd7…` | customer JWT |
 
 ---
+
+## `parts` array shape
+
+Each entry is a live row from the `part_names` catalogue (322 rows,
+maintained by the workshop). Deactivated or unknown ids are silently
+dropped at read time — the array only ever contains parts the workshop
+currently uses.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | `number` | Foreign key to `part_names`. Stable across renames — use for eBay/supplier lookups later. |
+| `name` | `string` | Display label. Standardised across all vehicles (e.g. "Engine Oil", "Front Brake Pad Set"). |
+| `category` | `string` | One of: `Filter`, `Fluid`, `Brake`, `Belt`, `Tyre`, `Electrical`, `Other`. Handy for grouping / icon selection. |
+
+The list can be empty — for observation-only recommendations ("Monitor
+oil consumption", "Look for warning lights") the engine returns `[]`.
+Same for pure-labour tasks (Tyre Rotation, Wheel Alignment).
+
+Ordering reflects the LLM's picked order — usually most-important part
+first. Preserve it, don't sort alphabetically.
 
 ## `service` block shape
 
@@ -93,19 +126,34 @@ When `service.category === 'other'` and `service.name === 'Something else'`, thi
 ### Recommendation card (all four surfaces)
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│ [urgency pill]  Engine Oil & Filter Service             │
-│ Your M15A engine needs clean oil to protect its VVT…    │
-│                                                         │
-│ Est. cost: $95–$140      Due: 90,000 km / Nov 2026     │
-│                                                         │
-│                         [ Book: General Oil Service → ] │
-└─────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│ [urgency pill]  General Filter Service & Safety Check             │
+│ Your M15A engine needs clean oil to protect its VVT…              │
+│                                                                   │
+│ Rodz service:  General Filter Service                             │
+│ Typical parts: Engine Oil · Oil Filter · Air Filter · Cabin Filter │
+│                                                                   │
+│ Est. cost: $95–$140         Due: 90,000 km / Nov 2026            │
+│                                                                   │
+│                            [ Book: General Filter Service → ]    │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
-- **Button label** = `service.name` when present (e.g. "Book: General Oil Service"), else just "Book a service".
-- **Category-coloured icon** (optional) — map `service.category` to your existing service-icon palette.
-- **Show `labourHoursEstimate` and `fixedPrice`** on hover / expanded view — helps set customer expectations before they click through.
+- **"Rodz service" line** = `service.name` when present. Hide the whole line if `service` is null (informational recommendations).
+- **"Typical parts" line** = comma/dot-separated `parts[].name`. Hide the whole line when `parts` is empty.
+- **Button label** = `Book: {service.name}` when service is present, else `Book a service` (or hide entirely for null-service observation items).
+- **Category-coloured icon** (optional) — map `service.category` OR the primary `parts[0].category` to your existing icon palette.
+- **Show `labourHoursEstimate` and `fixedPrice`** on hover / expanded view.
+
+### Rendering rule matrix
+
+| Recommendation state | Show "Rodz service" | Show "Typical parts" | Show "Book" button |
+|---|---|---|---|
+| Specific service + parts | ✅ | ✅ (list) | ✅ "Book: {service.name}" |
+| Specific service + no parts (labour only, e.g. Tyre Rotation) | ✅ | ❌ | ✅ "Book: {service.name}" |
+| Catch-all service (id 31, "Something else") + parts | ✅ optional or "General service" | ✅ | ✅ "Book a service" (rec body copied to notes) |
+| Catch-all service + no parts | ❌ | ❌ | ✅ "Book a service" |
+| Null service (observation/habit) | ❌ | ❌ | ❌ (informational card only) |
 
 ### Click behaviour
 
@@ -190,6 +238,7 @@ Same rendering logic applies here — "Book this" button on each top-recommendat
 
 ## Not addressed here
 
-- **Backfill for existing recommendations** — the ~40 recs written before this ship stay `null`. They'll pick up service links the next time the AI engine regenerates their vehicle's schedule (fires automatically at every 10k km of odometer drift, or immediately if you re-invoke the engine per vehicle). No manual backfill planned.
-- **Multi-service recommendations** — v1 links one service_type per rec. If a recommendation implies bundle work (e.g. "Full major service" → oil + air filter + cabin filter + coolant), we currently link the closest single service. Add `serviceTypeIds: number[]` field later if the pattern shows up meaningfully in customer feedback.
+- **Backfill for existing recommendations** — recs generated before 2026-08-06 stay `null` on both `service` and `parts` until the next natural regen fires (~10km odometer drift). No manual backfill planned; the loop is self-healing over time.
+- **Multi-service recommendations** — v1 links one service_type per rec. Bundle work like "Full major service" is already handled by the `parts` array — one service can carry multiple parts. Multi-service will only matter if a rec truly straddles two workshop services with no bundled service_type covering both.
+- **Vehicle-specific SKUs / OEM part numbers** — the `parts` array carries generic part names ("Oil Filter"), not SKUs ("Toyota 90915-YZZD3"). SKU resolution + supplier price lookup happens later in the JIT phase (eBay first, then TecDoc integration for OEM numbers).
 - **Booking assistant already knows all this** — the AI booking chat/voice agent uses the same `service_types` table via `getServiceTypes` tool. No changes needed there.

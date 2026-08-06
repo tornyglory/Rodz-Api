@@ -5,16 +5,21 @@ import { getPool } from '../../shared/db'
 import { ok, forbidden, notFound, serverError } from '../../shared/errors'
 import { getCustomerContext } from '../_helpers'
 import { safeGet, safeSetEx } from '../../shared/redis'
-import { loadServiceLinks, shapeService } from '../../shared/recommendationServiceLink'
+import { loadServiceLinks, shapeService, loadPartLinks, shapeParts, parsePartNameIds } from '../../shared/recommendationServiceLink'
 
 async function shapeTopRecs(db: import('mysql2/promise').Pool, rows: any[]) {
-  const linkMap = await loadServiceLinks(db, rows.map(r => r.service_type_id))
-  return rows.map(r => ({
+  const withParts = rows.map(r => ({ ...r, _partIds: parsePartNameIds(r.part_name_ids) }))
+  const [linkMap, partMap] = await Promise.all([
+    loadServiceLinks(db, withParts.map(r => r.service_type_id)),
+    loadPartLinks(db, withParts.map(r => r._partIds)),
+  ])
+  return withParts.map(r => ({
     id:                   Number(r.id),
     title:                r.title,
     urgency:              r.urgency,
     serviceTypeId:        r.service_type_id != null ? Number(r.service_type_id) : null,
     service:              shapeService(r.service_type_id, linkMap),
+    parts:                shapeParts(r._partIds, partMap),
     estimatedDueOdometer: r.estimated_due_odometer != null ? Number(r.estimated_due_odometer) : null,
     estimatedDueDate:     r.estimated_due_date ? toDate(r.estimated_due_date) : null,
     estimatedCostMin:     r.estimated_cost_min != null ? Number(r.estimated_cost_min) : null,
@@ -86,7 +91,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         [vehicleId],
       ),
       db.query<any[]>(
-        `SELECT id, title, urgency, service_type_id, estimated_due_odometer, estimated_due_date,
+        `SELECT id, title, urgency, service_type_id, part_name_ids, estimated_due_odometer, estimated_due_date,
                 estimated_cost_min, estimated_cost_max
          FROM ai_recommendations
          WHERE vehicle_id = ? AND status IN ('active','sent','acknowledged')

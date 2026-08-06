@@ -17,6 +17,7 @@ interface GeminiRecommendation {
   estimatedCostMin: number | null
   estimatedCostMax: number | null
   serviceTypeId:    number | null
+  partNameIds:      number[]
 }
 
 interface ServiceTypeChoice {
@@ -25,6 +26,12 @@ interface ServiceTypeChoice {
   category:              string
   labour_hours_estimate: number
   fixed_price:           number | null
+}
+
+interface PartNameChoice {
+  id:       number
+  name:     string
+  category: string
 }
 
 function stripFences(text: string): string {
@@ -50,10 +57,25 @@ async function loadServiceTypes(db: import('mysql2/promise').Pool): Promise<Serv
   }))
 }
 
+async function loadPartNames(db: import('mysql2/promise').Pool): Promise<PartNameChoice[]> {
+  const [rows] = await db.query<any[]>(
+    `SELECT id, name, category
+     FROM part_names
+     WHERE is_active = 1
+     ORDER BY category, name`,
+  )
+  return rows.map(r => ({
+    id:       Number(r.id),
+    name:     String(r.name),
+    category: String(r.category ?? 'Other'),
+  }))
+}
+
 async function getRecommendations(
   vehicle: any,
   currentKm: number,
   services: ServiceTypeChoice[],
+  partNames: PartNameChoice[],
 ): Promise<GeminiRecommendation[]> {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
   const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
@@ -80,6 +102,21 @@ async function getRecommendations(
     ? `\n\nCATCH-ALL (use this when the task is bookable but no specific service above fits):\n- id ${catchAll.id} | ${catchAll.category} | ${catchAll.name}`
     : ''
   const validIds = new Set(services.map(s => s.id))
+
+  // Group part_names by category for a compact, LLM-friendly layout.
+  // ~322 rows × ~15 tokens each = ~5k tokens — negligible against the
+  // cost of a full-schedule generation.
+  const partsByCat = new Map<string, PartNameChoice[]>()
+  for (const p of partNames) {
+    const arr = partsByCat.get(p.category) ?? []
+    arr.push(p)
+    partsByCat.set(p.category, arr)
+  }
+  const partsList = Array.from(partsByCat.entries())
+    .map(([cat, arr]) =>
+      `[${cat}]\n${arr.map(p => `  ${p.id}: ${p.name}`).join('\n')}`
+    ).join('\n\n')
+  const validPartIds = new Set(partNames.map(p => p.id))
 
   const prompt = `You are an Australian automotive expert and educator building a complete lifetime maintenance schedule for a customer who wants to understand and properly look after their vehicle.
 
@@ -112,6 +149,17 @@ For each recommendation, include "serviceTypeId":
 - Use null ONLY for observation-only or habitual items the customer does themselves — e.g. "Monitor oil consumption between services" (a check they do at home), "Tyre pressure check & top-up monthly" (a habit, not a workshop visit), "Look for warning lights". If a mechanic would ever perform this task, prefer the catch-all over null.
 - The customer will click "Book this" on the recommendation, so accuracy matters — a wrong id pre-fills the wrong service.
 
+STANDARDISED PART CATALOGUE (grouped by category):
+${partsList}
+
+For each recommendation, include "partNameIds" — an array of ids from the catalogue above listing the parts a workshop would typically replace or top up for THIS specific task on THIS specific vehicle:
+- Pick only parts that the workshop physically buys/consumes for the task. Not tools, not labour, not consumables like rags.
+- Be vehicle-appropriate. A diesel needs a diesel fuel filter (id 357), a petrol doesn't. A hybrid battery inspection (id 469) doesn't apply to a non-hybrid.
+- Include commonly-paired parts. A timing belt service usually gets a Water Pump too — include both if the workshop would do both together on this vehicle. An oil service gets Engine Oil + Oil Filter.
+- Include obviously optional/conditional parts only when they are commonly done alongside — the frontend surfaces them without singling out optionality.
+- For monitoring/observation recommendations that involve no parts (e.g. "Look for warning lights", "Monitor oil consumption"), use an empty array [].
+- IDs must come from the catalogue above — do not invent ids.
+
 Return a JSON array only, no markdown:
 [
   {
@@ -121,7 +169,8 @@ Return a JSON array only, no markdown:
     "estimatedDueKm": 60000,
     "estimatedCostMin": 120,
     "estimatedCostMax": 180,
-    "serviceTypeId": 1
+    "serviceTypeId": 1,
+    "partNameIds": [385, 354]
   },
   {
     "title": "Spark Plug Replacement",
@@ -130,7 +179,8 @@ Return a JSON array only, no markdown:
     "estimatedDueKm": 100000,
     "estimatedCostMin": 250,
     "estimatedCostMax": 400,
-    "serviceTypeId": ${catchAll ? catchAll.id : 'null'}
+    "serviceTypeId": ${catchAll ? catchAll.id : 'null'},
+    "partNameIds": []
   },
   {
     "title": "Monitor Engine Oil Consumption",
@@ -139,7 +189,8 @@ Return a JSON array only, no markdown:
     "estimatedDueKm": null,
     "estimatedCostMin": null,
     "estimatedCostMax": null,
-    "serviceTypeId": null
+    "serviceTypeId": null,
+    "partNameIds": []
   }
 ]
 
@@ -161,6 +212,17 @@ Set estimatedDueKm to null only for purely age or condition-based items with no 
       // preselecting the wrong one.
       const rawId = r.serviceTypeId != null ? Number(r.serviceTypeId) : null
       const serviceTypeId = rawId != null && validIds.has(rawId) ? rawId : null
+
+      // Validate + dedupe the parts array. Hallucinated ids drop silently
+      // — they just wouldn't render on the frontend anyway.
+      const partNameIds = Array.isArray(r.partNameIds)
+        ? Array.from(new Set(
+            (r.partNameIds as unknown[])
+              .map(v => Number(v))
+              .filter(n => Number.isFinite(n) && validPartIds.has(n))
+          )).slice(0, 12)
+        : []
+
       return {
         title:            String(r.title).slice(0, 60),
         body:             String(r.body).slice(0, 500),
@@ -169,6 +231,7 @@ Set estimatedDueKm to null only for purely age or condition-based items with no 
         estimatedCostMin: r.estimatedCostMin ? Number(r.estimatedCostMin) : null,
         estimatedCostMax: r.estimatedCostMax ? Number(r.estimatedCostMax) : null,
         serviceTypeId,
+        partNameIds,
       }
     })
 }
@@ -189,9 +252,12 @@ export const handler = async (event: RecommendationEngineEvent): Promise<void> =
     if (!vehicle) return
 
     const currentKm = vehicle.odometer_current ?? 0
-    const services  = await loadServiceTypes(db)
+    const [services, partNames] = await Promise.all([
+      loadServiceTypes(db),
+      loadPartNames(db),
+    ])
 
-    const recommendations = await getRecommendations(vehicle, currentKm, services)
+    const recommendations = await getRecommendations(vehicle, currentKm, services, partNames)
     if (recommendations.length === 0) {
       console.log(`RecommendationEngine: Gemini returned no recommendations for vehicle ${vehicleId}`)
       return
@@ -206,14 +272,15 @@ export const handler = async (event: RecommendationEngineEvent): Promise<void> =
     for (const rec of recommendations) {
       await db.query(
         `INSERT INTO ai_recommendations
-           (vehicle_id, customer_id, rule_id, service_type_id, title, recommendation_title, recommendation_body, urgency,
+           (vehicle_id, customer_id, rule_id, service_type_id, part_name_ids, title, recommendation_title, recommendation_body, urgency,
             triggered_at_odometer, triggered_at_date, estimated_due_odometer,
             estimated_cost_min, estimated_cost_max, created_at, updated_at)
-         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, CURDATE(), ?, ?, ?, NOW(), NOW())`,
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, CURDATE(), ?, ?, ?, NOW(), NOW())`,
         [
           vehicleId,
           customerId,
           rec.serviceTypeId,
+          rec.partNameIds.length ? JSON.stringify(rec.partNameIds) : null,
           rec.title,
           rec.title,
           rec.body,

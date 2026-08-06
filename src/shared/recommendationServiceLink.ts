@@ -60,3 +60,73 @@ export function shapeService(
   const link = linkMap.get(Number(serviceTypeId))
   return link ?? null
 }
+
+// ─── Part names for the "typical parts" block on the recommendation card
+
+export interface PartLink {
+  id:       number
+  name:     string
+  category: string
+}
+
+// mysql2 returns a JSON column as either a parsed value or a string
+// depending on version/config. Normalise to number[]; anything else
+// (null, malformed) becomes [].
+export function parsePartNameIds(raw: unknown): number[] {
+  if (raw == null) return []
+  let arr: unknown = raw
+  if (typeof raw === 'string') {
+    try { arr = JSON.parse(raw) } catch { return [] }
+  }
+  if (!Array.isArray(arr)) return []
+  return arr
+    .map(v => Number(v))
+    .filter(n => Number.isFinite(n) && n > 0)
+}
+
+// One IN() query for the union of ids across every recommendation on
+// the page — same batching pattern as loadServiceLinks. Deactivated
+// rows are silently dropped so the frontend renders a shorter list
+// rather than showing something the workshop no longer stocks.
+export async function loadPartLinks(
+  db: mysql.Pool,
+  idBundles: Array<Array<number | null | undefined>>,
+): Promise<Map<number, PartLink>> {
+  const ids = Array.from(new Set(
+    idBundles.flat()
+      .map(v => (v != null ? Number(v) : null))
+      .filter((v): v is number => v != null && Number.isFinite(v) && v > 0),
+  ))
+  if (ids.length === 0) return new Map()
+
+  const [rows] = await db.query<any[]>(
+    `SELECT id, name, category
+     FROM part_names
+     WHERE id IN (${ids.map(() => '?').join(',')}) AND is_active = 1`,
+    ids,
+  )
+  const map = new Map<number, PartLink>()
+  for (const r of rows) {
+    map.set(Number(r.id), {
+      id:       Number(r.id),
+      name:     String(r.name),
+      category: String(r.category ?? 'Other'),
+    })
+  }
+  return map
+}
+
+// Shape helper — returns the parts array to nest as `parts` on a
+// recommendation payload. Preserves the LLM's chosen order; drops any
+// id that isn't in the live catalogue.
+export function shapeParts(
+  ids: number[],
+  linkMap: Map<number, PartLink>,
+): PartLink[] {
+  const out: PartLink[] = []
+  for (const id of ids) {
+    const link = linkMap.get(Number(id))
+    if (link) out.push(link)
+  }
+  return out
+}
