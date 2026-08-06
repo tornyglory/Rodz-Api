@@ -112,13 +112,18 @@ export const handler = async (): Promise<void> => {
         )
 
         try {
+          // Audit row so we have a record of what was sent to whom.
+          // notification_type must match the enum on notifications — the
+          // previous 'service' value silently failed every write, so the
+          // audit table was empty. Also link back to the specific rec.
           await db.query(
             `INSERT INTO notifications
-               (customer_id, vehicle_id, channel, notification_type, subject, body, status, sent_at)
-             VALUES (?, ?, 'email', 'service', ?, ?, 'sent', NOW())`,
+               (customer_id, vehicle_id, recommendation_id, channel, notification_type, subject, body, status, sent_at)
+             VALUES (?, ?, ?, 'email', 'ai_recommendation', ?, ?, 'sent', NOW())`,
             [
               row.customer_id,
               row.vehicle_id,
+              row.rec_id,
               `Your ${row.year} ${row.make} ${row.model} — ${row.title}`,
               row.recommendation_body,
             ],
