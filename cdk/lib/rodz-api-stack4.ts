@@ -262,6 +262,18 @@ export class RodzApiStack4 extends Stack {
       })
     }
 
+    // ── Per-part search refresh (single row, custom query override) ───────
+    const partsSourcingQueryRefreshFn = new LambdaFn(this, 'PartsSourcingQueryRefresh', {
+      entry: src('sourcing/query-refresh.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(29),
+    }).fn
+    new HttpRoute(this, 'PartsSourcingQueryRefreshRoute', {
+      httpApi:     this.adminApi,
+      integration: new HttpLambdaIntegration('PartsSourcingQueryRefreshInt', partsSourcingQueryRefreshFn),
+      routeKey:    HttpRouteKey.with('/parts-sourcing-queries/{queryId}/refresh', HttpMethod.POST),
+      authorizer:  this.adminAuthorizer,
+    })
+
     // ── Ad-hoc parts search (standalone, no booking context) ──────────────
     const partsSearchFn = new LambdaFn(this, 'PartsSearch', {
       entry: src('sourcing/parts-search.ts'), vpc, sharedEnv,
