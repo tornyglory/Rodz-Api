@@ -262,6 +262,17 @@ export class RodzApiStack4 extends Stack {
       })
     }
 
+    // ── Parts margin report ───────────────────────────────────────────────
+    const partsMarginReportFn = new LambdaFn(this, 'PartsMarginReport', {
+      entry: src('reports/parts-margin.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'PartsMarginReportRoute', {
+      httpApi:     this.adminApi,
+      integration: new HttpLambdaIntegration('PartsMarginReportInt', partsMarginReportFn),
+      routeKey:    HttpRouteKey.with('/reports/parts-margin', HttpMethod.GET),
+      authorizer:  this.adminAuthorizer,
+    })
+
     // ── Job notes (customer + technician free-text) ───────────────────────
     // GET /jobs/{id}/notes — reads customer_notes + technician_notes off
     // service_jobs. Lives on Stack 4 because the shared HttpApi is at cap.

@@ -4,6 +4,7 @@ import { bootstrap } from '../shared/bootstrap'
 import { getPool } from '../shared/db'
 import { getAuthContext } from '../shared/auth'
 import { ok, notFound, forbidden, validationError, serverError } from '../shared/errors'
+import { syncJobStatusFromOrders } from './jobStatusSync'
 
 type Pool = mysql.Pool
 
@@ -157,6 +158,12 @@ async function createOrder(db: Pool, bookingId: number, body: any, ctx: any): Pr
   )
   const orderId = Number((ins as any).insertId)
 
+  // Any newly-placed order that's not immediately `arrived` should
+  // flag the job as awaiting parts. Fire-and-forget (never fails the
+  // create, and the job sync is idempotent).
+  await syncJobStatusFromOrders(db, bookingId).catch(err =>
+    console.error('[parts-orders] job sync (create) failed:', err))
+
   const [[fresh]] = await db.query<any[]>(
     `SELECT o.*, pn.name AS part_name, pn.category AS part_category,
             s.first_name AS placed_by_first, s.last_name AS placed_by_last
@@ -196,6 +203,14 @@ async function updateOrder(db: Pool, orderId: number, body: any): Promise<APIGat
   params.push(orderId)
   await db.query<any[]>(`UPDATE part_orders SET ${sets.join(', ')}, updated_at = NOW() WHERE id = ?`, params)
 
+  // Sync job status — arrival ticks may flip the job back to `open`,
+  // cancellations may leave the job awaiting the remaining orders.
+  const [[after]] = await db.query<any[]>('SELECT booking_id FROM part_orders WHERE id = ? LIMIT 1', [orderId])
+  if (after?.booking_id) {
+    await syncJobStatusFromOrders(db, Number(after.booking_id)).catch(err =>
+      console.error('[parts-orders] job sync (update) failed:', err))
+  }
+
   const [[fresh]] = await db.query<any[]>(
     `SELECT o.*, pn.name AS part_name, pn.category AS part_category,
             s.first_name AS placed_by_first, s.last_name AS placed_by_last
@@ -211,7 +226,12 @@ async function updateOrder(db: Pool, orderId: number, body: any): Promise<APIGat
 // ─── delete ────────────────────────────────────────────────────────────────
 
 async function deleteOrder(db: Pool, orderId: number): Promise<APIGatewayProxyResultV2> {
+  const [[row]] = await db.query<any[]>('SELECT booking_id FROM part_orders WHERE id = ? LIMIT 1', [orderId])
   await db.query<any[]>('DELETE FROM part_orders WHERE id = ?', [orderId])
+  if (row?.booking_id) {
+    await syncJobStatusFromOrders(db, Number(row.booking_id)).catch(err =>
+      console.error('[parts-orders] job sync (delete) failed:', err))
+  }
   return ok({ deleted: true })
 }
 
