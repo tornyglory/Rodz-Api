@@ -262,6 +262,18 @@ export class RodzApiStack4 extends Stack {
       })
     }
 
+    // ── Ad-hoc parts search (standalone, no booking context) ──────────────
+    const partsSearchFn = new LambdaFn(this, 'PartsSearch', {
+      entry: src('sourcing/parts-search.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(29),
+    }).fn
+    new HttpRoute(this, 'PartsSearchRoute', {
+      httpApi:     this.adminApi,
+      integration: new HttpLambdaIntegration('PartsSearchInt', partsSearchFn),
+      routeKey:    HttpRouteKey.with('/parts-search', HttpMethod.GET),
+      authorizer:  this.adminAuthorizer,
+    })
+
     // ── Parts margin report ───────────────────────────────────────────────
     const partsMarginReportFn = new LambdaFn(this, 'PartsMarginReport', {
       entry: src('reports/parts-margin.ts'), vpc, sharedEnv,
