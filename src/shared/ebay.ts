@@ -38,8 +38,12 @@ function isSandbox(): boolean {
 function tokenUrl(): string { return isSandbox() ? SANDBOX_TOKEN_URL : PROD_TOKEN_URL }
 function apiBase():  string { return isSandbox() ? SANDBOX_API_BASE  : PROD_API_BASE }
 
+// EBAY_JP is not accessible via Browse API (eBay joint-venture in Japan,
+// API locked down — returns 409 for outside applications). If we ever
+// want JDM parts we'll need a separate integration (Yahoo Auctions
+// Japan / Rakuten). Everything else is fair game.
 function defaultMarketplaces(): string[] {
-  const raw = process.env.EBAY_MARKETPLACES ?? 'EBAY_AU,EBAY_US'
+  const raw = process.env.EBAY_MARKETPLACES ?? 'EBAY_AU,EBAY_US,EBAY_GB,EBAY_DE'
   return raw.split(',').map(s => s.trim()).filter(Boolean)
 }
 function shipToCountry(): string  { return process.env.EBAY_SHIP_TO_COUNTRY  ?? 'AU'   }
