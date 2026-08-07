@@ -262,6 +262,31 @@ export class RodzApiStack4 extends Stack {
       })
     }
 
+    // ── Parts sourcing engine ─────────────────────────────────────────────
+    // POST /bookings/{id}/parts-sourcing/refresh  → run eBay searches
+    // GET  /bookings/{id}/parts-sourcing          → latest snapshot
+    //
+    // Sourcing calls the eBay Browse API in parallel per part (up to
+    // 4 marketplaces × N parts) — the 30s HTTP API Gateway timeout is
+    // plenty for most bookings; upgrade to async self-invoke if we
+    // ever see timeouts.
+    const partsSourcingFn = new LambdaFn(this, 'PartsSourcing', {
+      entry: src('sourcing/router.ts'), vpc, sharedEnv, timeout: Duration.seconds(29),
+    }).fn
+    const partsSourcingIntegration = new HttpLambdaIntegration('PartsSourcingInt', partsSourcingFn)
+    new HttpRoute(this, 'PartsSourcingReadRoute', {
+      httpApi:     this.adminApi,
+      integration: partsSourcingIntegration,
+      routeKey:    HttpRouteKey.with('/bookings/{id}/parts-sourcing', HttpMethod.GET),
+      authorizer:  this.adminAuthorizer,
+    })
+    new HttpRoute(this, 'PartsSourcingRefreshRoute', {
+      httpApi:     this.adminApi,
+      integration: partsSourcingIntegration,
+      routeKey:    HttpRouteKey.with('/bookings/{id}/parts-sourcing/refresh', HttpMethod.POST),
+      authorizer:  this.adminAuthorizer,
+    })
+
     const serviceJobStepsFn = new LambdaFn(this, 'ServiceJobSteps', {
       entry: src('services/jobs/steps-router.ts'), vpc, sharedEnv,
     }).fn
