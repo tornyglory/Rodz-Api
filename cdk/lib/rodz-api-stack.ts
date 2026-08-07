@@ -1,5 +1,5 @@
 import * as path from 'path'
-import { Stack, StackProps, CfnOutput } from 'aws-cdk-lib'
+import { Stack, StackProps, CfnOutput, Duration } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as ec2 from 'aws-cdk-lib/aws-ec2'
 import * as iam from 'aws-cdk-lib/aws-iam'
@@ -194,6 +194,17 @@ export class RodzApiStack extends Stack {
     const bookingByIdFn = new LambdaFn(this, 'BookingById', {
       entry: src('bookings/router.ts'), vpc, sharedEnv, needsSes: true,
     }).fn
+
+    // Parts sourcing hook — fire-and-forget invoked when a booking flips
+    // to 'confirmed' so the sourcing panel is warm by the time the
+    // manager opens the booking. Also invoke-able from any other flow
+    // that wants to pre-source (e.g. from bookingsClaimFn later).
+    // Uses the shared eBay creds already in sharedEnv.
+    const partsSourcingHookFn = new LambdaFn(this, 'PartsSourcingHook', {
+      entry: src('sourcing/booking-hook.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(120),   // 4 markets × N parts, generous room
+    }).fn
+    bookingByIdFn.addEnvironment('PARTS_SOURCING_HOOK_FN_ARN', partsSourcingHookFn.functionArn)
 
     // ── Hoists (operational) ────────────────────────────────────────────────
 

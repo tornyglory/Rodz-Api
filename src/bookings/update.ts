@@ -12,6 +12,7 @@ import { buildHoist, HOIST_SELECT_BY_ID } from '../hoists/_helpers'
 import { sendBookingConfirmedEmail } from '../shared/emailTemplates'
 import { pushToStore } from '../shared/wsPush'
 import { pushToCustomer } from '../shared/push'
+import { invokePartsSourcing } from '../shared/sourcingTrigger'
 
 const ready = bootstrap()
 
@@ -218,6 +219,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     const result = buildBooking(updatedRow, servicesMap.get(Number(id)) ?? [])
     if (status === 'confirmed') {
       await sendBookingConfirmedEmail(db, result)
+
+      // Fire the parts sourcing pipeline in the background — by the
+      // time the manager opens the booking to review, the panel is
+      // already populated with eBay prices across AU/US/UK/DE. Non-
+      // fatal + fire-and-forget; sourcing failures never block confirm.
+      void invokePartsSourcing(Number(id))
 
       // Customer push (non-fatal). Dedupe key is stable per booking-id, so
       // re-confirming won't re-notify. The chat deep-link surfaces the

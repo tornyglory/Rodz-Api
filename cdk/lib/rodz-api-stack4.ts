@@ -262,6 +262,40 @@ export class RodzApiStack4 extends Stack {
       })
     }
 
+    // ── Parts orders (placed purchases + tracking) ────────────────────────
+    // Records every part the workshop has actually bought for a booking,
+    // whether via a manual click-through eBay purchase (current) or an
+    // automated API placement (later). One Lambda serves all verbs on
+    // both /bookings/{id}/parts-orders and /parts-orders/{orderId}.
+    const partsOrdersFn = new LambdaFn(this, 'PartsOrders', {
+      entry: src('sourcing/orders-router.ts'), vpc, sharedEnv,
+    }).fn
+    const partsOrdersIntegration = new HttpLambdaIntegration('PartsOrdersInt', partsOrdersFn)
+    new HttpRoute(this, 'PartsOrdersListRoute', {
+      httpApi:     this.adminApi,
+      integration: partsOrdersIntegration,
+      routeKey:    HttpRouteKey.with('/bookings/{id}/parts-orders', HttpMethod.GET),
+      authorizer:  this.adminAuthorizer,
+    })
+    new HttpRoute(this, 'PartsOrdersCreateRoute', {
+      httpApi:     this.adminApi,
+      integration: partsOrdersIntegration,
+      routeKey:    HttpRouteKey.with('/bookings/{id}/parts-orders', HttpMethod.POST),
+      authorizer:  this.adminAuthorizer,
+    })
+    new HttpRoute(this, 'PartsOrdersUpdateRoute', {
+      httpApi:     this.adminApi,
+      integration: partsOrdersIntegration,
+      routeKey:    HttpRouteKey.with('/parts-orders/{orderId}', HttpMethod.PATCH),
+      authorizer:  this.adminAuthorizer,
+    })
+    new HttpRoute(this, 'PartsOrdersDeleteRoute', {
+      httpApi:     this.adminApi,
+      integration: partsOrdersIntegration,
+      routeKey:    HttpRouteKey.with('/parts-orders/{orderId}', HttpMethod.DELETE),
+      authorizer:  this.adminAuthorizer,
+    })
+
     // ── Parts sourcing engine ─────────────────────────────────────────────
     // POST /bookings/{id}/parts-sourcing/refresh  → run eBay searches
     // GET  /bookings/{id}/parts-sourcing          → latest snapshot
