@@ -73,6 +73,13 @@ const perMarket = await Promise.allSettled(markets.map(async m => {
   return { marketplace: m, items: data.itemSummaries ?? [] }
 }))
 
+function daysFromNow(iso) {
+  if (!iso) return null
+  const d = new Date(iso).getTime()
+  if (!Number.isFinite(d)) return null
+  return Math.max(0, Math.ceil((d - Date.now()) / (1000 * 60 * 60 * 24)))
+}
+
 const rows = []
 for (const r of perMarket) {
   if (r.status === 'rejected') { console.warn('  ⚠ ' + r.reason.message); continue }
@@ -81,24 +88,41 @@ for (const r of perMarket) {
     const cur       = i.price?.currency ?? 'AUD'
     const price     = Number(i.price?.value ?? 0)
     const rate      = fx(cur)
-    const ship      = i.shippingOptions?.[0]?.shippingCost?.value != null ? Number(i.shippingOptions[0].shippingCost.value) : null
-    const shipCur   = i.shippingOptions?.[0]?.shippingCost?.currency ?? cur
+    const opt       = i.shippingOptions?.[0] ?? {}
+    const ship      = opt.shippingCost?.value != null ? Number(opt.shippingCost.value) : null
+    const shipCur   = opt.shippingCost?.currency ?? cur
     const shipRate  = shipCur === cur ? rate : fx(shipCur)
     const priceAud  = price * rate
     const shipAud   = ship != null ? ship * shipRate : null
     const totalAud  = priceAud + (shipAud ?? 0)
-    rows.push({ marketplace, cur, price, rate, ship, priceAud, shipAud, totalAud, title: String(i.title ?? ''), cond: i.condition ?? null, seller: i.seller?.username ?? null, url: i.itemWebUrl ?? null, loc: i.itemLocation?.country ?? null })
+    const dMin      = daysFromNow(opt.minEstimatedDeliveryDate)
+    const dMax      = daysFromNow(opt.maxEstimatedDeliveryDate)
+    rows.push({
+      marketplace, cur, price, rate, ship, priceAud, shipAud, totalAud,
+      dMin, dMax,
+      title:  String(i.title ?? ''),
+      cond:   i.condition ?? null,
+      seller: i.seller?.username ?? null,
+      url:    i.itemWebUrl ?? null,
+      loc:    i.itemLocation?.country ?? null,
+    })
   }
 }
 
 rows.sort((a, b) => a.totalAud - b.totalAud)
 console.log(`  ✓ ${rows.length} total results (ranked by delivered AUD)\n`)
 
+function eta(min, max) {
+  if (min == null && max == null) return 'ETA unknown'
+  if (min != null && max != null && min !== max) return `arrives in ${min}-${max} days`
+  return `arrives in ~${min ?? max} days`
+}
+
 for (const r of rows.slice(0, limit)) {
   const shipStr = r.shipAud != null ? ` + $${r.shipAud.toFixed(2)} ship` : ''
   const nativeStr = r.cur === 'AUD' ? '' : `  (${r.cur} ${r.price.toFixed(2)} @ ${r.rate})`
   const cond = r.cond ? `[${r.cond}] ` : ''
-  console.log(`  A$${r.priceAud.toFixed(2)}${shipStr}  =  A$${r.totalAud.toFixed(2)}${nativeStr}`)
+  console.log(`  A$${r.priceAud.toFixed(2)}${shipStr}  =  A$${r.totalAud.toFixed(2)}  ·  ${eta(r.dMin, r.dMax)}${nativeStr}`)
   console.log(`    ${cond}${r.marketplace} — ${r.seller ?? '(unknown)'} · ${r.loc ?? '?'}`)
   console.log(`    ${r.title.slice(0, 100)}`)
   console.log(`    ${r.url}`)

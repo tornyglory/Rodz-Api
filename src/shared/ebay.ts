@@ -144,12 +144,28 @@ export interface EbaySearchItem {
   shippingAud:    number | null
   totalAud:       number             // priceAud + shippingAud; the ranking key
   fxRate:         number             // conversion factor applied (audit trail)
+  // Shipping speed — critical for workshop planning ("does this part
+  // arrive before Tuesday's booked service?"). Sometimes absent when
+  // eBay's cross-border calculator doesn't cover the route.
+  shippingCostType: string | null    // 'FIXED' | 'CALCULATED' | 'NOT_SPECIFIED'
+  deliveryMinDate:  string | null    // ISO date string
+  deliveryMaxDate:  string | null    // ISO date string
+  deliveryMinDays:  number | null    // days from now (ceil)
+  deliveryMaxDays:  number | null
   condition:      string | null
   seller:         { name: string | null; feedbackScore: number | null; feedbackPct: number | null }
   itemWebUrl:     string
   imageUrl:       string | null
   location:       string | null
   buyingOptions:  string[]
+}
+
+function daysFromNow(iso: string | null | undefined): number | null {
+  if (!iso) return null
+  const d = new Date(iso).getTime()
+  if (!Number.isFinite(d)) return null
+  const diff = (d - Date.now()) / (1000 * 60 * 60 * 24)
+  return Math.max(0, Math.ceil(diff))
 }
 
 async function searchOne(
@@ -205,6 +221,11 @@ async function searchOne(
     const shippingAud = shipping != null ? shipping * shipRate : null
     const totalAud    = priceAud + (shippingAud ?? 0)
 
+    const opt              = i.shippingOptions?.[0] ?? {}
+    const shippingCostType = opt.shippingCostType ? String(opt.shippingCostType) : null
+    const deliveryMinDate  = opt.minEstimatedDeliveryDate ? String(opt.minEstimatedDeliveryDate) : null
+    const deliveryMaxDate  = opt.maxEstimatedDeliveryDate ? String(opt.maxEstimatedDeliveryDate) : null
+
     return {
       itemId:        String(i.itemId ?? ''),
       title:         String(i.title  ?? ''),
@@ -217,6 +238,11 @@ async function searchOne(
       shippingAud:   shippingAud != null ? round2(shippingAud) : null,
       totalAud:      round2(totalAud),
       fxRate:        rate,
+      shippingCostType,
+      deliveryMinDate,
+      deliveryMaxDate,
+      deliveryMinDays: daysFromNow(deliveryMinDate),
+      deliveryMaxDays: daysFromNow(deliveryMaxDate),
       condition:     i.condition ? String(i.condition) : null,
       seller: {
         name:          i.seller?.username ? String(i.seller.username) : null,
