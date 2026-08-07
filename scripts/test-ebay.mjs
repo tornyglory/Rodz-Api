@@ -1,81 +1,106 @@
-// Quick eBay search smoke — run once creds are in .env.
+// Quick eBay search smoke — multi-marketplace (AU + US by default),
+// results ranked by total delivered-to-AU cost.
 //
 //   node scripts/test-ebay.mjs "oil filter Toyota Corolla 2020"
 //   node scripts/test-ebay.mjs "5W-30 full synthetic engine oil 4L" --limit 10
+//   node scripts/test-ebay.mjs "brake pads Toyota Corolla" --markets EBAY_AU,EBAY_US,EBAY_GB
 
 import 'dotenv/config'
-// esbuild would bundle this from src/ but we invoke .mjs so wire the
-// TS via tsx if you want the module-level file; simpler: reimplement
-// the tiny bit needed here. Below inlines the same OAuth + search
-// against the eBay Browse API, mirroring src/shared/ebay.ts one-for-one.
 
 const appId  = process.env.EBAY_APP_ID
 const certId = process.env.EBAY_CERT_ID
 if (!appId || !certId) {
   console.error('Missing EBAY_APP_ID / EBAY_CERT_ID in .env')
-  console.error('Get them at https://developer.ebay.com/my/keys')
   process.exit(1)
 }
 
-const args     = process.argv.slice(2)
-const limitArg = args.indexOf('--limit')
-const limit    = limitArg >= 0 ? Number(args[limitArg + 1]) : 5
-const query    = args
-  .filter((_, i) => limitArg < 0 || (i !== limitArg && i !== limitArg + 1))
-  .join(' ')
-if (!query) { console.error('Usage: node scripts/test-ebay.mjs "<query>" [--limit 5]'); process.exit(1) }
+const args = process.argv.slice(2)
+function readFlag(flag) {
+  const i = args.indexOf(flag)
+  return i >= 0 ? args[i + 1] : null
+}
+function stripFlag(flag) {
+  const i = args.indexOf(flag)
+  if (i < 0) return
+  args.splice(i, 2)
+}
+const limit   = Number(readFlag('--limit') ?? 5)
+const markets = (readFlag('--markets') ?? 'EBAY_AU,EBAY_US').split(',').map(s => s.trim()).filter(Boolean)
+stripFlag('--limit'); stripFlag('--markets')
+const query = args.join(' ')
+if (!query) { console.error('Usage: node scripts/test-ebay.mjs "<query>" [--limit 5] [--markets EBAY_AU,EBAY_US]'); process.exit(1) }
 
-const marketplace = process.env.EBAY_MARKETPLACE ?? 'EBAY_AU'
-const env         = (process.env.EBAY_ENV ?? 'production').toLowerCase()
-const tokenUrl    = env === 'sandbox' ? 'https://api.sandbox.ebay.com/identity/v1/oauth2/token' : 'https://api.ebay.com/identity/v1/oauth2/token'
-const apiBase     = env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com'
+const env      = (process.env.EBAY_ENV ?? 'production').toLowerCase()
+const tokenUrl = env === 'sandbox' ? 'https://api.sandbox.ebay.com/identity/v1/oauth2/token' : 'https://api.ebay.com/identity/v1/oauth2/token'
+const apiBase  = env === 'sandbox' ? 'https://api.sandbox.ebay.com' : 'https://api.ebay.com'
+const shipToC  = process.env.EBAY_SHIP_TO_COUNTRY  ?? 'AU'
+const shipToPc = process.env.EBAY_SHIP_TO_POSTCODE ?? '3199'
 
-console.log(`— eBay ${env} · ${marketplace} · limit ${limit} · "${query}"`)
+const fxDefaults = { AUD: 1, USD: 1.52, GBP: 1.93, EUR: 1.65, NZD: 0.92, JPY: 0.010, CAD: 1.11, HKD: 0.20, SGD: 1.15, CNY: 0.21 }
+function fx(cur) { return fxDefaults[cur?.toUpperCase()] ?? 1 }
 
-// 1. Token
+console.log(`— eBay ${env} · ship to ${shipToC} ${shipToPc} · markets ${markets.join(', ')} · "${query}"`)
+
+// Token
 const basic = Buffer.from(`${appId}:${certId}`).toString('base64')
 const tRes = await fetch(tokenUrl, {
-  method:  'POST',
+  method: 'POST',
   headers: { 'Authorization': `Basic ${basic}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-  body:    new URLSearchParams({ grant_type: 'client_credentials', scope: 'https://api.ebay.com/oauth/api_scope' }).toString(),
+  body: new URLSearchParams({ grant_type: 'client_credentials', scope: 'https://api.ebay.com/oauth/api_scope' }).toString(),
 })
-if (!tRes.ok) {
-  console.error(`Token exchange failed: ${tRes.status} — ${await tRes.text()}`)
-  process.exit(1)
-}
+if (!tRes.ok) { console.error(`Token: ${tRes.status} — ${await tRes.text()}`); process.exit(1) }
 const { access_token } = await tRes.json()
-console.log('  ✓ token OK')
+console.log('  ✓ token OK\n')
 
-// 2. Search
+// Fan out per marketplace, merge, rank by AUD total
 const params = new URLSearchParams({
   q:      query,
   limit:  String(limit),
-  filter: 'buyingOptions:{FIXED_PRICE},itemLocationCountry:AU',
+  filter: 'buyingOptions:{FIXED_PRICE}',
 })
-const sRes = await fetch(`${apiBase}/buy/browse/v1/item_summary/search?${params.toString()}`, {
-  headers: {
-    'Authorization':           `Bearer ${access_token}`,
-    'X-EBAY-C-MARKETPLACE-ID': marketplace,
-    'Content-Type':            'application/json',
-  },
-})
-if (!sRes.ok) {
-  console.error(`Search failed: ${sRes.status} — ${await sRes.text()}`)
-  process.exit(1)
-}
-const data = await sRes.json()
-const items = data.itemSummaries ?? []
-console.log(`  ✓ ${items.length} result${items.length === 1 ? '' : 's'}\n`)
 
-for (const i of items) {
-  const price    = i.price?.value ? `$${i.price.value}` : '(no price)'
-  const shipping = i.shippingOptions?.[0]?.shippingCost?.value
-    ? ` + $${i.shippingOptions[0].shippingCost.value} ship`
-    : ''
-  const cond     = i.condition ? ` [${i.condition}]` : ''
-  const seller   = i.seller?.username ? ` — ${i.seller.username}` : ''
-  console.log(`  ${price}${shipping}${cond}${seller}`)
-  console.log(`    ${i.title.slice(0, 100)}`)
-  console.log(`    ${i.itemWebUrl}`)
+const perMarket = await Promise.allSettled(markets.map(async m => {
+  const res = await fetch(`${apiBase}/buy/browse/v1/item_summary/search?${params.toString()}`, {
+    headers: {
+      'Authorization':           `Bearer ${access_token}`,
+      'X-EBAY-C-MARKETPLACE-ID': m,
+      'X-EBAY-C-ENDUSERCTX':     `contextualLocation=country=${shipToC},zip=${shipToPc}`,
+      'Content-Type':            'application/json',
+    },
+  })
+  if (!res.ok) throw new Error(`${m}: ${res.status} — ${(await res.text()).slice(0, 120)}`)
+  const data = await res.json()
+  return { marketplace: m, items: data.itemSummaries ?? [] }
+}))
+
+const rows = []
+for (const r of perMarket) {
+  if (r.status === 'rejected') { console.warn('  ⚠ ' + r.reason.message); continue }
+  const { marketplace, items } = r.value
+  for (const i of items) {
+    const cur       = i.price?.currency ?? 'AUD'
+    const price     = Number(i.price?.value ?? 0)
+    const rate      = fx(cur)
+    const ship      = i.shippingOptions?.[0]?.shippingCost?.value != null ? Number(i.shippingOptions[0].shippingCost.value) : null
+    const shipCur   = i.shippingOptions?.[0]?.shippingCost?.currency ?? cur
+    const shipRate  = shipCur === cur ? rate : fx(shipCur)
+    const priceAud  = price * rate
+    const shipAud   = ship != null ? ship * shipRate : null
+    const totalAud  = priceAud + (shipAud ?? 0)
+    rows.push({ marketplace, cur, price, rate, ship, priceAud, shipAud, totalAud, title: String(i.title ?? ''), cond: i.condition ?? null, seller: i.seller?.username ?? null, url: i.itemWebUrl ?? null, loc: i.itemLocation?.country ?? null })
+  }
+}
+
+rows.sort((a, b) => a.totalAud - b.totalAud)
+console.log(`  ✓ ${rows.length} total results (ranked by delivered AUD)\n`)
+
+for (const r of rows.slice(0, limit)) {
+  const shipStr = r.shipAud != null ? ` + $${r.shipAud.toFixed(2)} ship` : ''
+  const nativeStr = r.cur === 'AUD' ? '' : `  (${r.cur} ${r.price.toFixed(2)} @ ${r.rate})`
+  const cond = r.cond ? `[${r.cond}] ` : ''
+  console.log(`  A$${r.priceAud.toFixed(2)}${shipStr}  =  A$${r.totalAud.toFixed(2)}${nativeStr}`)
+  console.log(`    ${cond}${r.marketplace} — ${r.seller ?? '(unknown)'} · ${r.loc ?? '?'}`)
+  console.log(`    ${r.title.slice(0, 100)}`)
+  console.log(`    ${r.url}`)
   console.log('')
 }
