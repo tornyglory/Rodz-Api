@@ -106,7 +106,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         [job.id],
       )
 
-      if (lineItems.length === 0) return notFound('Job card')
+      // No quote to seed from — return an empty card so the frontend
+      // renders a "no items yet" state instead of tripping over a 404.
+      // Card items get populated when a quote is approved for the job.
+      if (lineItems.length === 0) {
+        return ok(buildCardResponse(job.id, []))
+      }
 
       try {
         for (const li of lineItems) {

@@ -262,6 +262,19 @@ export class RodzApiStack4 extends Stack {
       })
     }
 
+    // ── Job notes (customer + technician free-text) ───────────────────────
+    // GET /jobs/{id}/notes — reads customer_notes + technician_notes off
+    // service_jobs. Lives on Stack 4 because the shared HttpApi is at cap.
+    const jobNotesGetFn = new LambdaFn(this, 'JobNotesGet', {
+      entry: src('jobs/notes-get.ts'), vpc, sharedEnv,
+    }).fn
+    new HttpRoute(this, 'JobNotesGetRoute', {
+      httpApi:     this.adminApi,
+      integration: new HttpLambdaIntegration('JobNotesGetInt', jobNotesGetFn),
+      routeKey:    HttpRouteKey.with('/jobs/{id}/notes', HttpMethod.GET),
+      authorizer:  this.adminAuthorizer,
+    })
+
     // ── Parts orders (placed purchases + tracking) ────────────────────────
     // Records every part the workshop has actually bought for a booking,
     // whether via a manual click-through eBay purchase (current) or an
