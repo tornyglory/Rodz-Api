@@ -259,6 +259,128 @@ async function searchOne(
 
 function round2(n: number): number { return Math.round(n * 100) / 100 }
 
+// One shipping option on a listing — the item detail endpoint returns
+// several of these (Standard, Expedited, Express, Economy, etc.),
+// whereas item_summary/search only surfaces the default (usually
+// cheapest). Use getItemDetail() to enumerate the full set.
+export interface EbayShippingOption {
+  serviceCode:      string | null  // e.g. "eBay International Shipping"
+  carrierCode:      string | null  // e.g. "eBaySend", "USPS", "DHL"
+  type:             string | null  // eBay-labelled: "Expedited shipping", "Standard postage", "Express" etc.
+  cost:             number         // native currency
+  currency:         string
+  costAud:          number         // converted to AUD
+  fxRate:           number
+  costType:         string | null  // 'FIXED' | 'CALCULATED'
+  minEstimatedDate: string | null
+  maxEstimatedDate: string | null
+  minEstimatedDays: number | null
+  maxEstimatedDays: number | null
+  isExpressLike:    boolean        // heuristic — service/type name mentions express/expedited/priority
+}
+
+const EXPRESS_HINT = /(express|expedited|priority|overnight|next.?day|fast|dhl)/i
+
+export interface EbayItemDetail {
+  itemId:           string
+  title:            string
+  price:            number
+  currency:         string
+  priceAud:         number
+  condition:        string | null
+  seller:           { name: string | null; feedbackScore: number | null; feedbackPct: number | null }
+  itemWebUrl:       string
+  imageUrl:         string | null
+  location:         string | null
+  shippingOptions:  EbayShippingOption[]
+  cheapestOption:   EbayShippingOption | null
+  fastestOption:    EbayShippingOption | null
+  expressOption:    EbayShippingOption | null  // fastest option whose serviceCode/type hints at express-tier
+}
+
+export async function getItemDetail(itemId: string, marketplace: string): Promise<EbayItemDetail | null> {
+  if (!itemId) return null
+  const token = await getToken()
+  const url   = `${apiBase()}/buy/browse/v1/item/${encodeURIComponent(itemId)}`
+  const res = await fetch(url, {
+    headers: {
+      'Authorization':           `Bearer ${token}`,
+      'X-EBAY-C-MARKETPLACE-ID': marketplace,
+      'X-EBAY-C-ENDUSERCTX':     `contextualLocation=country=${shipToCountry()},zip=${shipToPostcode()}`,
+      'Content-Type':            'application/json',
+    },
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`eBay item detail (${marketplace}) failed ${res.status}: ${text.slice(0, 250)}`)
+  }
+  const i = await res.json() as any
+
+  const price     = Number(i.price?.value ?? 0)
+  const currency  = String(i.price?.currency ?? 'AUD')
+  const rate      = fxRate(currency)
+
+  const shippingOptions: EbayShippingOption[] = (i.shippingOptions ?? []).map((opt: any): EbayShippingOption => {
+    const cost         = Number(opt.shippingCost?.value ?? 0)
+    const shipCurrency = String(opt.shippingCost?.currency ?? currency)
+    const shipRate     = shipCurrency === currency ? rate : fxRate(shipCurrency)
+    const serviceCode  = opt.shippingServiceCode ? String(opt.shippingServiceCode) : null
+    const type         = opt.type              ? String(opt.type)                 : null
+    const nameForHint  = `${serviceCode ?? ''} ${type ?? ''}`
+    return {
+      serviceCode,
+      carrierCode:     opt.shippingCarrierCode ? String(opt.shippingCarrierCode) : null,
+      type,
+      cost,
+      currency:        shipCurrency,
+      costAud:         round2(cost * shipRate),
+      fxRate:          shipRate,
+      costType:        opt.shippingCostType ? String(opt.shippingCostType) : null,
+      minEstimatedDate: opt.minEstimatedDeliveryDate ? String(opt.minEstimatedDeliveryDate) : null,
+      maxEstimatedDate: opt.maxEstimatedDeliveryDate ? String(opt.maxEstimatedDeliveryDate) : null,
+      minEstimatedDays: daysFromNow(opt.minEstimatedDeliveryDate),
+      maxEstimatedDays: daysFromNow(opt.maxEstimatedDeliveryDate),
+      isExpressLike:   EXPRESS_HINT.test(nameForHint),
+    }
+  })
+
+  // Pick "cheapest" and "fastest" for convenience. Fastest = smallest
+  // max-days-to-arrive; ties broken by cost.
+  const withEta = shippingOptions.filter(o => o.maxEstimatedDays != null)
+  const cheapest = shippingOptions.length
+    ? [...shippingOptions].sort((a, b) => a.costAud - b.costAud)[0]
+    : null
+  const fastest  = withEta.length
+    ? [...withEta].sort((a, b) => (a.maxEstimatedDays! - b.maxEstimatedDays!) || (a.costAud - b.costAud))[0]
+    : null
+  // Express = fastest among the ones labelled express-like.
+  const expressCandidates = withEta.filter(o => o.isExpressLike)
+  const expressOption = expressCandidates.length
+    ? [...expressCandidates].sort((a, b) => (a.maxEstimatedDays! - b.maxEstimatedDays!) || (a.costAud - b.costAud))[0]
+    : null
+
+  return {
+    itemId:      String(i.itemId ?? itemId),
+    title:       String(i.title  ?? ''),
+    price,
+    currency,
+    priceAud:    round2(price * rate),
+    condition:   i.condition ? String(i.condition) : null,
+    seller: {
+      name:          i.seller?.username ? String(i.seller.username) : null,
+      feedbackScore: i.seller?.feedbackScore != null ? Number(i.seller.feedbackScore) : null,
+      feedbackPct:   i.seller?.feedbackPercentage != null ? Number(i.seller.feedbackPercentage) : null,
+    },
+    itemWebUrl:  String(i.itemWebUrl ?? ''),
+    imageUrl:    i.image?.imageUrl ? String(i.image.imageUrl) : null,
+    location:    i.itemLocation?.country ? String(i.itemLocation.country) : null,
+    shippingOptions,
+    cheapestOption: cheapest,
+    fastestOption:  fastest,
+    expressOption,
+  }
+}
+
 // Fan out across every marketplace in `opts.marketplaces` (or the env
 // default), merge results, filter by AUD price bounds if set, then sort
 // by total AUD delivered cost ascending. One marketplace failing (rate
