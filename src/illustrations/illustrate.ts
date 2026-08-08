@@ -39,94 +39,94 @@ const BRAND_STYLE_REFERENCE_IMAGE_ID = '7545ea65-f2c8-4ddc-9bda-c577ef5f3600'
 // instead of restyling the source.
 
 const SOURCE_LABEL = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-IMAGE A — SOURCE.
-This is the subject you must illustrate. Preserve everything that
-identifies THIS specific person / vehicle / object: face shape, hair,
-skin tone, facial hair, glasses, distinguishing marks — or for
-vehicles/products, the make/model/colour/proportions.
-Look at this image carefully — the illustration MUST be of THIS
-subject, not a generic character.
+IMAGE A — SOURCE (this IS the illustration's subject).
+Everything about WHAT to draw comes from this image:
+  • The person's face, hair, skin, glasses, distinguishing features
+  • What they are wearing (their real clothing — preserve it)
+  • Their pose and expression
+  • The framing (head-and-shoulders → head-and-shoulders, etc.)
+This image dictates the "who" and the "what". Take nothing from here
+except art style — never take clothing, pose, or setting from IMAGE B.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
 
 const STYLE_LABEL = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-IMAGE B — STYLE REFERENCE ONLY.
-Use this image ONLY for art direction: line weight, colour palette,
-shading style, level of simplification, brand identity elements.
-DO NOT copy the person/subject in this image. DO NOT reuse their
-face. This image exists only to show you HOW to draw, not WHAT to draw.
+IMAGE B — STYLE REFERENCE ONLY (draw HOW, not WHAT).
+Take from this image:
+  • Line weight and outline colour
+  • Cel-shading approach and shadow softness
+  • Colour palette (warm, muted; the specific hues used for skin,
+    fabric, shadows)
+  • Level of simplification / cartoon-ness
+Do NOT take from this image:
+  • The person shown here — never copy their face, beard, or identity
+  • Their clothing — do not put your subject in the reference's outfit
+  • Their pose or what they're holding / doing
+  • The workshop setting, tools, or background
+This image exists ONLY to show you the drawing style.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
 
 const PRESET_PROMPTS: Record<string, string> = {
-  avatar: `TASK: illustrate the person from IMAGE A using the art style of IMAGE B.
+  avatar: `TASK: draw an illustrated avatar of the person from IMAGE A, using ONLY the art style of IMAGE B.
 
-CRITICAL: the output must be an illustrated portrait of the specific
-person shown in IMAGE A. Their face, hair, skin tone, and features
-must be clearly recognisable — a colleague looking at the result
-should immediately identify them, not think it's a generic character.
-IMAGE B is ONLY for style. Do not reuse the face, beard, or identity
-of the person in IMAGE B.
+The output must be clearly recognisable as the specific person in
+IMAGE A. A colleague looking at the result should say "that's them"
+— not "that's a generic mechanic".
 
-PRESERVE from IMAGE A (these must match the source person):
-- Face shape and proportions
-- Hair colour, length, and style
-- Facial hair (beard/moustache/goatee) — exactly as shown
+FROM IMAGE A (the subject):
+- Face shape, proportions, features
+- Hair colour, length, style
+- Facial hair — exactly as shown, or absent if none
 - Skin tone
 - Eye colour if visible
 - Glasses if worn
 - Approximate age
-- Any distinguishing features (freckles, scars, tattoos on face/neck)
+- The clothing they are actually wearing in the photo
+- Their expression
+- Distinguishing features (freckles, scars, tattoos, jewellery visible in the framing)
 
-REPLACE from IMAGE A (only clothing/props):
-- Clothing → Rodz-branded navy overalls
-- Any headwear → navy cap with "RODZ" in coral/orange lettering
-  (matching the cap style in IMAGE B)
-
-STYLE (from IMAGE B):
-- Flat vector illustration, clean dark-navy outlines of moderate weight
+FROM IMAGE B (the drawing style only):
+- Flat vector illustration technique
+- Clean dark-navy outlines of moderate, consistent weight
 - Soft cel-shaded fills — gentle two-tone shading, no gradients, no photorealism
-- Warm muted palette: navy uniforms, warm natural skin tones, coral/orange as accent
+- Warm muted palette (the same hue family used in IMAGE B)
+- Level of facial simplification (small stylised eyes, defined brows, clear hair/beard shapes)
+
+DO NOT import from IMAGE B:
+- The person's face or identity in image B
+- Their clothing — do NOT dress the subject in Rodz overalls or a Rodz cap
+- Their pose or the workshop setting
+- Any props (tablet, tools, vehicles)
 
 COMPOSITION:
-- Head and shoulders, centred, facing camera at a slight three-quarter angle
+- Head and shoulders, centred, facing the camera at whatever angle the source uses
 - Isolated on a pure white background (#FFFFFF)
 - No workshop scene, no props, no drop shadow, no vignette
-- Framing: top of head near top of frame, cropped mid-chest
 
-Output: a single portrait illustration of the person from IMAGE A, drawn in the style of IMAGE B.`,
+Output: a single portrait illustration OF the person from IMAGE A, drawn in the visual language of IMAGE B, wearing THEIR OWN clothes.`,
 
-  portrait: `TASK: illustrate the person from IMAGE A as a three-quarter body portrait, in the art style of IMAGE B.
+  portrait: `TASK: draw an illustrated three-quarter body portrait of the person from IMAGE A, using ONLY the art style of IMAGE B.
 
-CRITICAL: the output must be the specific person from IMAGE A. Do
-NOT copy the person shown in IMAGE B — that image is style reference only.
+FROM IMAGE A: the person's likeness, their clothing, their pose, their expression. Everything about who they are and what they're wearing comes from this source.
 
-PRESERVE from IMAGE A: face, hair, facial hair, skin tone, glasses,
-approximate age, distinguishing features.
+FROM IMAGE B (drawing style only): flat vector illustration, dark-navy outlines, cel-shaded fills, warm muted palette, level of simplification.
 
-REPLACE from IMAGE A: clothing → Rodz-branded navy overalls; headwear
-→ navy cap with "RODZ" in coral/orange (as in IMAGE B).
-
-STYLE (from IMAGE B):
-- Flat vector illustration, clean dark-navy outlines, cel-shaded fills
-- Warm muted palette
+DO NOT import from IMAGE B: the reference person's identity, their clothing, their pose, or the workshop setting.
 
 COMPOSITION:
-- Three-quarter body (head to mid-thigh), centred, natural pose
+- Three-quarter body (head to mid-thigh) — or match the source's framing
 - Isolated on pure white background (#FFFFFF)
 
-Output: a portrait of the IMAGE A person in the IMAGE B style.`,
+Output: a portrait of the IMAGE A person, wearing THEIR OWN clothes, drawn in the IMAGE B style.`,
 
-  cover: `TASK: illustrate the subject from IMAGE A as a landscape hero image, in the art style of IMAGE B.
+  cover: `TASK: illustrate the subject from IMAGE A as a landscape hero image, using ONLY the art style of IMAGE B.
 
-CRITICAL: the output depicts the specific subject from IMAGE A. Do
-NOT copy the content of IMAGE B — style only.
+The output depicts the specific subject from IMAGE A — same person / vehicle / scene as the source. Only art direction (palette, line work, cel-shading) comes from IMAGE B.
 
-PRESERVE from IMAGE A: identifying features. If a person, their
-likeness. If a vehicle, its make/model/colour. If an object, its shape
-and identity.
+FROM IMAGE A: subject identity, composition, clothing (if a person), and identifying features (make/model/colour if a vehicle).
 
-STYLE (from IMAGE B):
-- Flat vector illustration, clean dark-navy outlines, cel-shaded fills
-- Warm muted palette
+FROM IMAGE B (style only): line weight, palette, cel-shading approach, level of simplification.
+
+DO NOT import from IMAGE B: the reference's people, clothing, pose, props, or setting.
 
 COMPOSITION:
 - Landscape (wide) crop
@@ -135,20 +135,15 @@ COMPOSITION:
 
 Output: a landscape illustration of the IMAGE A subject in the IMAGE B style.`,
 
-  product: `TASK: illustrate the object/product from IMAGE A, in the art style of IMAGE B.
+  product: `TASK: illustrate the object/product from IMAGE A, using ONLY the art style of IMAGE B.
 
-CRITICAL: the output is the SPECIFIC object from IMAGE A. Do NOT
-substitute a generic version. Do NOT copy anything from IMAGE B other
-than art style.
+The output is the SPECIFIC object from IMAGE A — do not substitute a generic version. If a vehicle, the make/model must be recognisable in the panel work, headlights, wheels, badging. If a part, its physical form must match.
 
-PRESERVE from IMAGE A: exact shape, colour, proportions, and
-identifying details. If a vehicle, the make/model must be recognisable
-— body panels, headlight design, wheel arches, badging position. If a
-part, its physical form and features.
+FROM IMAGE A: exact shape, colour, proportions, and identifying details.
 
-STYLE (from IMAGE B):
-- Flat vector illustration, clean dark-navy outlines, cel-shaded fills
-- Warm muted palette
+FROM IMAGE B (style only): flat vector, dark-navy outlines, cel-shaded fills, warm muted palette.
+
+DO NOT import from IMAGE B: any people, clothing, props, or scene elements.
 
 COMPOSITION:
 - Object centred, filling ~70% of frame
@@ -157,17 +152,13 @@ COMPOSITION:
 
 Output: an illustration of the IMAGE A object in the IMAGE B style.`,
 
-  generic: `TASK: illustrate the subject from IMAGE A in the art style of IMAGE B.
+  generic: `TASK: illustrate the subject from IMAGE A using ONLY the art style of IMAGE B.
 
-CRITICAL: the subject and composition come from IMAGE A. IMAGE B is
-style reference only — do not copy its content.
+The subject, composition, clothing, pose, and content all come from IMAGE A. IMAGE B contributes drawing style only.
 
-PRESERVE from IMAGE A: subject identity, general composition, and
-identifying features.
+FROM IMAGE B (style only): line weight, palette, cel-shading, level of simplification.
 
-STYLE (from IMAGE B):
-- Flat vector illustration, clean dark-navy outlines, cel-shaded fills
-- Warm muted palette
+DO NOT import from IMAGE B: subjects, clothing, poses, props, or settings.
 
 Isolate on pure white background (#FFFFFF). No drop shadow.`,
 }
