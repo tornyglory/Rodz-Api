@@ -9,6 +9,9 @@ const MODEL = 'gemini-2.5-flash-image'
 export interface InlineImage {
   bytes:    Buffer | Uint8Array
   mimeType: string           // 'image/jpeg' | 'image/png' | ...
+  label?:   string           // optional text inserted BEFORE this image so
+                             // multi-image prompts can label each image's
+                             // role unambiguously (style ref vs source, etc.)
 }
 
 // Returns { bytes, mimeType } of the FIRST generated image in the
@@ -16,7 +19,7 @@ export interface InlineImage {
 // Throws if the model didn't return any image data.
 export async function generateImage(opts: {
   prompt:  string
-  inputs:  InlineImage[]     // ordered — the prompt refers to them by index if it wants
+  inputs:  InlineImage[]     // ordered — each image can carry a text label
 }): Promise<{ bytes: Buffer; mimeType: string }> {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) throw new Error('GEMINI_API_KEY not set')
@@ -26,6 +29,7 @@ export async function generateImage(opts: {
 
   const parts: any[] = []
   for (const img of opts.inputs) {
+    if (img.label) parts.push({ text: img.label })
     parts.push({
       inlineData: {
         mimeType: img.mimeType,

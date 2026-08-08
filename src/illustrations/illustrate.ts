@@ -30,27 +30,61 @@ const ready = bootstrap()
 // workshop can override per-call via styleReferenceImageId.
 const BRAND_STYLE_REFERENCE_IMAGE_ID = '7545ea65-f2c8-4ddc-9bda-c577ef5f3600'
 
+// Prompts assume this input order:
+//   1. SOURCE image (the subject to illustrate — a specific person/vehicle/object)
+//   2. STYLE REFERENCE image (only for art direction — never copy its subject)
+// Each image is preceded by an explicit label part so the model can't
+// confuse subject vs style. Previous versions used "image 1 / image 2"
+// numeric references and Nano Banana kept copying the reference person
+// instead of restyling the source.
+
+const SOURCE_LABEL = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+IMAGE A — SOURCE.
+This is the subject you must illustrate. Preserve everything that
+identifies THIS specific person / vehicle / object: face shape, hair,
+skin tone, facial hair, glasses, distinguishing marks — or for
+vehicles/products, the make/model/colour/proportions.
+Look at this image carefully — the illustration MUST be of THIS
+subject, not a generic character.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+
+const STYLE_LABEL = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+IMAGE B — STYLE REFERENCE ONLY.
+Use this image ONLY for art direction: line weight, colour palette,
+shading style, level of simplification, brand identity elements.
+DO NOT copy the person/subject in this image. DO NOT reuse their
+face. This image exists only to show you HOW to draw, not WHAT to draw.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+
 const PRESET_PROMPTS: Record<string, string> = {
-  avatar: `Convert the person in image 1 into an illustrated portrait matching the exact art style of image 2.
+  avatar: `TASK: illustrate the person from IMAGE A using the art style of IMAGE B.
 
-STYLE (match image 2 precisely):
-- Flat vector illustration with clean dark-navy outlines of moderate, consistent weight
-- Soft cel-shaded fills — gentle two-tone shading, no gradients, no photorealism
-- Warm muted palette: navy uniforms, warm natural skin tones, coral/orange as accent only
-- Simplified but expressive face — small eyes, defined brows, clear hair and beard shapes
+CRITICAL: the output must be an illustrated portrait of the specific
+person shown in IMAGE A. Their face, hair, skin tone, and features
+must be clearly recognisable — a colleague looking at the result
+should immediately identify them, not think it's a generic character.
+IMAGE B is ONLY for style. Do not reuse the face, beard, or identity
+of the person in IMAGE B.
 
-PRESERVE from image 1:
+PRESERVE from IMAGE A (these must match the source person):
 - Face shape and proportions
 - Hair colour, length, and style
-- Facial hair (beard/moustache) if present
+- Facial hair (beard/moustache/goatee) — exactly as shown
 - Skin tone
+- Eye colour if visible
 - Glasses if worn
 - Approximate age
-- Overall likeness — a co-worker should recognise them
+- Any distinguishing features (freckles, scars, tattoos on face/neck)
 
-REPLACE from image 1:
+REPLACE from IMAGE A (only clothing/props):
 - Clothing → Rodz-branded navy overalls
-- Any headwear → navy cap with "RODZ" in coral/orange lettering (as in image 2)
+- Any headwear → navy cap with "RODZ" in coral/orange lettering
+  (matching the cap style in IMAGE B)
+
+STYLE (from IMAGE B):
+- Flat vector illustration, clean dark-navy outlines of moderate weight
+- Soft cel-shaded fills — gentle two-tone shading, no gradients, no photorealism
+- Warm muted palette: navy uniforms, warm natural skin tones, coral/orange as accent
 
 COMPOSITION:
 - Head and shoulders, centred, facing camera at a slight three-quarter angle
@@ -58,71 +92,84 @@ COMPOSITION:
 - No workshop scene, no props, no drop shadow, no vignette
 - Framing: top of head near top of frame, cropped mid-chest
 
-Output: a single portrait illustration matching the visual language of image 2, ready to use as a circular avatar.`,
+Output: a single portrait illustration of the person from IMAGE A, drawn in the style of IMAGE B.`,
 
-  portrait: `Convert the person in image 1 into a three-quarter body illustrated portrait matching the exact art style of image 2.
+  portrait: `TASK: illustrate the person from IMAGE A as a three-quarter body portrait, in the art style of IMAGE B.
 
-STYLE (match image 2 precisely):
-- Flat vector illustration with clean dark-navy outlines of moderate, consistent weight
-- Soft cel-shaded fills — gentle two-tone shading, no gradients, no photorealism
-- Warm muted palette matching image 2
+CRITICAL: the output must be the specific person from IMAGE A. Do
+NOT copy the person shown in IMAGE B — that image is style reference only.
 
-PRESERVE from image 1:
-- Face shape, hair, facial hair, skin tone, glasses, approximate age
-- Overall likeness — clearly recognisable
+PRESERVE from IMAGE A: face, hair, facial hair, skin tone, glasses,
+approximate age, distinguishing features.
 
-REPLACE from image 1:
-- Clothing → Rodz-branded navy overalls
-- Any headwear → navy cap with "RODZ" in coral/orange
+REPLACE from IMAGE A: clothing → Rodz-branded navy overalls; headwear
+→ navy cap with "RODZ" in coral/orange (as in IMAGE B).
 
-COMPOSITION:
-- Three-quarter body view (head to mid-thigh), centred, natural standing pose
-- Isolated on a pure white background (#FFFFFF)
-- No workshop scene, no props, no drop shadow
-
-Output: a single portrait illustration in the visual language of image 2.`,
-
-  cover: `Convert image 1 into a landscape hero illustration matching the exact art style of image 2.
-
-STYLE (match image 2 precisely):
-- Flat vector illustration with clean dark-navy outlines of moderate, consistent weight
-- Soft cel-shaded fills — gentle two-tone shading, no gradients, no photorealism
-- Warm muted palette matching image 2
+STYLE (from IMAGE B):
+- Flat vector illustration, clean dark-navy outlines, cel-shaded fills
+- Warm muted palette
 
 COMPOSITION:
-- Landscape (wide) crop suitable for a cover image
-- Isolated on a pure white background (#FFFFFF)
-- Subject centred, no drop shadow
+- Three-quarter body (head to mid-thigh), centred, natural pose
+- Isolated on pure white background (#FFFFFF)
 
-Preserve the identifying features of image 1 — if it depicts a person, keep their likeness; if a vehicle, keep the make/model recognisable; if an object, keep it accurate to the source.
+Output: a portrait of the IMAGE A person in the IMAGE B style.`,
 
-Output: a single cover-format illustration in the visual language of image 2.`,
+  cover: `TASK: illustrate the subject from IMAGE A as a landscape hero image, in the art style of IMAGE B.
 
-  product: `Convert image 1 into an illustrated product image matching the exact art style of image 2.
+CRITICAL: the output depicts the specific subject from IMAGE A. Do
+NOT copy the content of IMAGE B — style only.
 
-STYLE (match image 2 precisely):
-- Flat vector illustration with clean dark-navy outlines of moderate, consistent weight
-- Soft cel-shaded fills — gentle two-tone shading, no gradients, no photorealism
-- Warm muted palette matching image 2
+PRESERVE from IMAGE A: identifying features. If a person, their
+likeness. If a vehicle, its make/model/colour. If an object, its shape
+and identity.
+
+STYLE (from IMAGE B):
+- Flat vector illustration, clean dark-navy outlines, cel-shaded fills
+- Warm muted palette
 
 COMPOSITION:
-- Product centred, filling ~70% of the frame
-- Isolated on a pure white background (#FFFFFF)
-- No drop shadow, no props, no scene
-- Preserve the shape, colour, and identifying features of the source product
+- Landscape (wide) crop
+- Subject centred, isolated on pure white background (#FFFFFF)
+- No drop shadow
 
-Output: a single product illustration in the visual language of image 2.`,
+Output: a landscape illustration of the IMAGE A subject in the IMAGE B style.`,
 
-  generic: `Illustrate image 1 in the exact art style of image 2.
+  product: `TASK: illustrate the object/product from IMAGE A, in the art style of IMAGE B.
 
-STYLE (match image 2 precisely):
-- Flat vector illustration with clean dark-navy outlines of moderate, consistent weight
-- Soft cel-shaded fills — gentle two-tone shading, no gradients, no photorealism
-- Warm muted palette matching image 2
+CRITICAL: the output is the SPECIFIC object from IMAGE A. Do NOT
+substitute a generic version. Do NOT copy anything from IMAGE B other
+than art style.
 
-Preserve the identifying content and composition of image 1 — same subject, same rough layout, restyled to match image 2.
+PRESERVE from IMAGE A: exact shape, colour, proportions, and
+identifying details. If a vehicle, the make/model must be recognisable
+— body panels, headlight design, wheel arches, badging position. If a
+part, its physical form and features.
 
-Isolate on a pure white background (#FFFFFF). No drop shadow, no vignette.`,
+STYLE (from IMAGE B):
+- Flat vector illustration, clean dark-navy outlines, cel-shaded fills
+- Warm muted palette
+
+COMPOSITION:
+- Object centred, filling ~70% of frame
+- Isolated on pure white background (#FFFFFF)
+- No drop shadow, no scene, no props
+
+Output: an illustration of the IMAGE A object in the IMAGE B style.`,
+
+  generic: `TASK: illustrate the subject from IMAGE A in the art style of IMAGE B.
+
+CRITICAL: the subject and composition come from IMAGE A. IMAGE B is
+style reference only — do not copy its content.
+
+PRESERVE from IMAGE A: subject identity, general composition, and
+identifying features.
+
+STYLE (from IMAGE B):
+- Flat vector illustration, clean dark-navy outlines, cel-shaded fills
+- Warm muted palette
+
+Isolate on pure white background (#FFFFFF). No drop shadow.`,
 }
 
 const VALID_PRESETS = new Set(Object.keys(PRESET_PROMPTS))
@@ -162,8 +209,10 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
       generated = await generateImage({
         prompt,
         inputs: [
-          { bytes: source.bytes,    mimeType: source.mimeType },
-          { bytes: reference.bytes, mimeType: reference.mimeType },
+          // Order matters — SOURCE first so the model treats it as
+          // the primary subject, STYLE reference second as a modifier.
+          { bytes: source.bytes,    mimeType: source.mimeType,    label: SOURCE_LABEL },
+          { bytes: reference.bytes, mimeType: reference.mimeType, label: STYLE_LABEL  },
         ],
       })
     } catch (err: any) {
