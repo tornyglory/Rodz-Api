@@ -274,6 +274,21 @@ export class RodzApiStack4 extends Stack {
       authorizer:  this.adminAuthorizer,
     })
 
+    // ── Illustrations (Nano Banana / Gemini 2.5 Flash Image) ──────────────
+    // POST /images/illustrate — takes any Cloudflare image id, converts
+    // to Rodz-brand illustration on white. Reusable for avatars, covers,
+    // product shots, etc via presets.
+    const imagesIllustrateFn = new LambdaFn(this, 'ImagesIllustrate', {
+      entry: src('illustrations/illustrate.ts'), vpc, sharedEnv,
+      timeout: Duration.seconds(60),   // Nano Banana can be slow on complex images
+    }).fn
+    new HttpRoute(this, 'ImagesIllustrateRoute', {
+      httpApi:     this.adminApi,
+      integration: new HttpLambdaIntegration('ImagesIllustrateInt', imagesIllustrateFn),
+      routeKey:    HttpRouteKey.with('/images/illustrate', HttpMethod.POST),
+      authorizer:  this.adminAuthorizer,
+    })
+
     // ── Ad-hoc parts search (standalone, no booking context) ──────────────
     const partsSearchFn = new LambdaFn(this, 'PartsSearch', {
       entry: src('sourcing/parts-search.ts'), vpc, sharedEnv,
