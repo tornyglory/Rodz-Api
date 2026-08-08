@@ -33,12 +33,12 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const body = JSON.parse(event.body ?? '{}') as Record<string, unknown>
     const {
-      firstName, lastName, email, mobile, avatarImageId, role, storeId, status,
+      firstName, lastName, email, mobile, avatarImageId, avatarIllustrationImageId, role, storeId, status,
       employmentType, salaryType, salaryAmount, superRate, weeklyHours, annualLeaveDays, employmentStartDate,
     } = body
 
     if (firstName === undefined && lastName === undefined && email === undefined &&
-        mobile === undefined && avatarImageId === undefined &&
+        mobile === undefined && avatarImageId === undefined && avatarIllustrationImageId === undefined &&
         role === undefined && storeId === undefined && status === undefined &&
         employmentType === undefined && salaryType === undefined && salaryAmount === undefined &&
         superRate === undefined && weeklyHours === undefined && annualLeaveDays === undefined &&
@@ -85,6 +85,11 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         if (!exists) return userError(422, 'VALIDATION_ERROR', 'Image not found on Cloudflare — upload may have failed.')
       }
       updates.push(['avatar_image_id', avatarImageId ?? null])
+    }
+    if (avatarIllustrationImageId !== undefined) {
+      // Trusted — set by our own /images/illustrate endpoint. Not verified
+      // against Cloudflare (bad ids just 404 on render, harmless).
+      updates.push(['avatar_illustration_image_id', avatarIllustrationImageId ?? null])
     }
     if (email     != null) {
       const normalised = String(email).trim().toLowerCase()

@@ -39,7 +39,7 @@ function computeMonthlyCost(r: any): number {
 
 export const STAFF_SELECT = `
   SELECT s.id, s.store_id, s.first_name, s.last_name, s.email, s.mobile, s.role, s.is_active, s.hired_at,
-         s.avatar_image_id, st.name AS store_name,
+         s.avatar_image_id, s.avatar_illustration_image_id, st.name AS store_name,
          s.employment_type, s.salary_type, s.salary_amount, s.super_rate,
          s.weekly_hours, s.annual_leave_days, s.employment_start_date
   FROM staff s
@@ -56,7 +56,8 @@ export function buildApiUser(row: any) {
     displayName: `${String(row.first_name)[0]}. ${row.last_name}`.trim(),
     email:       row.email as string,
     mobile:      row.mobile ?? null as string | null,
-    avatarUrl:   row.avatar_image_id ? imageUrls(row.avatar_image_id).thumbnail : null,
+    avatarUrl:             row.avatar_image_id              ? imageUrls(row.avatar_image_id).thumbnail              : null,
+    avatarIllustrationUrl: row.avatar_illustration_image_id ? imageUrls(row.avatar_illustration_image_id).thumbnail : null,
     role,
     store:       isAdmin ? null : (row.store_name ?? null) as string | null,
     storeId:     isAdmin ? null : (row.store_id ?? null) as number | null,

@@ -39,7 +39,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     const [[vRow]] = await db.query<any[]>(
-      `SELECT v.is_active, v.avatar_image_id, v.cover_image_id
+      `SELECT v.is_active, v.avatar_image_id, v.cover_image_id, v.avatar_illustration_image_id
          FROM vehicles v
          JOIN vehicle_owners vo ON vo.vehicle_id = v.id AND vo.is_current = 1
         WHERE v.id = ? AND vo.customer_id = ?
@@ -230,6 +230,22 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
         updates.push(['cover_image_id', raw])
       } else {
         return validationError('coverImageId must be a non-empty string or null.')
+      }
+    }
+
+    // Illustrated version of the avatar (Nano Banana output). Nullable
+    // so the frontend can revert to the raw photo. Not verified against
+    // Cloudflare — trusted because it was just returned by our own
+    // /images/illustrate endpoint (and unverified strings would just
+    // 404 in the render path, harmless).
+    if ('avatarIllustrationImageId' in body) {
+      const raw = body.avatarIllustrationImageId
+      if (raw === null) {
+        updates.push(['avatar_illustration_image_id', null])
+      } else if (typeof raw === 'string' && raw) {
+        updates.push(['avatar_illustration_image_id', raw])
+      } else {
+        return validationError('avatarIllustrationImageId must be a non-empty string or null.')
       }
     }
 
